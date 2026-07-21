@@ -56,6 +56,27 @@ def test_all_scenarios_reach_correct_states(tmp_path):
     assert rebuilt == live
 
 
+def test_setup_cmd_on_the_task_row_reaches_the_verify_gate(tmp_path):
+    """The scheduler must thread task.setup_cmd through to VerifyRequest
+    (src/orchestrator/scheduler/core.py's _run_verify) -- the plumbing gap
+    that let a project needing an install step (e.g. `npm install`) cache
+    baseline_broken forever against a base_sha that was actually fine."""
+    repo = init_repo(tmp_path)
+    conn = connect()
+    task_id = create_task(conn, title="needs-setup", brief="clean", repo=str(repo),
+                          delivery_mode="scout", setup_cmd="touch installed.marker",
+                          verify_cmd="test -f installed.marker")
+
+    worktree_root = tmp_path / "worktrees"
+    worktree_root.mkdir()
+    sched = Scheduler(conn, repo, worktree_root, max_concurrency=1,
+                      stall_threshold_s=0.3, watchdog_interval_s=0.05, verify_timeout_s=10)
+    asyncio.run(asyncio.wait_for(sched.run_until_settled(), timeout=30))
+
+    assert conn.execute("SELECT state FROM tasks WHERE id = ?",
+                        (task_id,)).fetchone()["state"] == "delivered"
+
+
 def test_clean_delivers_via_scout_report(tmp_path):
     repo = init_repo(tmp_path)
     conn = connect()

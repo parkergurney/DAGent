@@ -314,7 +314,8 @@ class Scheduler:
     async def _run_verify(self, task_id: str) -> None:
         task = dict(self.conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone())
         req = VerifyRequest(task_id=task_id, worktree=task["worktree"], base_sha=task["base_sha"],
-                            verify_cmd=task["verify_cmd"] or "true", timeout_s=self.verify_timeout_s)
+                            verify_cmd=task["verify_cmd"] or "true", setup_cmd=task["setup_cmd"],
+                            timeout_s=self.verify_timeout_s)
         append_event(self.conn, source="verifier", type="verify.started", task_id=task_id)
         result = run_verify(req)
         payload = {"cause": result.cause, "exit_code": result.exit_code,

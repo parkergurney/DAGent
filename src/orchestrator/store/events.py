@@ -102,7 +102,7 @@ def append_event(conn, *, source, type, task_id=None, payload=None,
 
 
 def create_task(conn, *, title, brief, repo, delivery_mode, verify_cmd=None,
-                max_retries=2, depends_on=(), task_id=None) -> str:
+                setup_cmd=None, max_retries=2, depends_on=(), task_id=None) -> str:
     """Insert a task (state='blocked') and emit task.created atomically.
 
     The task.created payload carries the full static definition so replay can
@@ -116,16 +116,18 @@ def create_task(conn, *, title, brief, repo, delivery_mode, verify_cmd=None,
         "repo": repo,
         "delivery_mode": delivery_mode,
         "verify_cmd": verify_cmd,
+        "setup_cmd": setup_cmd,
         "max_retries": max_retries,
         "depends_on": list(depends_on),
     }
     with conn:
         conn.execute(
             "INSERT INTO tasks "
-            "(id, title, brief, repo, delivery_mode, verify_cmd, state, retries, "
+            "(id, title, brief, repo, delivery_mode, verify_cmd, setup_cmd, state, retries, "
             " max_retries, worktree, session_id, base_sha, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,'blocked',0,?,NULL,NULL,NULL,?,?)",
-            (task_id, title, brief, repo, delivery_mode, verify_cmd, max_retries, ts, ts),
+            "VALUES (?,?,?,?,?,?,?,'blocked',0,?,NULL,NULL,NULL,?,?)",
+            (task_id, title, brief, repo, delivery_mode, verify_cmd, setup_cmd,
+             max_retries, ts, ts),
         )
         for dep in depends_on:
             conn.execute(
@@ -197,6 +199,7 @@ def replay(events) -> dict:
                 "repo": payload["repo"],
                 "delivery_mode": payload["delivery_mode"],
                 "verify_cmd": payload.get("verify_cmd"),
+                "setup_cmd": payload.get("setup_cmd"),
                 "state": "blocked",
                 "retries": 0,
                 "max_retries": payload.get("max_retries", 2),

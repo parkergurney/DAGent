@@ -28,7 +28,8 @@ def cmd_add_task(args) -> int:
     task_id = create_task(
         conn, title=args.title, brief=args.brief, repo=args.repo,
         delivery_mode=args.delivery_mode, verify_cmd=args.verify_cmd,
-        max_retries=args.max_retries, depends_on=args.depends_on,
+        setup_cmd=args.setup_cmd, max_retries=args.max_retries,
+        depends_on=args.depends_on,
     )
     print(task_id)
     return 0
@@ -112,6 +113,8 @@ def _print_task_detail(conn, task_id: str) -> int:
     print(f"  repo:          {task['repo']}")
     print(f"  delivery_mode: {task['delivery_mode']}")
     print(f"  verify_cmd:    {task['verify_cmd']}")
+    if task["setup_cmd"]:
+        print(f"  setup_cmd:     {task['setup_cmd']}")
 
     if task["state"] == "needs_human":
         acted = conn.execute(
@@ -163,6 +166,9 @@ def main(argv=None) -> int:
     p_add.add_argument("--repo", required=True)
     p_add.add_argument("--delivery-mode", required=True, choices=["pr", "local", "scout"])
     p_add.add_argument("--verify-cmd")
+    p_add.add_argument("--setup-cmd",
+        help="run before verify_cmd, in the baseline scratch checkout and the "
+             "worker's own worktree (e.g. 'npm install') -- design.md section 7")
     p_add.add_argument("--depends-on", action="append", default=[], metavar="TASK_ID")
     p_add.add_argument("--max-retries", type=int, default=2)
     p_add.set_defaults(func=cmd_add_task)

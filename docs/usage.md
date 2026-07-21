@@ -31,6 +31,14 @@ orchestrator add-task \
   --verify-cmd "pytest tests/test_csv_utils.py"
 ```
 
+Pass `--setup-cmd` for any repo whose verify command needs an install step
+first (e.g. `--setup-cmd "npm install"`).
+It runs before `verify_cmd` in both the worker's own worktree and the
+verify gate's throwaway baseline checkout.
+Skipping it for a repo that needs one caches `baseline_broken` against the
+base branch forever, since the baseline checkout has no dependencies
+installed and nothing else ever retries it (design.md section 7).
+
 Prints the new task's id (a ULID). Defaults to `data/orchestrator.db`; pass
 `--db` to use a different file. Chain tasks into a DAG with repeatable
 `--depends-on <task_id>` — a task sits in `blocked` until every dependency

@@ -35,6 +35,44 @@ def test_tests_failed_when_base_passes_and_child_breaks(tmp_path):
     assert result.cause == "tests_failed"
 
 
+def test_setup_cmd_runs_before_verify_in_both_baseline_and_worktree(tmp_path):
+    """Guards the real bug this fixes: a project needing an install step
+    (e.g. `npm install`) before its build/verify command can run. setup_cmd
+    must execute in the baseline's throwaway scratch checkout too, not just
+    the worker's own worktree -- otherwise baseline_broken gets cached
+    forever against a base_sha that's actually fine (design.md section 7)."""
+    repo = init_repo(tmp_path)
+    wt, base_sha = _child_worktree(repo, "feature",
+                                   lambda wt: (wt / "feature.txt").write_text("x\n"))
+
+    req = VerifyRequest(task_id="t3", worktree=str(wt), base_sha=base_sha,
+                        setup_cmd="touch installed.marker",
+                        verify_cmd="test -f installed.marker",
+                        repo=str(repo), timeout_s=10)
+    result = run_verify(req)
+
+    assert result.passed
+    assert result.cause == "tests_passed"
+
+
+def test_setup_failed_when_setup_cmd_errors(tmp_path):
+    """setup_cmd fails only in the worker's worktree (not at base_sha, where
+    the baseline scratch checkout's setup_cmd run succeeds) -- e.g. the
+    diff itself broke the install step. Distinct from baseline_broken, where
+    setup_cmd (or verify_cmd) fails identically at base_sha too."""
+    repo = init_repo(tmp_path)
+    wt, base_sha = _child_worktree(repo, "feature2",
+                                   lambda wt: (wt / "break_setup.txt").write_text("x\n"))
+
+    req = VerifyRequest(task_id="t4", worktree=str(wt), base_sha=base_sha,
+                        setup_cmd="test ! -f break_setup.txt", verify_cmd="true",
+                        repo=str(repo), timeout_s=10)
+    result = run_verify(req)
+
+    assert not result.passed
+    assert result.cause == "setup_failed"
+
+
 def test_baseline_broken_when_base_already_fails(tmp_path):
     repo = init_repo(tmp_path)  # no flag.txt at base
     wt, base_sha = _child_worktree(repo, "unrelated",
