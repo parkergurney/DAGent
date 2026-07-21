@@ -13,9 +13,13 @@ class DeliveryError(Exception):
     pass
 
 
-def deliver(task: dict) -> tuple:
+def deliver(task: dict, *, open_pr=None) -> tuple:
     """Returns (event_type, payload) for the delivery.* event. Raises
     DeliveryError on failure -- caller routes that to delivery.failed -> triage.
+
+    `open_pr` (worktree, branch) -> url is injectable so pr mode's git-push
+    half (fully real, testable against a local bare-repo remote) can be
+    exercised without needing gh/GitHub -- defaults to the real `gh pr create`.
     """
     mode = task["delivery_mode"]
     if mode == "scout":
@@ -23,7 +27,7 @@ def deliver(task: dict) -> tuple:
     if mode == "local":
         return _local(task)
     if mode == "pr":
-        return _pr(task)
+        return _pr(task, open_pr=open_pr or _gh_pr_create)
     raise DeliveryError(f"unknown delivery_mode {mode!r}")
 
 
@@ -49,15 +53,25 @@ def _local(task: dict) -> tuple:
     return "delivery.merged_local", {"branch": branch}
 
 
-def _pr(task: dict) -> tuple:
+def _pr(task: dict, *, open_pr) -> tuple:
     branch = f"task/{task['id']}"
     wt = task["worktree"]
     proc = subprocess.run(["git", "push", "-u", "origin", branch], cwd=wt,
                           capture_output=True, text=True)
     if proc.returncode != 0:
         raise DeliveryError(proc.stderr)
+    try:
+        url = open_pr(wt, branch)
+    except DeliveryError:
+        raise
+    except Exception as e:
+        raise DeliveryError(str(e)) from e
+    return "delivery.pr_opened", {"url": url}
+
+
+def _gh_pr_create(wt, branch: str) -> str:
     proc = subprocess.run(["gh", "pr", "create", "--fill", "--head", branch], cwd=wt,
                           capture_output=True, text=True)
     if proc.returncode != 0:
         raise DeliveryError(proc.stderr)
-    return "delivery.pr_opened", {"url": proc.stdout.strip()}
+    return proc.stdout.strip()

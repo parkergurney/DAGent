@@ -1,6 +1,6 @@
 # Design: agent orchestration system for Claude Code
 
-Status: M4 complete (supervisor: packet builder, closed-enum actions, dump/replay tooling). This document is the source of truth for architecture decisions.
+Status: M5 complete (worktree pool, dep resolution, all three delivery modes). This document is the source of truth for architecture decisions.
 It doubles as agent context (CLAUDE.md symlinks here). Update it when decisions
 change; log the change and rationale in devlog.md.
 

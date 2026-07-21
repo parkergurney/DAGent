@@ -1,4 +1,4 @@
-"""Core control loop (design.md sections 2, 4, 6, 11 / M2-M4).
+"""Core control loop (design.md sections 2, 4, 6, 8, 11 / M2-M5).
 
 Deterministic asyncio scheduler: promotes blocked -> queued -> running,
 watches each spawned worker's event stream, runs the verify gate on a
@@ -32,7 +32,7 @@ from orchestrator.store import append_event, transition
 from orchestrator.supervisor import ACTION_MODELS, always_escalate, build_packet
 from orchestrator.supervisor.llm import SupervisorResult
 from orchestrator.verify.gate import VerifyRequest, run_verify
-from orchestrator.worker import create_worktree, remove_worktree, spawn_fake_worker
+from orchestrator.worker import WorktreePool, spawn_fake_worker
 
 # Fleet states in which nothing is left for the scheduler to drive; the fleet
 # is "settled" once every task sits in one of these.
@@ -60,6 +60,9 @@ class Scheduler:
         self.transcript_tail_tokens = transcript_tail_tokens
         self.yolo = yolo
 
+        # Pool size == max_concurrency: never a reason for more slots than
+        # tasks that can be running at once (design.md section 8 / M5).
+        self._pool = WorktreePool(repo_root, worktree_root, max_concurrency)
         self._procs: dict[str, asyncio.subprocess.Process] = {}
         self._watchers: dict[str, asyncio.Task] = {}
         self._worktrees: dict[str, object] = {}
@@ -76,6 +79,7 @@ class Scheduler:
         later milestone.
         """
         reconcile(self.conn)
+        self._pool.open()
         for row in self.conn.execute("SELECT id FROM tasks WHERE state = 'triage'").fetchall():
             sc = self.conn.execute(
                 "SELECT payload FROM events WHERE task_id = ? AND type = 'task.state_changed' "
@@ -94,6 +98,7 @@ class Scheduler:
             await asyncio.gather(watchdog, return_exceptions=True)
             await asyncio.gather(*(self._teardown(tid) for tid in list(self._procs)),
                                  return_exceptions=True)
+            self._pool.close()
 
     def _fleet_settled(self) -> bool:
         placeholders = ",".join("?" * len(_SETTLED_STATES))
@@ -138,7 +143,7 @@ class Scheduler:
         """(queued|triage) -> running. `retries`, when given, is a restart's
         new count -- transition() folds it into the same state-change event
         as session_id/worktree/base_sha, no separate write."""
-        wt, base_sha = create_worktree(self.repo_root, self.worktree_root, task["id"])
+        wt, base_sha = await self._pool.acquire(task["id"])
         proc = await self.spawn_worker(task, wt, model=self.worker_model)
         session_id = str(proc.pid)
 
@@ -394,4 +399,4 @@ class Scheduler:
 
         wt = self._worktrees.pop(task_id, None)
         if wt is not None:
-            remove_worktree(self.repo_root, wt)
+            self._pool.release(wt)

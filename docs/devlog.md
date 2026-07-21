@@ -272,3 +272,55 @@ M2/M3. Live validation (tests/integration/test_supervisor_live.py, opt-in,
 a recoverable failure, correctly refused to guess at an unanswerable question
 (design.md's own heuristic, followed), and a dumped packet replayed cleanly
 through the supervisor-replay CLI.
+
+## 2026-07-20 - M5: worktree pool, dep resolution, three delivery modes
+
+Committed M2-M4 first (they'd been sitting uncommitted through three
+milestones of work) as one combined commit -- the interleaved edits to
+pyproject.toml/README/devlog/design docs across those three milestones
+couldn't be cleanly un-interleaved into separate historically-accurate
+commits after the fact without risking a misleading or broken intermediate
+state, and an honest single commit beat a fake-precise three.
+
+worker/worktree_pool.py: fixed-size slot reuse instead of
+create/destroy per task attempt. Pool size is always max_concurrency --
+"never a reason for more slots than tasks that can be running at once," so
+acquire() blocking on a free slot is concurrency control falling out of the
+pool for free rather than a second limiter to keep in sync with the first.
+Reset-on-acquire (git reset --hard + clean -fdx + checkout -B) rather than
+remove/recreate is the actual saving: no more worktree-add metadata churn
+per attempt.
+
+The one real design question was the interaction with crash reconciliation
+(design.md section 4): a prior orchestrator process can die mid-run with a
+slot still checked out and dirty. Rather than teaching reconcile() anything
+about worktrees, pool.open() just wipes and recreates every slot
+unconditionally on every fresh process -- consistent with "no special
+recovery code path." Tested directly: open a pool, acquire and dirty a slot,
+never close it (simulating the crash), then open a second pool at the same
+path and confirm it doesn't choke and hands back a clean slot.
+
+Delivery: scout and local already had real coverage from M2/M3; pr never
+did. Split _pr() into the push (real git, now tested against a local
+bare-repo remote) and open_pr (injected, defaults to real `gh pr create`) so
+the mechanics are testable without gh or network -- same
+dependency-injection shape as spawn_worker/supervisor. Added a full
+scheduler-level pr test too: real FakeWorker task, real pooled worktree,
+real push, PR-open swapped out.
+
+Dependency resolution (_advance_deps) has existed since M2 but was only ever
+exercised by hand-applying events in test_replay.py, never through a live
+Scheduler run with actually-dependent tasks. New coverage: a 3-task chain
+(asserts b's spawn happens after a's delivery by event seq, not just by
+final state), a fan-in (d depends on both b and c), and a dep-failure
+cascade (cancelling a mid-chain task cancels everything downstream that
+never got the chance to run).
+
+10-task parallel batch (the milestone's explicit test), 3 pool slots: all
+10 deliver, replay(events) == tasks still holds under real concurrent
+scheduling, and the running-transition worktree paths collapse to exactly
+3 distinct values across all 10 tasks -- the reuse is real, not just
+plumbed.
+
+73 tests now (up from 60), all still free/deterministic except the 4
+pre-existing opt-in live ones. No new dependencies.
