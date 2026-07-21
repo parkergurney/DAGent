@@ -51,6 +51,27 @@ def test_release_and_reacquire_reuses_the_slot_and_wipes_prior_work(tmp_path):
     pool.close()
 
 
+def test_reacquiring_same_task_id_on_a_different_slot_does_not_collide(tmp_path):
+    """A restart or a needs_human -> queued requeue reuses the same task_id.
+    The pool is a FIFO queue, so the slot that just released it is rarely
+    the slot the next acquire() gets back -- release() must free the branch
+    name (not just the directory), or checkout -B on the new slot collides
+    with git's one-worktree-per-branch rule."""
+    repo = init_repo(tmp_path)
+    pool = WorktreePool(repo, tmp_path / "worktrees", size=2)
+    pool.open()
+
+    wt1, _ = asyncio.run(pool.acquire("taskA"))
+    pool.release(wt1)  # slot1 now at the back of the free queue
+
+    wt2, _ = asyncio.run(pool.acquire("taskA"))  # pulls slot2, not slot1
+    assert wt2 != wt1
+    branch = git("branch", "--show-current", cwd=wt2).stdout.strip()
+    assert branch == "task/taskA"
+
+    pool.close()
+
+
 def test_acquire_blocks_until_a_slot_is_released(tmp_path):
     repo = init_repo(tmp_path)
     pool = WorktreePool(repo, tmp_path / "worktrees", size=1)

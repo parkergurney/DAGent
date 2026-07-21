@@ -78,6 +78,16 @@ class WorktreePool:
         return wt, base_sha
 
     def release(self, wt: Path) -> None:
+        """Return a slot to the free pool. Detach HEAD and drop whatever
+        task branch was checked out here first -- otherwise the branch name
+        stays claimed by this worktree, and a same-task_id re-acquire that
+        lands on a *different* free slot (the pool is a FIFO queue, so it
+        usually does) collides with git's one-worktree-per-branch rule.
+        """
+        branch = _git_ok("rev-parse", "--abbrev-ref", "HEAD", cwd=wt)
+        _git("checkout", "--detach", "HEAD", cwd=wt)
+        if branch and branch != "HEAD":
+            _git("branch", "-D", branch, cwd=self.repo_root)
         self._free.put_nowait(wt)
 
     def close(self) -> None:
