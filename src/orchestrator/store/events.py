@@ -55,7 +55,7 @@ _TRANSITIONS = {
 }
 
 # Columns transition() may update alongside the state change.
-_UPDATABLE = {"session_id", "worktree", "retries", "max_retries"}
+_UPDATABLE = {"session_id", "worktree", "retries", "max_retries", "base_sha"}
 
 
 def _legal(frm: str, to: str) -> bool:
@@ -120,8 +120,8 @@ def create_task(conn, *, title, brief, repo, delivery_mode, verify_cmd=None,
         conn.execute(
             "INSERT INTO tasks "
             "(id, title, brief, repo, delivery_mode, verify_cmd, state, retries, "
-            " max_retries, worktree, session_id, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,'blocked',0,?,NULL,NULL,?,?)",
+            " max_retries, worktree, session_id, base_sha, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,'blocked',0,?,NULL,NULL,NULL,?,?)",
             (task_id, title, brief, repo, delivery_mode, verify_cmd, max_retries, ts, ts),
         )
         for dep in depends_on:
@@ -199,6 +199,7 @@ def replay(events) -> dict:
                 "max_retries": payload.get("max_retries", 2),
                 "worktree": None,
                 "session_id": None,
+                "base_sha": None,
                 "created_at": e["ts"],
                 "updated_at": e["ts"],
             }

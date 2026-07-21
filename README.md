@@ -4,7 +4,7 @@ Talk to one process; it runs a crew of Claude Code sessions — spawned in
 isolated git worktrees, supervised by a deterministic state machine, verified
 by tests before anything is called done, and benchmarked against baselines.
 
-Design: [docs/design.md](docs/design.md). Status: pre-M0.
+Design: [docs/design.md](docs/design.md). Status: M4 complete (supervisor: packet builder, closed-enum actions, dump/replay tooling).
 
 ## Layout
 

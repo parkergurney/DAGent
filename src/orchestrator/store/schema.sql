@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   max_retries   INTEGER NOT NULL DEFAULT 2,
   worktree      TEXT,
   session_id    TEXT,
+  base_sha      TEXT,
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );

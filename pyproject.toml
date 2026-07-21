@@ -3,13 +3,18 @@ name = "agent-orchestrator"
 version = "0.0.1"
 description = "Deterministic orchestration daemon for Claude Code worker sessions. Working name."
 requires-python = ">=3.12"
-# M0 is the storage layer only: stdlib (sqlite3, tomllib, dataclasses) + a
-# vendored ULID. Runtime deps (claude-agent-sdk, pydantic, ...) arrive with the
-# milestones that need them.
-dependencies = []
+# M3 added claude-agent-sdk for real Agent SDK worker sessions. M4 adds
+# pydantic for the supervisor's closed-enum action schema (design.md section
+# 6 specs these as pydantic BaseModels directly) -- everything else, control
+# loop through verify gate, is still sqlite3/tomllib/dataclasses/asyncio.
+dependencies = ["claude-agent-sdk>=0.2.123", "pydantic>=2"]
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
+
+[project.scripts]
+verify-gate = "orchestrator.verify.cli:main"
+supervisor-replay = "orchestrator.supervisor.replay:main"
 
 [build-system]
 requires = ["hatchling"]

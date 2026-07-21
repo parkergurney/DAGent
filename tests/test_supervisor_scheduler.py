@@ -1,0 +1,198 @@
+"""Scheduler-side dispatch of every supervisor action (design.md section 6),
+driven deterministically against FakeWorker via a ScriptedSupervisor -- no
+LLM, no network, same "never debug the orchestrator through paid
+nondeterministic workers" posture as tests/scenarios/. This is what proves
+the wiring itself (nudge writes to a live stdin, restart relaunches with
+feedback and retries+=1, wait re-arms the watchdog without killing the
+session, escalate/abandon land in the right terminal state) independent of
+any particular LLM's behavior.
+"""
+import asyncio
+import json
+
+from orchestrator.scheduler import Scheduler
+from orchestrator.store import connect, create_task
+from orchestrator.supervisor.schema import Abandon, Escalate, Nudge, Restart, Wait
+from tests.helpers import ScriptedSupervisor, init_repo
+
+
+def _create(conn, repo, scenario, **kw):
+    return create_task(conn, title=scenario, brief=scenario, repo=str(repo),
+                       delivery_mode=kw.pop("delivery_mode", "scout"),
+                       verify_cmd=kw.pop("verify_cmd", "true"), **kw)
+
+
+def _events(conn, task_id):
+    return [dict(r) for r in conn.execute(
+        "SELECT * FROM events WHERE task_id = ? ORDER BY seq", (task_id,))]
+
+
+def _run(conn, repo, tmp_path, supervisor, **sched_kwargs):
+    worktree_root = tmp_path / "worktrees"
+    worktree_root.mkdir()
+    sched = Scheduler(conn, repo, worktree_root, max_concurrency=1,
+                      stall_threshold_s=0.3, watchdog_interval_s=0.05, verify_timeout_s=10,
+                      supervisor=supervisor, **sched_kwargs)
+    asyncio.run(asyncio.wait_for(sched.run_until_settled(), timeout=30))
+
+
+def test_nudge_reaches_the_live_session_and_delivers(tmp_path):
+    repo = init_repo(tmp_path)
+    conn = connect()
+    task_id = _create(conn, repo, "ask")
+    supervisor = ScriptedSupervisor([Nudge(message="go ahead and finish", reason="answer is in the brief")])
+
+    _run(conn, repo, tmp_path, supervisor)
+
+    state = conn.execute("SELECT state FROM tasks WHERE id=?", (task_id,)).fetchone()["state"]
+    assert state == "delivered"
+    types = [e["type"] for e in _events(conn, task_id)]
+    assert types.count("worker.spawned") == 1  # same session throughout, no restart
+    assert "worker.asked" in types
+    assert "supervisor.acted" in types
+
+
+def test_restart_relaunches_and_bumps_retries(tmp_path):
+    # feedback=None here: FakeWorker's --scenario is matched against brief
+    # verbatim (argparse choices=SCENARIOS), so an augmented brief would just
+    # make the restarted subprocess fail argparse instead of re-running the
+    # scenario. The feedback-augmentation logic itself is covered separately
+    # below with a spy spawn_worker, decoupled from FakeWorker's scenario
+    # selection mechanism.
+    repo = init_repo(tmp_path)
+    conn = connect()
+    task_id = _create(conn, repo, "no_commit")
+    supervisor = ScriptedSupervisor([
+        Restart(feedback=None, reason="uncommitted changes"),
+        Escalate(summary="failed twice", question="how to proceed?", options=["review"],
+                 reason="same failure again"),
+    ])
+
+    _run(conn, repo, tmp_path, supervisor)
+
+    state = conn.execute("SELECT state FROM tasks WHERE id=?", (task_id,)).fetchone()["state"]
+    assert state == "needs_human"
+    row = conn.execute("SELECT retries FROM tasks WHERE id=?", (task_id,)).fetchone()
+    assert row["retries"] == 1
+
+    types = [e["type"] for e in _events(conn, task_id)]
+    assert types.count("worker.spawned") == 2  # original + restart
+    assert types.count("verify.failed") == 2
+
+    assert len(supervisor.packets) == 2
+    assert supervisor.packets[0].retries_remaining == 2
+    assert supervisor.packets[1].retries_remaining == 1  # reflects the restart's bump
+
+
+class _EmptyStream:
+    async def readline(self):
+        return b""
+
+
+class _SpyProc:
+    """A minimal stand-in for asyncio.subprocess.Process: exits immediately
+    with no output, so _watch() treats every spawn as an unclaimed crash --
+    just enough to drive triage repeatedly without a real subprocess."""
+
+    def __init__(self, pid):
+        self.pid = pid
+        self.returncode = 0
+        self.stdout = _EmptyStream()
+        self.stdin = None
+
+    async def wait(self):
+        return 1
+
+
+def test_restart_appends_feedback_to_the_relaunched_brief(tmp_path):
+    repo = init_repo(tmp_path)
+    conn = connect()
+    task_id = _create(conn, repo, "original brief text")
+    supervisor = ScriptedSupervisor([
+        Restart(feedback="remember to commit next time", reason="crashed"),
+        Escalate(summary="s", question="q", options=["o"], reason="still crashing"),
+    ])
+    seen_briefs = []
+    pids = iter([111, 222])
+
+    async def spy_spawn(task, worktree, *, model=None):
+        seen_briefs.append(task["brief"])
+        return _SpyProc(next(pids))
+
+    _run(conn, repo, tmp_path, supervisor, spawn_worker=spy_spawn)
+
+    state = conn.execute("SELECT state FROM tasks WHERE id=?", (task_id,)).fetchone()["state"]
+    assert state == "needs_human"
+    assert seen_briefs == [
+        "original brief text",
+        "original brief text\n\nFeedback from a previous attempt:\nremember to commit next time",
+    ]
+    # tasks.brief itself is never mutated -- only the spawned worker's prompt is.
+    assert conn.execute("SELECT brief FROM tasks WHERE id=?", (task_id,)).fetchone()["brief"] \
+        == "original brief text"
+
+
+def test_wait_extends_the_deadline_without_killing_the_session(tmp_path):
+    repo = init_repo(tmp_path)
+    conn = connect()
+    task_id = _create(conn, repo, "stall")
+    supervisor = ScriptedSupervisor([
+        Wait(seconds=1, reason="might be doing something external"),
+        Escalate(summary="still silent", question="how to proceed?", options=["review"],
+                 reason="stalled again after the wait"),
+    ])
+
+    _run(conn, repo, tmp_path, supervisor)
+
+    state = conn.execute("SELECT state FROM tasks WHERE id=?", (task_id,)).fetchone()["state"]
+    assert state == "needs_human"
+    types = [e["type"] for e in _events(conn, task_id)]
+    assert types.count("worker.spawned") == 1  # never restarted, same stalled session throughout
+    assert types.count("worker.stalled") == 2  # detected, waited, detected again
+
+
+def test_abandon_only_reachable_in_yolo_mode(tmp_path):
+    repo = init_repo(tmp_path)
+    conn = connect()
+    task_id = _create(conn, repo, "crash", max_retries=0)
+    supervisor = ScriptedSupervisor([Abandon(reason="not worth another attempt")])
+
+    _run(conn, repo, tmp_path, supervisor, yolo=True)
+
+    state = conn.execute("SELECT state FROM tasks WHERE id=?", (task_id,)).fetchone()["state"]
+    assert state == "failed"
+
+
+def test_escalate_payload_carries_summary_and_question_for_the_captain(tmp_path):
+    repo = init_repo(tmp_path)
+    conn = connect()
+    task_id = _create(conn, repo, "crash")
+    supervisor = ScriptedSupervisor([
+        Escalate(summary="worker crashed immediately", question="retry or investigate?",
+                 options=["retry", "investigate"], recommended=1, reason="no output at all"),
+    ])
+
+    _run(conn, repo, tmp_path, supervisor)
+
+    acted = [e for e in _events(conn, task_id) if e["type"] == "supervisor.acted"][0]
+    payload = json.loads(acted["payload"])
+    assert payload["summary"] == "worker crashed immediately"
+    assert payload["options"] == ["retry", "investigate"]
+    assert payload["recommended"] == 1
+
+
+def test_out_of_menu_action_is_rejected_and_falls_back_to_escalate(tmp_path):
+    """A supervisor (real or scripted) that returns nudge for a trigger with
+    no live session is out of menu -- the orchestrator, not the supervisor,
+    enforces this."""
+    repo = init_repo(tmp_path)
+    conn = connect()
+    task_id = _create(conn, repo, "crash")  # worker.exited: no live session
+    supervisor = ScriptedSupervisor([Nudge(message="hi", reason="bogus")])
+
+    _run(conn, repo, tmp_path, supervisor)
+
+    state = conn.execute("SELECT state FROM tasks WHERE id=?", (task_id,)).fetchone()["state"]
+    assert state == "needs_human"
+    failed = [e for e in _events(conn, task_id) if e["type"] == "supervisor.failed"]
+    assert len(failed) == 1
