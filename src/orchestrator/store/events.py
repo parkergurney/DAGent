@@ -37,7 +37,7 @@ STATES = {
 TERMINAL = {"delivered", "failed", "cancelled"}
 
 # Legal (from -> to) edges, excluding the universal "any -> cancelled" which is
-# handled in _legal() (captain may kill any non-terminal task).
+# handled in _legal() (manager may kill any non-terminal task).
 _TRANSITIONS = {
     ("blocked", "queued"),
     ("queued", "running"),

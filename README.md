@@ -1,6 +1,6 @@
 # agent-orchestrator (working name)
 
-Talk to one process; it runs a crew of Claude Code sessions — spawned in
+Talk to one process; it runs a team of Claude Code sessions — spawned in
 isolated git worktrees, supervised by a deterministic state machine, verified
 by tests before anything is called done, and benchmarked against baselines.
 
@@ -8,7 +8,7 @@ Design: [docs/design.md](docs/design.md). Status: M5 complete (worktree pool, de
 
 ## Layout
 
-    docs/design.md        source of truth for architecture (CLAUDE.md -> here)
+    docs/design.md        symlink to CLAUDE.md, the source of truth for architecture
     docs/devlog.md        session log; writes the eventual post
     src/orchestrator/
       store/              SQLite: events (append-only facts) + tasks (derived)

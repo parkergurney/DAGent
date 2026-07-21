@@ -7,7 +7,7 @@ failed-delivery through triage -- one shape of problem, per section 4's
 design note. Triage is resolved by a pluggable `supervisor` callable
 (packet in, SupervisorResult out): the default is a deterministic
 always-escalate stand-in so the FakeWorker regression suite stays free and
-reproducible; a live captain wires up supervisor.llm.invoke_supervisor
+reproducible; a live manager wires up supervisor.llm.invoke_supervisor
 instead -- bind its `model` kwarg via functools.partial/a closure, the
 callable Scheduler holds takes only a packet. Same dependency-injection shape
 as `spawn_worker`.
@@ -34,7 +34,7 @@ from orchestrator.supervisor.llm import SupervisorResult
 from orchestrator.verify.gate import VerifyRequest, run_verify
 from orchestrator.worker import WorktreePool, spawn_fake_worker
 
-# Fleet states in which nothing is left for the scheduler to drive; the fleet
+# Team states in which nothing is left for the scheduler to drive; the team
 # is "settled" once every task sits in one of these.
 _SETTLED_STATES = ("needs_human", "delivered", "failed", "cancelled")
 
@@ -75,7 +75,7 @@ class Scheduler:
         """Drive every currently blocked/queued/running/triage task to a
         resting state (needs_human or a terminal state). This is the whole
         of the daemon: a fixed batch run to completion. Watching a live DB
-        forever for captain-submitted tasks is a front-end concern for a
+        forever for manager-submitted tasks is a front-end concern for a
         later milestone.
         """
         reconcile(self.conn)
@@ -89,7 +89,7 @@ class Scheduler:
 
         watchdog = asyncio.create_task(self._watchdog_loop())
         try:
-            while not self._fleet_settled():
+            while not self._team_settled():
                 self._advance_deps()
                 await self._launch_ready()
                 await asyncio.sleep(0.05)
@@ -100,7 +100,7 @@ class Scheduler:
                                  return_exceptions=True)
             self._pool.close()
 
-    def _fleet_settled(self) -> bool:
+    def _team_settled(self) -> bool:
         placeholders = ",".join("?" * len(_SETTLED_STATES))
         row = self.conn.execute(
             f"SELECT COUNT(*) c FROM tasks WHERE state NOT IN ({placeholders})",

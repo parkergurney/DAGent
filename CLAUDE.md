@@ -1,8 +1,9 @@
 # Design: agent orchestration system for Claude Code
 
 Status: M5 complete (worktree pool, dep resolution, all three delivery modes). This document is the source of truth for architecture decisions.
-It doubles as agent context (CLAUDE.md symlinks here). Update it when decisions
-change; log the change and rationale in devlog.md.
+It doubles as agent context; docs/design.md symlinks here so the same file
+serves both. Update it when decisions change; log the change and rationale in
+devlog.md.
 
 Working name TBD. "agent-orchestrator" is a placeholder.
 
@@ -11,7 +12,7 @@ Working name TBD. "agent-orchestrator" is a placeholder.
 ## 1. Thesis
 
 A deterministic orchestration daemon — real code, real state machine,
-event-driven — that runs a crew of Claude Code sessions in parallel, using LLM
+event-driven — that runs a team of Claude Code sessions in parallel, using LLM
 judgment only at the edges (triage decisions), built natively on the Claude
 Agent SDK. Benchmarked against baselines, which almost no system in this space
 does.
@@ -19,14 +20,14 @@ does.
 Prior art: kunchenguid/firstmate (AGENTS.md prompt + bash toolbelt + tmux
 scraping). Ideas kept from it: event-driven wake instead of polling, worktree
 isolation, explicit per-project delivery modes, "delivered = PR open, merge is
-the captain's call", restart-proof state on disk. Ideas rejected: pane-scraping
+the manager's call", restart-proof state on disk. Ideas rejected: pane-scraping
 transport (we use SDK hooks + structured streams), LLM-in-the-control-loop for
 scheduling (deterministic code), harness-agnosticism (we commit to Claude Code
 and take the SDK's structured integration).
 
 ### Non-goals (v1)
 
-- Multi-machine / multi-user. Single captain, single box.
+- Multi-machine / multi-user. Single manager, single box.
 - Container isolation. Worktree + process-group + timeout. Documented limitation.
 - Chat liaison front-end. A TUI tailing the events table is the operator UI.
 - Adversarial LLM reviewer in the verify gate. Slots in later as optional
@@ -39,7 +40,7 @@ and take the SDK's structured integration).
 ## 2. Architecture overview
 
 ```
- captain (TUI / CLI)
+ manager (TUI / CLI)
       │
       ▼
  ┌──────────────────────────────────────────────┐
@@ -102,11 +103,11 @@ delivered, failed, cancelled`. Terminal: delivered, failed, cancelled.
 | triage | running | supervisor `nudge` (same session) or `restart` (new session, retries += 1) |
 | triage | needs_human | supervisor `escalate`, or retries exhausted |
 | triage | failed | supervisor `abandon` — yolo mode only |
-| needs_human | running | captain's answer injected into session |
-| needs_human | delivering | captain overrides a failed verification |
+| needs_human | running | manager's answer injected into session |
+| needs_human | delivering | manager overrides a failed verification |
 | delivering | delivered | PR opened / local ff-merge done / scout report written |
 | delivering | triage | push rejected, merge conflict |
-| any | cancelled | captain kills the task |
+| any | cancelled | manager kills the task |
 
 Design notes:
 
@@ -150,7 +151,7 @@ CREATE TABLE task_deps (
 CREATE TABLE events (
   seq        INTEGER PRIMARY KEY AUTOINCREMENT,  -- global monotonic order
   ts         TEXT NOT NULL,
-  task_id    TEXT,                    -- null = fleet-level event
+  task_id    TEXT,                    -- null = team-level event
   source     TEXT NOT NULL,           -- scheduler|worker|watchdog|verifier|supervisor|delivery|human
   type       TEXT NOT NULL,           -- dotted domain.verb, past tense
   payload    TEXT NOT NULL DEFAULT '{}',  -- FLAT json, no nesting
@@ -224,7 +225,7 @@ class TriagePacket(BaseModel):
     yolo: bool
 ```
 
-Exclusions, deliberate: no fleet state (per-task judge; digest batching is a
+Exclusions, deliberate: no team state (per-task judge; digest batching is a
 presentation concern), no filesystem access (if the packet isn't enough,
 escalate or restart — investigation belongs to workers), no memory (but prior
 `supervisor.acted` events are IN event_history, so it sees its own past
@@ -254,11 +255,11 @@ class Wait(BaseModel):
 
 class Escalate(BaseModel):
     action: Literal["escalate"]
-    summary: str                    # 2-3 sentences, captain-facing
+    summary: str                    # 2-3 sentences, manager-facing
     question: str
     options: list[str]              # 2-4 concrete choices
     recommended: int | None         # index; benchmark metric: how often
-    reason: str                     #   captain picks the recommendation
+    reason: str                     #   manager picks the recommendation
 
 class Abandon(BaseModel):
     action: Literal["abandon"]      # yolo mode only
@@ -269,7 +270,7 @@ Notes: `restart` with feedback subsumes retry-with-feedback. `wait` exists for
 declared external waits (CI) — re-arms the watchdog with a longer deadline;
 without it the only options for a healthy-but-waiting task are a pointless
 nudge or a destructive restart. `Escalate` is deliberately the fattest schema:
-it renders directly in the captain UI.
+it renders directly in the manager UI.
 
 ### Enforcement (all orchestrator-side)
 
@@ -288,7 +289,7 @@ it renders directly in the captain UI.
 ### Prompt heuristics (iterate against saved packets)
 
 - `worker.asked`: answer via nudge only if the answer is unambiguously in the
-  brief; else escalate. Never guess on the captain's behalf.
+  brief; else escalate. Never guess on the manager's behalf.
 - `worker.stalled`: declared external wait → `wait`. Transcript shows repeated
   similar tool calls (spinning) → `restart`; a confused session rarely
   un-confuses.
@@ -390,7 +391,7 @@ gets fully specced:
 - Done-claim detection protocol: TBD in M1 (likely a required final structured
   message or sentinel; do not rely on parsing prose).
 - Intervention = injecting a message into the session (supervisor nudge,
-  captain answer). Logged as events; the orchestrator always knows a human
+  manager answer). Logged as events; the orchestrator always knows a human
   intervened.
 - Worktree pool: raw `git worktree`, ~50 lines, no treehouse dependency.
 - Spike questions: does mid-session message injection work as assumed? cost
@@ -402,7 +403,7 @@ gets fully specced:
 Per-task `delivery_mode`, firstmate-style, explicit:
 
 - `pr`: push branch, open PR via gh. Delivered = PR open. Merge is the
-  captain's call; merge tracking is an event.
+  manager's call; merge tracking is an event.
 - `local`: approved fast-forward merge into the local default branch.
 - `scout`: no push ever; report written to `data/<task_id>/report.md`.
 
@@ -434,7 +435,7 @@ Metrics (all SQL over events):
 - wall-clock per batch; throughput (tasks/hour)
 - total cost, split worker vs supervision overhead
 - human interventions count; escalation precision (were interruptions
-  warranted; did captain pick `recommended`)
+  warranted; did manager pick `recommended`)
 - fault recovery: kill a worker mid-task every run; does the system recover
   without losing the task
 - gaming attempts (`protected_path_modified` count) per condition

@@ -1,6 +1,6 @@
 """Deterministic supervisor stand-in: always escalates. This is Scheduler's
 default `supervisor=` (mirrors spawn_worker defaulting to FakeWorker) so the
-M2/M3 regression suites stay free and deterministic -- a live captain wires
+M2/M3 regression suites stay free and deterministic -- a live manager wires
 up supervisor.llm.invoke_supervisor explicitly instead.
 """
 from orchestrator.supervisor.llm import SupervisorResult

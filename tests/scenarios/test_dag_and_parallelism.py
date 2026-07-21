@@ -78,7 +78,7 @@ def test_dep_failure_cascades_to_cancelled(tmp_path):
     a = _create(conn, repo, "clean")
     b = _create(conn, repo, "clean", depends_on=[a])
 
-    # captain kills a before it ever runs (any non-terminal -> cancelled).
+    # manager kills a before it ever runs (any non-terminal -> cancelled).
     s = append_event(conn, source="human", type="human.cancelled", task_id=a)
     transition(conn, a, "cancelled", cause_seq=s)
 

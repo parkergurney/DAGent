@@ -324,3 +324,21 @@ plumbed.
 
 73 tests now (up from 60), all still free/deterministic except the 4
 pre-existing opt-in live ones. No new dependencies.
+
+## 2026-07-21
+
+Terminology cleanup: dropped the nautical metaphor project-wide. `captain` ->
+`manager`, `crew`/`fleet` -> `team` (both collapsed to the same word since
+they meant the same thing: the whole batch of tasks/sessions, as opposed to
+`firstmate`'s per-session meaning of "crew"). `_fleet_settled` ->
+`_team_settled`, `_drive_representative_fleet` -> `_drive_representative_team`
+in test_replay.py. Left `firstmate` alone everywhere it's the actual name of
+the referenced prior-art project (kunchenguid/firstmate), and left generic
+"ship" (e.g. "ship task", "ship fixed") alone since that's ordinary dev slang
+for "release," not part of the nautical theme. Also flipped the CLAUDE.md /
+docs/design.md symlink direction: CLAUDE.md is now the real file, docs/design.md
+symlinks to it (previously the two were just an unsynced manual copy, despite
+the doc claiming a symlink). New docs/usage.md written this session too: a
+practical "how do I actually drive a batch" companion to design.md, since
+today that's a short Python script (create_task + Scheduler +
+run_until_settled()), not a CLI -- no daemon or task-entry CLI exists yet.

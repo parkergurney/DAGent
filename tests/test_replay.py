@@ -2,7 +2,7 @@
 
 The headline invariant (3): tasks is rebuildable from events -- replay(events)
 must equal the live tasks table after any lifecycle. This test drives a
-representative fleet through the state machine and asserts it. It will catch
+representative team through the state machine and asserts it. It will catch
 every place someone was tempted to mutate task state without an event.
 """
 import json
@@ -23,7 +23,7 @@ def _all_events(conn):
     return conn.execute("SELECT * FROM events ORDER BY seq").fetchall()
 
 
-def _drive_representative_fleet(conn):
+def _drive_representative_team(conn):
     """Create tasks with a dep and walk them through happy, retry, and cancel
     paths. Returns the created task ids."""
     # a: the dependency, walked all the way to delivered (happy path).
@@ -32,7 +32,7 @@ def _drive_representative_fleet(conn):
     # b: depends on a; failed verify -> triage -> restart -> ... -> delivered.
     b = create_task(conn, title="feature", brief="use the lib", repo="r",
                     delivery_mode="local", verify_cmd="pytest", depends_on=[a])
-    # c: gets cancelled by the captain mid-flight.
+    # c: gets cancelled by the manager mid-flight.
     c = create_task(conn, title="scout", brief="investigate", repo="r",
                     delivery_mode="scout")
 
@@ -75,7 +75,7 @@ def _drive_representative_fleet(conn):
     s = append_event(conn, source="delivery", type="delivery.merged_local", task_id=b)
     transition(conn, b, "delivered", cause_seq=s)
 
-    # --- c: captain cancels from blocked (any -> cancelled)
+    # --- c: manager cancels from blocked (any -> cancelled)
     s = append_event(conn, source="human", type="human.cancelled", task_id=c)
     transition(conn, c, "cancelled", cause_seq=s)
 
@@ -84,7 +84,7 @@ def _drive_representative_fleet(conn):
 
 def test_replay_rebuilds_tasks():
     conn = connect()
-    _drive_representative_fleet(conn)
+    _drive_representative_team(conn)
 
     live = _tasks_table(conn)
     rebuilt = replay(_all_events(conn))
@@ -96,7 +96,7 @@ def test_replay_matches_after_reopen(tmp_path):
     """Same invariant, but against a real on-disk WAL db reopened fresh."""
     db = str(tmp_path / "orch.db")
     conn = connect(db)
-    _drive_representative_fleet(conn)
+    _drive_representative_team(conn)
     conn.close()
 
     conn = connect(db)  # reopen; schema apply is idempotent
