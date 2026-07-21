@@ -13,6 +13,7 @@ dependencies = ["claude-agent-sdk>=0.2.123", "pydantic>=2"]
 dev = ["pytest", "ruff"]
 
 [project.scripts]
+orchestrator = "orchestrator.cli:main"
 verify-gate = "orchestrator.verify.cli:main"
 supervisor-replay = "orchestrator.supervisor.replay:main"
 

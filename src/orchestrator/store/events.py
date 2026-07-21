@@ -49,13 +49,16 @@ _TRANSITIONS = {
     ("triage", "needs_human"),
     ("triage", "failed"),
     ("needs_human", "running"),
+    ("needs_human", "queued"),
     ("needs_human", "delivering"),
     ("delivering", "delivered"),
     ("delivering", "triage"),
 }
 
-# Columns transition() may update alongside the state change.
-_UPDATABLE = {"session_id", "worktree", "retries", "max_retries", "base_sha"}
+# Columns transition() may update alongside the state change. `brief` joined
+# this set for needs_human -> queued (cli.py's `answer` command folds the
+# human's answer into the brief so the next attempt actually sees it).
+_UPDATABLE = {"session_id", "worktree", "retries", "max_retries", "base_sha", "brief"}
 
 
 def _legal(frm: str, to: str) -> bool:

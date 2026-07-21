@@ -1,6 +1,9 @@
 # Design: agent orchestration system for Claude Code
 
-Status: M5 complete (worktree pool, dep resolution, all three delivery modes). This document is the source of truth for architecture decisions.
+Status: M5 complete (worktree pool, dep resolution, all three delivery modes),
+plus an `orchestrator` CLI (add-task/run/daemon/answer/status, docs/usage.md)
+layered on top so the system is usable without hand-writing a Python script.
+This document is the source of truth for architecture decisions.
 It doubles as agent context; docs/design.md symlinks here so the same file
 serves both. Update it when decisions change; log the change and rationale in
 devlog.md.
@@ -104,6 +107,7 @@ delivered, failed, cancelled`. Terminal: delivered, failed, cancelled.
 | triage | needs_human | supervisor `escalate`, or retries exhausted |
 | triage | failed | supervisor `abandon` — yolo mode only |
 | needs_human | running | manager's answer injected into session |
+| needs_human | queued | manager answered (`orchestrator answer`); requeued with the answer folded into the brief |
 | needs_human | delivering | manager overrides a failed verification |
 | delivering | delivered | PR opened / local ff-merge done / scout report written |
 | delivering | triage | push rejected, merge conflict |
@@ -390,9 +394,11 @@ gets fully specced:
   session end → `worker.exited`.
 - Done-claim detection protocol: TBD in M1 (likely a required final structured
   message or sentinel; do not rely on parsing prose).
-- Intervention = injecting a message into the session (supervisor nudge,
-  manager answer). Logged as events; the orchestrator always knows a human
-  intervened.
+- Intervention = injecting a message into the live session (supervisor
+  nudge) or, once escalation has already torn the session down, requeuing
+  with the intervention folded into the brief for a fresh one (manager
+  answer via `orchestrator answer`, docs/usage.md). Logged as events either
+  way; the orchestrator always knows a human intervened.
 - Worktree pool: raw `git worktree`, ~50 lines, no treehouse dependency.
 - Spike questions: does mid-session message injection work as assumed? cost
   granularity per message or per session? what does "done" look like in the

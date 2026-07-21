@@ -325,20 +325,55 @@ plumbed.
 73 tests now (up from 60), all still free/deterministic except the 4
 pre-existing opt-in live ones. No new dependencies.
 
-## 2026-07-21
+## 2026-07-21 - `orchestrator` CLI: add-task, run, daemon, answer, status
 
-Terminology cleanup: dropped the nautical metaphor project-wide. `captain` ->
-`manager`, `crew`/`fleet` -> `team` (both collapsed to the same word since
-they meant the same thing: the whole batch of tasks/sessions, as opposed to
-`firstmate`'s per-session meaning of "crew"). `_fleet_settled` ->
-`_team_settled`, `_drive_representative_fleet` -> `_drive_representative_team`
-in test_replay.py. Left `firstmate` alone everywhere it's the actual name of
-the referenced prior-art project (kunchenguid/firstmate), and left generic
-"ship" (e.g. "ship task", "ship fixed") alone since that's ordinary dev slang
-for "release," not part of the nautical theme. Also flipped the CLAUDE.md /
-docs/design.md symlink direction: CLAUDE.md is now the real file, docs/design.md
-symlinks to it (previously the two were just an unsynced manual copy, despite
-the doc claiming a symlink). New docs/usage.md written this session too: a
-practical "how do I actually drive a batch" companion to design.md, since
-today that's a short Python script (create_task + Scheduler +
-run_until_settled()), not a CLI -- no daemon or task-entry CLI exists yet.
+The system was usable only by hand-writing a Python script per batch
+(Scheduler + create_task called directly). Added src/orchestrator/cli.py, a
+thin argparse wrapper -- no new control flow, just the plumbing design.md's
+non-goals never ruled out: `orchestrator add-task/run/daemon/answer/status`.
+Registered as the `orchestrator` console script alongside the existing
+verify-gate/supervisor-replay ones.
+
+`daemon` needed one real Scheduler change: run_until_settled() gained
+`forever: bool = False, poll_interval_s: float = 1.0` kwargs. With
+forever=True the loop never exits just because the team is momentarily
+settled -- it keeps re-querying the same SQLite file for newly-blocked/queued
+rows, so a separate `add-task` process (or any other connection) writing to
+that file gets picked up without restarting the daemon. Verified this isn't
+just plausible reasoning about WAL mode: a real test starts run_until_settled
+(forever=True) against an empty DB, waits, creates a task on a *second*
+connection to the same file, and asserts it gets spawned and delivered
+before cancelling the loop.
+
+`answer` was the one with a real design question: design.md's state table
+says `needs_human -> running`, "manager's answer injected into session" --
+but by the time a task reaches needs_human, _handle_triage's escalate branch
+has already torn the worker down. There's no session left to inject into.
+So `answer` actually does `needs_human -> queued`, folding the message into
+the task's `brief` (symmetric to how the supervisor's own `restart` appends
+feedback) for a fresh attempt next time something runs the scheduler. Added
+"queued" as a legal needs_human transition and added `brief` to
+transition()'s `_UPDATABLE` set -- replay() needed no changes since it
+already walks `_UPDATABLE` generically. Updated the design.md table with the
+new edge and corrected the worker-lifecycle note (section 8) that had
+implied live-session injection for this case.
+
+Real bug found via a shell smoke test, not the test suite: WorktreePool
+never resolved repo_root/worktree_root to absolute paths. `git worktree add`
+in open() runs with cwd=repo_root, so a relative worktree_root resolved
+against the repo; the per-slot git calls in acquire() run with cwd=<slot>,
+which is relative to whatever process is calling the scheduler -- two
+different interpretations of the same relative path depending on call site.
+Every existing test happened to pass an absolute tmp_path-derived
+worktree_root, so this never surfaced until the CLI's relative
+`data/worktrees` default hit it in a real terminal. Fixed by resolving both
+paths once in WorktreePool.__init__ rather than working around it in cli.py.
+
+`status <task_id>` prints the live escalation (summary/question/options/
+recommended, pulled from the last supervisor.acted event) plus the exact
+`orchestrator answer ...` command to resolve it -- the point of the command
+is to remove the "go write SQL by hand" step docs/usage.md used to describe.
+
+10 new tests in tests/test_cli.py (81 total). docs/usage.md rewritten to
+lead with the CLI; the direct-library path is now section 8, for embedding
+rather than day-to-day use.

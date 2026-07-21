@@ -31,8 +31,14 @@ def _git_ok(*args, cwd) -> str:
 
 class WorktreePool:
     def __init__(self, repo_root, worktree_root, size: int):
-        self.repo_root = Path(repo_root)
-        self.worktree_root = Path(worktree_root)
+        # Resolved eagerly: git worktree add (open(), cwd=repo_root) and the
+        # per-slot git calls in acquire() (cwd=<slot path>) both receive
+        # these as `cwd=`, but subprocess resolves a relative cwd against
+        # the CALLING process's own cwd, not against repo_root -- a
+        # relative worktree_root would then mean two different directories
+        # depending on which call site touched it.
+        self.repo_root = Path(repo_root).resolve()
+        self.worktree_root = Path(worktree_root).resolve()
         self.size = size
         self._slots: list[Path] = []
         self._free: asyncio.Queue = asyncio.Queue()

@@ -71,12 +71,18 @@ class Scheduler:
 
     # -- public entry point -------------------------------------------------
 
-    async def run_until_settled(self) -> None:
+    async def run_until_settled(self, *, forever: bool = False, poll_interval_s: float = 1.0) -> None:
         """Drive every currently blocked/queued/running/triage task to a
-        resting state (needs_human or a terminal state). This is the whole
-        of the daemon: a fixed batch run to completion. Watching a live DB
-        forever for manager-submitted tasks is a front-end concern for a
-        later milestone.
+        resting state (needs_human or a terminal state), then return -- a
+        fixed batch run to completion.
+
+        With forever=True this never returns on its own: once the team
+        settles it keeps polling (every poll_interval_s) for newly added
+        tasks instead of exiting, so a separate `orchestrator add-task`
+        process writing to the same SQLite file gets picked up without
+        restarting this one. That's the whole of daemon mode; cancel the
+        awaiting task (e.g. on Ctrl-C) to stop it -- the `finally` below
+        still runs, tearing down any live worker cleanly.
         """
         reconcile(self.conn)
         self._pool.open()
@@ -89,10 +95,10 @@ class Scheduler:
 
         watchdog = asyncio.create_task(self._watchdog_loop())
         try:
-            while not self._team_settled():
+            while forever or not self._team_settled():
                 self._advance_deps()
                 await self._launch_ready()
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(poll_interval_s if (forever and self._team_settled()) else 0.05)
         finally:
             watchdog.cancel()
             await asyncio.gather(watchdog, return_exceptions=True)
