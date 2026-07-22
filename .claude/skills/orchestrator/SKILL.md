@@ -45,14 +45,21 @@ Launch with Bash `run_in_background: true` - this drives every pending task
 to a resting state and can take anywhere from seconds to a long time, and
 blocking the conversation on it is worse than reporting back when it's done.
 Tell the user you're doing this and that you'll report back; don't silently
-background it.
+background it. Immediately follow with `Monitor` on that background task:
+`run`/`daemon` print a line the instant a task lands in `needs_human`,
+`delivered`, or `failed` (not just at the very end), so Monitor is what
+turns those into a live notification in this chat instead of you finding out
+only when the whole batch finishes or the user asks for `status`.
 
 **"keep it running" / "start the daemon" / "watch for new tasks"**
 ```
 orchestrator daemon --repo-root <path> [--poll-interval <seconds>]
 ```
 See Guardrails - this one needs an explicit separate confirmation before you
-launch it, every time, regardless of how the request is phrased.
+launch it, every time, regardless of how the request is phrased. Same
+Monitor pattern as `run` above - `daemon` never exits on its own, so Monitor
+is the only way you'll hear about a `needs_human` task without the user
+having to ask.
 
 **"what's the status" / "how's it going" / "show me the tasks"**
 ```
@@ -121,12 +128,15 @@ that, not to slow things down for their own sake.
      ask this session to stop it (tracked via the background task id so
      `TaskStop` can end it cleanly), or `pkill -f "orchestrator daemon"`
      themselves if this session isn't around anymore.
-6. **Surface `needs_human` proactively, don't just report state.** After any
-   `run` finishes, or when checking `status` for any reason, if a task is
-   `needs_human`, always relay its summary/question/options in plain
-   language and ask the user how to answer - don't wait for them to notice
-   and ask separately. This is the one moment the system actually asks for a
-   human, so don't let it pass silently.
+6. **Surface `needs_human` proactively, don't just report state.** A
+   `[needs_human] <task_id> <title>` line from `Monitor` on a backgrounded
+   `run`/`daemon` is your cue to act on immediately - run
+   `orchestrator status <task_id>` for the full escalation and relay its
+   summary/question/options in plain language, then ask the user how to
+   answer. Same rule applies after any `run` finishes or whenever you check
+   `status` for any other reason: don't wait for the user to notice and ask
+   separately. This is the one moment the system actually asks for a human,
+   so don't let it pass silently.
 7. **When in doubt about scope or consequences, ask before running** rather
    than picking a default and mentioning it after the fact - a single `run`
    already commits to a lot of autonomous activity, so "ask first" is

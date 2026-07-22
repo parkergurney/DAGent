@@ -22,6 +22,14 @@ from orchestrator.store import append_event, connect, create_task, transition
 from orchestrator.supervisor import always_escalate, invoke_supervisor
 from orchestrator.worker import spawn_fake_worker, spawn_sdk_worker
 
+# States worth a stdout line the moment a task lands there: the "your crew
+# needs you" and "here's your PR" moments. A backgrounded `run`/`daemon`
+# streams these so the calling session can watch this process's stdout
+# (e.g. the Monitor tool) instead of polling `status` -- the event-driven
+# wake firstmate's watcher gives its captain, built on the events table
+# that's already this system's source of truth (design.md section 3).
+_NOTIFY_STATES = ("needs_human", "delivered", "failed")
+
 
 def cmd_add_task(args) -> int:
     conn = connect(args.db)
@@ -50,10 +58,44 @@ def _build_scheduler(conn, args) -> Scheduler:
     )
 
 
+async def _notify_loop(db_path: str, poll_s: float = 1.0) -> None:
+    """Poll `events` (a second connection -- WAL mode makes this a safe
+    concurrent reader alongside the scheduler's writer) for state changes
+    landing in _NOTIFY_STATES, printing one line per hit. Runs alongside
+    run_until_settled() until cancelled."""
+    notify_conn = connect(db_path)
+    try:
+        last_seq = notify_conn.execute("SELECT COALESCE(MAX(seq), 0) c FROM events").fetchone()["c"]
+        while True:
+            rows = notify_conn.execute(
+                "SELECT seq, task_id, payload FROM events "
+                "WHERE seq > ? AND type = 'task.state_changed' ORDER BY seq", (last_seq,),
+            ).fetchall()
+            for row in rows:
+                last_seq = row["seq"]
+                to_state = json.loads(row["payload"])["to"]
+                if to_state in _NOTIFY_STATES:
+                    title = notify_conn.execute(
+                        "SELECT title FROM tasks WHERE id = ?", (row["task_id"],)).fetchone()["title"]
+                    print(f"[{to_state}] {row['task_id']}  {title}", flush=True)
+            await asyncio.sleep(poll_s)
+    finally:
+        notify_conn.close()
+
+
+async def _run_with_notify(coro, db_path: str) -> None:
+    notifier = asyncio.create_task(_notify_loop(db_path))
+    try:
+        await coro
+    finally:
+        notifier.cancel()
+        await asyncio.gather(notifier, return_exceptions=True)
+
+
 def cmd_run(args) -> int:
     conn = connect(args.db)
     scheduler = _build_scheduler(conn, args)
-    asyncio.run(scheduler.run_until_settled())
+    asyncio.run(_run_with_notify(scheduler.run_until_settled(), args.db))
     _print_status_table(conn)
     return 0
 
@@ -63,7 +105,8 @@ def cmd_daemon(args) -> int:
     scheduler = _build_scheduler(conn, args)
     print(f"watching {args.db} for tasks (Ctrl-C to stop)...", file=sys.stderr)
     try:
-        asyncio.run(scheduler.run_until_settled(forever=True, poll_interval_s=args.poll_interval))
+        asyncio.run(_run_with_notify(
+            scheduler.run_until_settled(forever=True, poll_interval_s=args.poll_interval), args.db))
     except KeyboardInterrupt:
         print("\nshutting down...", file=sys.stderr)
     return 0

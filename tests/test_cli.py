@@ -8,9 +8,9 @@ supervisor/replay.py's own tests.
 import asyncio
 import json
 
-from orchestrator.cli import main
+from orchestrator.cli import _notify_loop, main
 from orchestrator.scheduler import Scheduler
-from orchestrator.store import connect, create_task
+from orchestrator.store import append_event, connect, create_task, transition
 from tests.helpers import init_repo
 
 
@@ -161,6 +161,44 @@ def test_run_command_drives_a_real_task_to_delivered(tmp_path, capsys):
     conn = connect(db)
     assert conn.execute(
         "SELECT state FROM tasks WHERE id=?", (task_id,)).fetchone()["state"] == "delivered"
+
+
+def test_notify_loop_prints_only_states_a_human_should_hear_about(tmp_path, capsys):
+    """The event-driven wake the orchestrator Skill relies on to Monitor a
+    backgrounded run/daemon instead of polling `status` -- a second reader
+    connection over the same events-are-truth table (design.md section 3),
+    filtered to the "your crew needs you" / "here's your PR" states."""
+    db_path = str(tmp_path / "orch.db")
+    conn = connect(db_path)
+    task_id = create_task(conn, title="stuck task", brief="b", repo="/tmp/x",
+                          delivery_mode="scout")
+
+    async def scenario():
+        # Start the notifier before anything happens -- it must only report
+        # transitions that land *after* it starts watching, tail -f style,
+        # not replay a db's whole history on every launch.
+        notifier = asyncio.create_task(_notify_loop(db_path, poll_s=0.02))
+        await asyncio.sleep(0.05)
+
+        s = append_event(conn, source="scheduler", type="dep.satisfied", task_id=task_id)
+        transition(conn, task_id, "queued", cause_seq=s)  # noisy, not in _NOTIFY_STATES
+        s = append_event(conn, source="scheduler", type="worker.spawned", task_id=task_id)
+        transition(conn, task_id, "running", cause_seq=s)  # noisy, not in _NOTIFY_STATES
+        s = append_event(conn, source="worker", type="worker.asked", task_id=task_id)
+        transition(conn, task_id, "triage", cause_seq=s)
+        s = append_event(conn, source="supervisor", type="supervisor.acted", task_id=task_id)
+        transition(conn, task_id, "needs_human", cause_seq=s)
+
+        await asyncio.sleep(0.1)
+        notifier.cancel()
+        await asyncio.gather(notifier, return_exceptions=True)
+
+    asyncio.run(scenario())
+    conn.close()
+
+    out = capsys.readouterr().out
+    assert f"[needs_human] {task_id}  stuck task" in out
+    assert "[queued]" not in out and "[running]" not in out and "[triage]" not in out
 
 
 def test_scheduler_forever_picks_up_task_added_by_another_connection(tmp_path):

@@ -56,6 +56,12 @@ status table. This is the whole of a batch run: real Claude Code worker
 sessions in pooled git worktrees, real triage decisions from a live LLM
 supervisor, real verify-gate grading, real delivery.
 
+It also streams one line to stdout the moment any task lands in
+`needs_human`, `delivered`, or `failed` — you don't have to wait for the
+whole batch or poll `status` to find out. Run this in the background and
+watch its stdout (e.g. Claude Code's `Monitor` tool, or `tail -f` on a
+redirected log) to get notified as it happens.
+
 Useful flags (all optional):
 
 - `--worker-model` / `--supervisor-model` — override `config.py`'s defaults.
@@ -86,7 +92,9 @@ keeps polling the SQLite file (every `--poll-interval` seconds, default 1) for
 newly added tasks, so a separate `orchestrator add-task` call — from another
 terminal, or a script, or a cron job — gets picked up without restarting this
 process. Stop it with Ctrl-C; it tears down any live worker cleanly before
-exiting.
+exiting. Same stdout notification stream as `run` above — since `daemon`
+never exits, that stream is the only way to hear about a `needs_human` task
+without going and asking for `status` yourself.
 
 ## 5. When a task lands in `needs_human`
 

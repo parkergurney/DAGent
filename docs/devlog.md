@@ -377,3 +377,49 @@ is to remove the "go write SQL by hand" step docs/usage.md used to describe.
 10 new tests in tests/test_cli.py (81 total). docs/usage.md rewritten to
 lead with the CLI; the direct-library path is now section 8, for embedding
 rather than day-to-day use.
+
+## 2026-07-22 - closed the live-nudge gap, added event-driven notifications
+
+First: a real live nudge.
+Section 6's supervisor contract has always specified `nudge` as "message
+injected into the live session," and scheduler/core.py's `_handle_triage`
+already wrote the message to the worker subprocess's stdin.
+But worker/sdk_worker.py never read it back into the conversation -- the
+`asked` branch called `sys.stdin.readline()` and discarded the result, then
+exited.
+The nudge landed on the pipe and went nowhere.
+Restructured `run()` into a loop: after an ASK, block on stdin, and if a
+reply arrives, `client.query()` it back into the same `ClaudeSDKClient`
+session (confirmed via the SDK source that `query()` is safely re-callable
+mid-session) instead of tearing down.
+No reply (stdin closes because escalate/abandon tore the process down
+instead) still exits clean, same as before.
+Covered by two new unit tests in test_sdk_worker.py against a fake
+`ClaudeSDKClient` stand-in, no live API calls.
+
+Second: nothing proactively told the human anything.
+`run` blocked silently until the batch settled; `daemon` polled forever and
+never printed anything after its startup line, so the only way to learn a
+task hit `needs_human` was to remember to run `status`.
+Added `_notify_loop` in cli.py: a second SQLite connection (safe under WAL,
+concurrent with the scheduler's own writer) that tails `events` for
+`task.state_changed` rows landing in needs_human/delivered/failed and prints
+one line per hit.
+Wired into both `run` and `daemon` via `_run_with_notify`, which races it
+alongside `run_until_settled()` and cancels it on exit.
+No changes to Scheduler itself -- this reads the same events table
+everything else already treats as the source of truth, from the outside.
+Updated the `orchestrator` skill to launch a backgrounded `run`/`daemon` and
+then `Monitor` its stdout instead of only checking `status` after the fact,
+so a chat session gets woken the way firstmate's bash watcher wakes its
+captain.
+Tested with a dedicated `_notify_loop` unit test (start the loop, then
+transition a task while it's already polling -- it must ignore
+already-existing history and only report what happens next) rather than
+relying on race-prone timing inside a full `cmd_run` run.
+
+Deliberately did not touch: visible/watchable worker sessions (tmux-style
+panes) or the `answer` command's restart-vs-nudge semantics for
+`needs_human` -- design.md's non-goals rule the first out for v1, and the
+second is an intentional, already-logged decision (2026-07-21 entry above),
+not a bug.

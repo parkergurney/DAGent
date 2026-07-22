@@ -25,10 +25,12 @@ Built on the four M1 spike findings (spike/m1_spike.py, docs/devlog.md):
   - Cost lands once per completed turn (ResultMessage.total_cost_usd); token
     counts ride per AssistantMessage (usage dict).
 
-M2's no-supervisor policy is unchanged here: a mid-session ASK still just
-blocks on stdin (a real supervisor reply would land there in M4) and the
-scheduler's watchdog/teardown ends it the same way it ends FakeWorker's ask
-scenario.
+A mid-session ASK blocks on stdin; a supervisor `nudge` (scheduler/core.py's
+_handle_triage) writes its message there, which this resumes the SDK
+conversation with -- the live-intervention path design.md section 6
+describes. If nothing ever lands on stdin (escalate/abandon instead), the
+scheduler's teardown kills the process group and the blocked readline dies
+with it, same as any other torn-down attempt.
 """
 import argparse
 import asyncio
@@ -130,24 +132,31 @@ async def run(worktree: Path, brief: str, model: str | None) -> None:
 
     async with ClaudeSDKClient(options=options) as client:
         await client.query(prompt)
-        async for msg in client.receive_response():
-            if isinstance(msg, AssistantMessage):
-                text = "".join(getattr(b, "text", "") or "" for b in msg.content)
-                if text.strip():
-                    usage = msg.usage or {}
-                    emit("messaged", text=text[:500],
-                        tokens_in=usage.get("input_tokens"),
-                        tokens_out=usage.get("output_tokens"))
-            elif isinstance(msg, ResultMessage):
-                kind, extra = _parse_terminal(msg.result)
-                if kind == "done_claimed":
-                    emit("done_claimed", cost_usd=msg.total_cost_usd,
-                        session_id=msg.session_id, **extra)
-                elif kind == "asked":
-                    emit("asked", cost_usd=msg.total_cost_usd,
-                        session_id=msg.session_id, **extra)
-                    sys.stdin.readline()  # a real supervisor reply would land here (M4)
-                # else: no sentinel -- exit without a claim, on purpose.
+        while True:
+            kind, extra, cost_usd, session_id = None, {}, None, None
+            async for msg in client.receive_response():
+                if isinstance(msg, AssistantMessage):
+                    text = "".join(getattr(b, "text", "") or "" for b in msg.content)
+                    if text.strip():
+                        usage = msg.usage or {}
+                        emit("messaged", text=text[:500],
+                            tokens_in=usage.get("input_tokens"),
+                            tokens_out=usage.get("output_tokens"))
+                elif isinstance(msg, ResultMessage):
+                    kind, extra = _parse_terminal(msg.result)
+                    cost_usd, session_id = msg.total_cost_usd, msg.session_id
+
+            if kind == "asked":
+                emit("asked", cost_usd=cost_usd, session_id=session_id, **extra)
+                reply = sys.stdin.readline()
+                if not reply:
+                    return  # stdin closed -- torn down (escalate/abandon), nothing to resume
+                await client.query(reply.rstrip("\n"))
+                continue  # a nudge landed on stdin -- resume this same conversation
+
+            if kind == "done_claimed":
+                emit("done_claimed", cost_usd=cost_usd, session_id=session_id, **extra)
+            return  # done_claimed, or no sentinel -- exit without a claim, on purpose
 
 
 def main() -> None:

@@ -57,6 +57,32 @@ def test_cli_record_transitions_task_state(tmp_path, capsys):
     assert row["state"] == "delivering"
 
 
+def test_cli_falls_back_to_the_task_rows_setup_cmd(tmp_path, capsys):
+    """--setup-cmd is an override, not the only source (design.md section 7:
+    this CLI must use "the exact machinery the scheduler uses"). A task
+    created with its own setup_cmd must get it run even when the CLI
+    invocation doesn't pass --setup-cmd itself."""
+    repo = init_repo(tmp_path)
+    db = tmp_path / "orch.db"
+    conn = connect(str(db))
+    task_id = create_task(conn, title="t", brief="clean", repo=str(repo),
+                          delivery_mode="scout", setup_cmd="touch installed.marker",
+                          verify_cmd="test -f installed.marker")
+    wt, base_sha = create_worktree(repo, tmp_path / "worktrees", task_id)
+    (wt / "output.txt").write_text("done\n")
+    git("add", "-A", cwd=wt)
+    git("commit", "-qm", "work", cwd=wt)
+    conn.execute("UPDATE tasks SET worktree=?, base_sha=? WHERE id=?", (str(wt), base_sha, task_id))
+    conn.commit()
+    conn.close()
+
+    code = verify_gate_main(["--task", task_id, "--db", str(db), "--json"])
+
+    assert code == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["passed"] is True
+
+
 def test_cli_unknown_task_errors(tmp_path):
     db = tmp_path / "orch.db"
     connect(str(db)).close()

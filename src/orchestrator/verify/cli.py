@@ -18,7 +18,7 @@ def main(argv=None) -> int:
     p.add_argument("--db", default="data/orchestrator.db")
     p.add_argument("--protected", action="append", default=None,
                    help="protected-path glob; repeatable (default: tests/**, test_*.py, *_test.py)")
-    p.add_argument("--setup-cmd")
+    p.add_argument("--setup-cmd", help="overrides the task's own setup_cmd if given")
     p.add_argument("--hidden-cmd")
     p.add_argument("--timeout", type=int, default=600)
     p.add_argument("--json", action="store_true")
@@ -35,7 +35,7 @@ def main(argv=None) -> int:
 
     req = VerifyRequest(
         task_id=task["id"], worktree=task["worktree"], base_sha=task["base_sha"],
-        verify_cmd=task["verify_cmd"] or "true", setup_cmd=args.setup_cmd,
+        verify_cmd=task["verify_cmd"] or "true", setup_cmd=args.setup_cmd or task["setup_cmd"],
         hidden_cmd=args.hidden_cmd, timeout_s=args.timeout,
         protected_paths=tuple(args.protected) if args.protected else DEFAULT_PROTECTED,
     )
