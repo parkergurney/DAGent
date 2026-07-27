@@ -9,7 +9,9 @@ Usage: [docs/usage.md](docs/usage.md).
 
 ## Layout
 
-    docs/design.md        symlink to CLAUDE.md, the source of truth for architecture
+    docs/design.md        full architecture design doc, the source of truth
+    CLAUDE.md              trimmed core (thesis, architecture, invariants), always loaded
+    .claude/skills/        topic skills with the rest of docs/design.md, loaded on demand
     docs/usage.md         practical "how do I actually run tasks" guide
     docs/devlog.md        session log; writes the eventual post
     src/orchestrator/
