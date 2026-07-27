@@ -7,12 +7,17 @@ without hand-writing a Python script per batch:
     orchestrator run       [--fake-worker] [--fake-supervisor] ...
     orchestrator daemon    [--poll-interval S] ...   # like run, never exits
     orchestrator answer TASK_ID "message"
-    orchestrator status [TASK_ID]
+    orchestrator status [TASK_ID] [--digest]
+
+`--repo` also accepts a short name from repos.toml (see docs/usage.md)
+instead of a full path.
 """
 import argparse
 import asyncio
 import json
 import sys
+import tomllib
+from collections import Counter
 from functools import partial
 from pathlib import Path
 
@@ -31,10 +36,22 @@ from orchestrator.worker import spawn_fake_worker, spawn_sdk_worker
 _NOTIFY_STATES = ("needs_human", "delivered", "failed")
 
 
+def _load_repo_registry(path: str = "repos.toml") -> dict:
+    """Flat name -> path lookup, see repos.toml and docs/usage.md. Missing
+    file just means no registry is in use; not an error."""
+    p = Path(path)
+    if not p.exists():
+        return {}
+    with open(p, "rb") as f:
+        data = tomllib.load(f)
+    return data.get("repos", {})
+
+
 def cmd_add_task(args) -> int:
     conn = connect(args.db)
+    repo = _load_repo_registry().get(args.repo, args.repo)
     task_id = create_task(
-        conn, title=args.title, brief=args.brief, repo=args.repo,
+        conn, title=args.title, brief=args.brief, repo=repo,
         delivery_mode=args.delivery_mode, verify_cmd=args.verify_cmd,
         setup_cmd=args.setup_cmd, max_retries=args.max_retries,
         depends_on=args.depends_on,
@@ -174,8 +191,42 @@ def _print_task_detail(conn, task_id: str) -> int:
     return 0
 
 
+def _print_status_digest(conn) -> None:
+    """One-shot, terser summary: state counts, needs_human questions, session
+    count. Pull-only read of current state -- no loop, no polling, no
+    supervision (design.md's non-goals rule out a chat liaison front-end)."""
+    rows = conn.execute("SELECT state FROM tasks").fetchall()
+    if not rows:
+        print("no tasks")
+        return
+    counts = Counter(r["state"] for r in rows)
+    summary = ", ".join(f"{n} {s}" for s, n in counts.most_common())
+    print(f"{len(rows)} tasks: {summary}")
+
+    session_count = conn.execute(
+        "SELECT COUNT(DISTINCT session_id) c FROM tasks WHERE session_id IS NOT NULL"
+    ).fetchone()["c"]
+    print(f"worker sessions spawned: {session_count}")
+
+    needs_human = conn.execute(
+        "SELECT id, title FROM tasks WHERE state = 'needs_human' ORDER BY created_at").fetchall()
+    if needs_human:
+        print(f"\nneeds_human ({len(needs_human)}):")
+        for row in needs_human:
+            acted = conn.execute(
+                "SELECT payload FROM events WHERE task_id = ? AND type = 'supervisor.acted' "
+                "ORDER BY seq DESC LIMIT 1", (row["id"],)).fetchone()
+            question = json.loads(acted["payload"]).get("question", "") if acted else ""
+            print(f"  {row['id']}  {row['title']}")
+            if question:
+                print(f"    asking: {question}")
+
+
 def cmd_status(args) -> int:
     conn = connect(args.db)
+    if args.digest:
+        _print_status_digest(conn)
+        return 0
     if args.task_id:
         return _print_task_detail(conn, args.task_id)
     _print_status_table(conn)
@@ -235,6 +286,8 @@ def main(argv=None) -> int:
     p_status = sub.add_parser("status", help="list tasks, or show one task's detail")
     p_status.add_argument("task_id", nargs="?")
     p_status.add_argument("--db", default="data/orchestrator.db")
+    p_status.add_argument("--digest", action="store_true",
+        help="one-shot terse summary: state counts, needs_human questions, session count")
     p_status.set_defaults(func=cmd_status)
 
     args = p.parse_args(argv)

@@ -44,6 +44,14 @@ Prints the new task's id (a ULID). Defaults to `data/orchestrator.db`; pass
 `--depends-on <task_id>` — a task sits in `blocked` until every dependency
 reaches `delivered`, and cascades to `cancelled` if any dependency fails.
 
+`--repo` also accepts a short name registered in `repos.toml` (repo root)
+instead of a full path -- see that file for the format. It's a flat,
+manually-edited `name = "path"` table; nothing clones or initializes repos
+for you, and there's no per-repo policy config, just a lookup so you don't
+have to retype paths. Add an entry, then pass the name: `--repo
+agent-orchestrator` instead of `--repo /path/to/checkout`. Anything not
+found in the table is used as a literal path, unchanged.
+
 ## 3. Run it
 
 ```bash
@@ -101,8 +109,15 @@ without going and asking for `status` yourself.
 ```bash
 orchestrator status                    # list every task and its state
 orchestrator status <task_id>          # that task's escalation: summary, question, options
+orchestrator status --digest           # one-shot terse summary (see below)
 orchestrator answer <task_id> "use the prod config, not staging"
 ```
+
+`--digest` prints task counts by state, any `needs_human` tasks with their
+questions, and the total worker-session count, instead of the full row-per-task
+table. It's a single synchronous read of the same SQLite store as plain
+`status` -- not a loop, not polling, not a background watcher -- so it's safe
+to run any time you just want the short version.
 
 `answer` folds your message into the task's brief and requeues it
 (`needs_human -> queued`) for a fresh worker attempt with that context — by

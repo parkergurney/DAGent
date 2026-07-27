@@ -1,0 +1,9 @@
+# Flat registry of known local repo paths, so `orchestrator add-task --repo`
+# can take a short name instead of a full path (docs/usage.md section 2).
+#
+# Manually edited. No clone/init logic, no per-repo policy config, no state
+# beyond this file -- add a line here when you have a repo path you don't
+# want to keep retyping.
+
+[repos]
+agent-orchestrator = "/path/to/your/checkout/of/agent-orchestrator"

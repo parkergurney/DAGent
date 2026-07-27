@@ -21,6 +21,14 @@ file exist because one Bash approval for `run`/`daemon` unlocks a lot of
 unattended, hard-to-interrupt activity - keep them, don't route around them
 just because a request seems simple.
 
+## Charter
+
+If `CHARTER.md` exists at the repo root, read it before acting. It holds the
+captain's working preferences (deterministic-first, minimal moving parts,
+terse-by-default status, honest escalation) layered on top of the guardrails
+below - honor it the same way you'd honor an explicit instruction from the
+user. Don't wait to be asked; check for it once per session.
+
 ## Prereq check
 
 If `which orchestrator` fails, tell the user to run `pip install -e .` from
@@ -65,14 +73,27 @@ having to ask.
 ```
 orchestrator status
 ```
+**"give me the short version" / "quick summary" / "how many are left"**
+```
+orchestrator status --digest
+```
+Terse mode: state counts, any `needs_human` tasks with their questions, and
+the total worker-session count, instead of one row per task. Reach for this
+when the user wants a pulse check rather than the full list, or when the
+task count is large enough that the full table would bury the thing they
+actually need to know (a stuck task). It's a one-shot read, same as plain
+`status` - not a live loop, don't reach for it repeatedly to "watch" state;
+use `Monitor` on a backgrounded `run`/`daemon` for that instead.
+
 **"what's going on with <task>" / "tell me about task <id>"**
 ```
 orchestrator status <task_id>
 ```
-Translate the table/detail output into prose - task titles and plain-English
-states, not a raw dump. If a task is `needs_human`, always surface the
-question and options conversationally (see Guardrails) even if the user only
-asked for status in passing.
+Translate the table/detail/digest output into prose - task titles and
+plain-English states, not a raw dump. See "Translating status" below for how
+to phrase each state and a `needs_human` escalation. If a task is
+`needs_human`, always surface the question and options conversationally (see
+Guardrails) even if the user only asked for status in passing.
 
 **"answer <task> with X" / "tell it to use Y" / "resolve that"**
 ```
@@ -90,6 +111,35 @@ Less common flags (`--max-concurrency`, `--worker-model`, `--supervisor-model`,
 `--worktree-root`, `--max-retries`, `--config`) aren't listed above - run
 `orchestrator <command> --help` if the user asks for something not covered
 here, rather than guessing a flag name.
+
+## Translating status into plain language
+
+Never hand back a raw `state` column or a `needs_human` payload verbatim -
+say what it means and, where it matters, why the user might care:
+
+| state | say something like |
+|---|---|
+| `blocked` | "waiting on another task to finish first" |
+| `queued` | "waiting for a free worker slot" |
+| `running` | "a worker is actively on it" |
+| `verifying` | "worker claimed it's done, tests are being checked" |
+| `triage` | "something went wrong (stall, crash, or failed check) and the supervisor is deciding what to do next" |
+| `needs_human` | "stuck - it's asking you something" (always surface the question, see below) |
+| `delivering` | "verified, opening the PR / merging / writing the report now" |
+| `delivered` | "done - PR open" (or merged, or report written, per delivery mode) |
+| `failed` | "gave up - out of retries or the supervisor abandoned it (yolo mode only)" |
+| `cancelled` | "killed, or a dependency it needed failed" |
+
+For a `needs_human` task, always relay: what it was trying to do (title/brief
+in short), the escalation summary, the actual question, and the numbered
+options with the recommended one flagged - then ask the user how to answer
+rather than guessing. This is the one moment the system is explicitly asking
+for a human; don't compress it down to "1 task needs attention."
+
+`--digest`'s state-count line is meant to be read aloud as a sentence ("12
+tasks: 6 delivered, 3 running, 2 needs_human, 1 failed"), not pasted as-is -
+lead with whatever's actionable (`needs_human`, `failed`) rather than the
+raw ordering the command prints.
 
 ## Guardrails
 
