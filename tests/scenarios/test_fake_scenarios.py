@@ -26,7 +26,7 @@ def _events(conn, task_id):
         "SELECT * FROM events WHERE task_id = ? ORDER BY seq", (task_id,))]
 
 
-def _run_fleet(conn, repo, tmp_path):
+def _run_batch(conn, repo, tmp_path):
     worktree_root = tmp_path / "worktrees"
     worktree_root.mkdir()
     sched = Scheduler(conn, repo, worktree_root, max_concurrency=len(SCENARIOS),
@@ -39,7 +39,7 @@ def test_all_scenarios_reach_correct_states(tmp_path):
     conn = connect()
     ids = {name: _create(conn, repo, name) for name in SCENARIOS}
 
-    _run_fleet(conn, repo, tmp_path)
+    _run_batch(conn, repo, tmp_path)
 
     state = {name: conn.execute("SELECT state FROM tasks WHERE id = ?", (tid,)).fetchone()["state"]
             for name, tid in ids.items()}
@@ -82,7 +82,7 @@ def test_clean_delivers_via_scout_report(tmp_path):
     conn = connect()
     task_id = _create(conn, repo, "clean")
 
-    _run_fleet(conn, repo, tmp_path)
+    _run_batch(conn, repo, tmp_path)
 
     types = [e["type"] for e in _events(conn, task_id)]
     # design.md section 4's happy path, in order: dep resolution, spawn,
@@ -104,7 +104,7 @@ def test_no_commit_fails_verify_with_uncommitted_changes(tmp_path):
     conn = connect()
     task_id = _create(conn, repo, "no_commit")
 
-    _run_fleet(conn, repo, tmp_path)
+    _run_batch(conn, repo, tmp_path)
 
     failures = [e for e in _events(conn, task_id) if e["type"] == "verify.failed"]
     assert len(failures) == 1
@@ -116,7 +116,7 @@ def test_empty_diff_fails_verify(tmp_path):
     conn = connect()
     task_id = _create(conn, repo, "empty_diff")
 
-    _run_fleet(conn, repo, tmp_path)
+    _run_batch(conn, repo, tmp_path)
 
     failures = [e for e in _events(conn, task_id) if e["type"] == "verify.failed"]
     assert json.loads(failures[0]["payload"])["cause"] == "empty_diff"
@@ -127,7 +127,7 @@ def test_protected_edit_fails_verify(tmp_path):
     conn = connect()
     task_id = _create(conn, repo, "protected_edit")
 
-    _run_fleet(conn, repo, tmp_path)
+    _run_batch(conn, repo, tmp_path)
 
     failures = [e for e in _events(conn, task_id) if e["type"] == "verify.failed"]
     assert json.loads(failures[0]["payload"])["cause"] == "protected_path_modified"
@@ -138,7 +138,7 @@ def test_stall_detected_by_watchdog(tmp_path):
     conn = connect()
     task_id = _create(conn, repo, "stall")
 
-    _run_fleet(conn, repo, tmp_path)
+    _run_batch(conn, repo, tmp_path)
 
     types = [e["type"] for e in _events(conn, task_id)]
     assert "worker.stalled" in types
@@ -151,7 +151,7 @@ def test_ask_routes_to_triage_on_question(tmp_path):
     conn = connect()
     task_id = _create(conn, repo, "ask")
 
-    _run_fleet(conn, repo, tmp_path)
+    _run_batch(conn, repo, tmp_path)
 
     types = [e["type"] for e in _events(conn, task_id)]
     assert "worker.asked" in types
@@ -163,7 +163,7 @@ def test_crash_produces_unclaimed_exit(tmp_path):
     conn = connect()
     task_id = _create(conn, repo, "crash")
 
-    _run_fleet(conn, repo, tmp_path)
+    _run_batch(conn, repo, tmp_path)
 
     types = [e["type"] for e in _events(conn, task_id)]
     assert "worker.exited" in types
@@ -175,7 +175,7 @@ def test_wait_still_resolves_via_stall(tmp_path):
     conn = connect()
     task_id = _create(conn, repo, "wait")
 
-    _run_fleet(conn, repo, tmp_path)
+    _run_batch(conn, repo, tmp_path)
 
     types = [e["type"] for e in _events(conn, task_id)]
     assert types.index("worker.messaged") < types.index("worker.stalled")
