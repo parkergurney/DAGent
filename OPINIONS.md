@@ -36,5 +36,43 @@ decisions), never in the control loop itself. See `CLAUDE.md` section 1 and
   first (see `.claude/skills/orchestrator/SKILL.md` Guardrails).
 - Treat `--yolo` as an explicit opt-in only, never a default.
 
+## When the project is done
+
+"Done" means through M7 (eval runs + writeup) per the `milestones` skill.
+The system is built, benchmarked, and written up.
+No more architecture-level changes are expected after that - this section
+is forward-looking guidance for that future cleanup pass, not something to
+act on now.
+The seven skills below stay in place until M7 actually closes.
+
+Once "done", prune the dev-time-only "deep reference" topic skills under
+`.claude/skills/` - they only trigger on "touching X code", i.e. building or
+maintaining the orchestrator's own internals, not on using the finished tool:
+
+- `benchmark-plan`
+- `milestones`
+- `storage-schema`
+- `supervisor-contract`
+- `task-state-machine`
+- `verify-gate`
+- `worker-lifecycle-delivery`
+
+Keep:
+
+- `.claude/skills/orchestrator/SKILL.md` - the natural-language front end for
+  actually *using* the shipped `orchestrator` CLI (add-task/run/daemon/
+  status/answer). Still needed after completion.
+- `OPINIONS.md` (this file) - user preferences don't expire.
+- `docs/devlog.md` - historical record, not reference.
+
+Trim, don't delete:
+
+- `AGENTS.md` / `CLAUDE.md` and `docs/design.md` - cut down to what a future
+  contributor needs to orient in the finished codebase, once the deep-
+  reference skills they point to are gone.
+- `docs/design.md` specifically keeps its architecture narrative (still
+  useful for onboarding); only its "Deep reference: topic skills" section
+  goes, since it just links to the seven skills above.
+
 Edit this file directly to change any of the above - it's user-owned,
 not regenerated.
