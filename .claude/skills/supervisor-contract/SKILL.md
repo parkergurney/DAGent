@@ -5,6 +5,7 @@ description: The supervisor's TriagePacket/action-response contract, enforcement
 
 # Supervisor contract
 
+<!-- sync:supervisor-contract -->
 One function, one contract: packet in, action out, no side effects. A single
 Messages API call — no tools, no session, no memory. Stateless and therefore
 replayable: every packet is dumped to disk; prompts and models can be re-run
@@ -107,3 +108,4 @@ it renders directly in the manager UI.
   un-confuses.
 - `verify.failed`: restart with failure as feedback, unless history shows the
   same failure signature twice → escalate (the brief is the problem).
+<!-- /sync:supervisor-contract -->

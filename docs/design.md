@@ -95,6 +95,7 @@ itself an event, written in the same SQLite transaction.
 
 ## 4. Task state machine
 
+<!-- sync:task-states -->
 States: `blocked, queued, running, verifying, triage, needs_human, delivering,
 delivered, failed, cancelled`. Terminal: delivered, failed, cancelled.
 
@@ -128,11 +129,13 @@ Design notes:
   `running`, check whether `session_id` is a live session; dead ones get a
   synthetic `worker.exited` event and route through triage like any other
   crash. No special recovery code path.
+<!-- /sync:task-states -->
 
 ---
 
 ## 5. Storage schema
 
+<!-- sync:storage-schema -->
 ```sql
 CREATE TABLE tasks (
   id            TEXT PRIMARY KEY,        -- ULID, sortable by creation time
@@ -196,11 +199,13 @@ system.started        system.reconciled
   overhead = `SELECT SUM(cost_usd) FROM events WHERE source='supervisor'`.
 - Full logs/transcripts go to disk under `data/<task_id>/...`, referenced by
   path. Not in SQLite.
+<!-- /sync:storage-schema -->
 
 ---
 
 ## 6. Supervisor contract
 
+<!-- sync:supervisor-contract -->
 One function, one contract: packet in, action out, no side effects. A single
 Messages API call — no tools, no session, no memory. Stateless and therefore
 replayable: every packet is dumped to disk; prompts and models can be re-run
@@ -303,11 +308,13 @@ it renders directly in the manager UI.
   un-confuses.
 - `verify.failed`: restart with failure as feedback, unless history shows the
   same failure signature twice → escalate (the brief is the problem).
+<!-- /sync:supervisor-contract -->
 
 ---
 
 ## 7. Verify gate contract
 
+<!-- sync:verify-gate -->
 Boring, deterministic, paranoid. No LLM anywhere in it. Converts "done" claims
 into evidence; its failure taxonomy is what makes the supervisor smart.
 
@@ -383,11 +390,13 @@ class VerifyResult(BaseModel):
 
 Events: `verify.started`, then passed/failed with payload
 `{cause, exit_code, duration_s, flaky, rerun_count, failure_signature}`.
+<!-- /sync:verify-gate -->
 
 ---
 
 ## 8. Worker lifecycle (to be detailed after M1 spike)
 
+<!-- sync:worker-lifecycle -->
 Sketch — the SDK spike (M1) answers the open questions before this section
 gets fully specced:
 
@@ -407,9 +416,11 @@ gets fully specced:
 - Spike questions: does mid-session message injection work as assumed? cost
   granularity per message or per session? what does "done" look like in the
   stream? does PostToolUse fire for subagent tool calls (parent_tool_use_id)?
+<!-- /sync:worker-lifecycle -->
 
 ## 9. Delivery modes
 
+<!-- sync:delivery-modes -->
 Per-task `delivery_mode`, firstmate-style, explicit:
 
 - `pr`: push branch, open PR via gh. Delivered = PR open. Merge is the
@@ -418,11 +429,13 @@ Per-task `delivery_mode`, firstmate-style, explicit:
 - `scout`: no push ever; report written to `data/<task_id>/report.md`.
 
 Delivery failures (push rejected, conflict) → `delivery.failed` → triage.
+<!-- /sync:delivery-modes -->
 
 ---
 
 ## 10. Benchmark plan
 
+<!-- sync:benchmark-plan -->
 Conditions (identical model, pinned version in config day one):
 
 - (a) single Claude Code session, tasks sequential
@@ -460,11 +473,13 @@ supervision context serialization (JSON vs TOON) if overhead is non-trivial.
 
 Scope levers if the calendar slips, in order: cut condition (c), cut the DAG,
 shrink the task suite. NEVER cut seeds-per-condition.
+<!-- /sync:benchmark-plan -->
 
 ---
 
 ## 11. Milestones
 
+<!-- sync:milestones -->
 - **M0 — skeleton:** scaffold, schema, event store, replay + invariant test in
   CI. Exit: `replay(events) == tasks` asserted green.
 - **M1 — SDK spike (throwaway):** one script; spawn session in worktree,
@@ -494,11 +509,13 @@ cleanly, claim done without committing, empty diff, modify a protected test,
 stall silently, ask a question, crash mid-task, declare an external wait. The
 scenario suite IS the regression suite; fault injection is a test case, not a
 prayer. Never debug the orchestrator through paid nondeterministic workers.
+<!-- /sync:milestones -->
 
 ---
 
 ## 12. Config defaults
 
+<!-- sync:config-defaults -->
 ```
 max_concurrency        = 4
 max_retries            = 2
@@ -511,14 +528,17 @@ transcript_tail_tokens = 3000     # revisit if escalate reasons say
 model_worker           = <pinned>
 model_supervisor       = <pinned>
 ```
+<!-- /sync:config-defaults -->
 
 ## 13. Open questions
 
+<!-- sync:open-questions -->
 - Done-claim protocol (M1 decides).
 - transcript_tail sizing (ship fixed, log packet sizes, watch escalate
   reasons).
 - SWE-bench subset selection + contamination framing for the post.
 - Name.
+<!-- /sync:open-questions -->
 
 ## 14. Devlog discipline
 

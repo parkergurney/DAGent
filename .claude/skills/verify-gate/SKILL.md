@@ -5,6 +5,7 @@ description: The verify-gate contract - VerifyRequest/VerifyResult, execution or
 
 # Verify gate contract
 
+<!-- sync:verify-gate -->
 Boring, deterministic, paranoid. No LLM anywhere in it. Converts "done" claims
 into evidence; its failure taxonomy is what makes the supervisor smart.
 
@@ -80,3 +81,4 @@ class VerifyResult(BaseModel):
 
 Events: `verify.started`, then passed/failed with payload
 `{cause, exit_code, duration_s, flaky, rerun_count, failure_signature}`.
+<!-- /sync:verify-gate -->

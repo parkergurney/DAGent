@@ -5,6 +5,7 @@ description: Full task state machine reference for this orchestrator - states, t
 
 # Task state machine
 
+<!-- sync:task-states -->
 States: `blocked, queued, running, verifying, triage, needs_human, delivering,
 delivered, failed, cancelled`. Terminal: delivered, failed, cancelled.
 
@@ -38,3 +39,4 @@ Design notes:
   `running`, check whether `session_id` is a live session; dead ones get a
   synthetic `worker.exited` event and route through triage like any other
   crash. No special recovery code path.
+<!-- /sync:task-states -->

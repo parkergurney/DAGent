@@ -5,6 +5,7 @@ description: Worker session lifecycle (SDK spike questions, event mapping, workt
 
 # Worker lifecycle (to be detailed after M1 spike)
 
+<!-- sync:worker-lifecycle -->
 Sketch — the SDK spike (M1) answers the open questions before this section
 gets fully specced:
 
@@ -24,9 +25,11 @@ gets fully specced:
 - Spike questions: does mid-session message injection work as assumed? cost
   granularity per message or per session? what does "done" look like in the
   stream? does PostToolUse fire for subagent tool calls (parent_tool_use_id)?
+<!-- /sync:worker-lifecycle -->
 
 # Delivery modes
 
+<!-- sync:delivery-modes -->
 Per-task `delivery_mode`, firstmate-style, explicit:
 
 - `pr`: push branch, open PR via gh. Delivered = PR open. Merge is the
@@ -35,3 +38,4 @@ Per-task `delivery_mode`, firstmate-style, explicit:
 - `scout`: no push ever; report written to `data/<task_id>/report.md`.
 
 Delivery failures (push rejected, conflict) → `delivery.failed` → triage.
+<!-- /sync:delivery-modes -->

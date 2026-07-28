@@ -5,6 +5,7 @@ description: Benchmark conditions, workload, metrics, rigor, and scope-cutting l
 
 # Benchmark plan
 
+<!-- sync:benchmark-plan -->
 Conditions (identical model, pinned version in config day one):
 
 - (a) single Claude Code session, tasks sequential
@@ -42,3 +43,4 @@ supervision context serialization (JSON vs TOON) if overhead is non-trivial.
 
 Scope levers if the calendar slips, in order: cut condition (c), cut the DAG,
 shrink the task suite. NEVER cut seeds-per-condition.
+<!-- /sync:benchmark-plan -->

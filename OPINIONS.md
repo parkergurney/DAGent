@@ -4,6 +4,10 @@ What this project is for, and how the user wants the orchestrator skill
 to behave day to day. Lighter than `CLAUDE.md` (which owns the architecture)
 - this is working preferences, meant to be edited freely.
 
+Preferences here never override an invariant in `CLAUDE.md` section 3 or
+`docs/design.md`. If something below conflicts with one, the invariant wins
+and this file is wrong - fix the conflict rather than following it.
+
 ## Thesis
 
 A deterministic orchestration daemon that runs a team of Claude Code

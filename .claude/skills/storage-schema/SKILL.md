@@ -5,6 +5,7 @@ description: SQLite schema (tasks, task_deps, events tables) and the full event-
 
 # Storage schema
 
+<!-- sync:storage-schema -->
 ```sql
 CREATE TABLE tasks (
   id            TEXT PRIMARY KEY,        -- ULID, sortable by creation time
@@ -68,3 +69,4 @@ system.started        system.reconciled
   overhead = `SELECT SUM(cost_usd) FROM events WHERE source='supervisor'`.
 - Full logs/transcripts go to disk under `data/<task_id>/...`, referenced by
   path. Not in SQLite.
+<!-- /sync:storage-schema -->
