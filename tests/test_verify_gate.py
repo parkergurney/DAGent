@@ -73,6 +73,47 @@ def test_setup_failed_when_setup_cmd_errors(tmp_path):
     assert result.cause == "setup_failed"
 
 
+def test_baseline_cache_key_includes_setup_cmd(tmp_path):
+    """Two tasks can share (repo, base_sha, verify_cmd) but need different
+    setup_cmd. Regression for a real bug: the baseline cache key used to omit
+    setup_cmd, so the second task reused the first's cached baseline verdict
+    and a missing-dependency failure got misclassified as tests_failed
+    (blaming the worker) instead of baseline_broken (an environment
+    problem) -- or, the other direction, a genuinely broken base_sha could
+    grade as passing just because an earlier task's setup_cmd happened to
+    paper over it."""
+    repo = init_repo(tmp_path)
+
+    def edit(wt):
+        (wt / "unrelated.txt").write_text("x\n")
+
+    wt_a, base_sha = _child_worktree(repo, "needs-setup-a", edit)
+    wt_b, base_sha_b = _child_worktree(repo, "needs-setup-b", edit)
+    assert base_sha == base_sha_b  # same base commit -> same cache key modulo setup_cmd
+
+    # Task A: setup_cmd creates the file verify_cmd checks for -- baseline
+    # (and the worker's own worktree) both pass.
+    req_a = VerifyRequest(task_id="a", worktree=str(wt_a), base_sha=base_sha,
+                          setup_cmd="touch installed.marker",
+                          verify_cmd="test -f installed.marker",
+                          repo=str(repo), timeout_s=10)
+    result_a = run_verify(req_a)
+    assert result_a.passed
+    assert result_a.cause == "tests_passed"
+
+    # Task B: same repo/base_sha/verify_cmd, no setup_cmd, a different
+    # worktree. The baseline itself can't pass without the marker, so this
+    # must be baseline_broken -- not a stale "passed" reused from task A's
+    # cache entry, and not tests_failed (which would wrongly blame the
+    # worker for an environment gap the task never asked to fix).
+    req_b = VerifyRequest(task_id="b", worktree=str(wt_b), base_sha=base_sha,
+                          verify_cmd="test -f installed.marker",
+                          repo=str(repo), timeout_s=10)
+    result_b = run_verify(req_b)
+    assert not result_b.passed
+    assert result_b.cause == "baseline_broken"
+
+
 def test_baseline_broken_when_base_already_fails(tmp_path):
     repo = init_repo(tmp_path)  # no flag.txt at base
     wt, base_sha = _child_worktree(repo, "unrelated",

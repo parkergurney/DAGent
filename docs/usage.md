@@ -39,6 +39,12 @@ Skipping it for a repo that needs one caches `baseline_broken` against the
 base branch forever, since the baseline checkout has no dependencies
 installed and nothing else ever retries it (design.md section 7).
 
+Pass `--protected-paths` (repeatable) for any repo whose tests don't live
+under `tests/**`, `test_*.py`, or `*_test.py` — the verify gate's anti-gaming
+check (design.md section 7) only looks at those globs unless you override
+it, so a JS/TS repo with `src/**/__tests__/` or `*.test.ts`, for example,
+silently gets no protection at all without this flag.
+
 Prints the new task's id (a ULID). Defaults to `data/orchestrator.db`; pass
 `--db` to use a different file. Chain tasks into a DAG with repeatable
 `--depends-on <task_id>` — a task sits in `blocked` until every dependency

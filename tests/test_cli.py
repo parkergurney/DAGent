@@ -42,6 +42,18 @@ def test_add_task_with_deps(tmp_path, capsys):
     assert deps == [a]
 
 
+def test_add_task_with_protected_paths(tmp_path, capsys):
+    db = str(tmp_path / "orch.db")
+    main(["add-task", "--db", db, "--title", "t", "--brief", "b", "--repo", "r",
+         "--delivery-mode", "scout", "--protected-paths", "spec/**",
+         "--protected-paths", "*.test.ts"])
+    task_id = capsys.readouterr().out.strip()
+
+    conn = connect(db)
+    row = conn.execute("SELECT protected_paths FROM tasks WHERE id=?", (task_id,)).fetchone()
+    assert json.loads(row["protected_paths"]) == ["spec/**", "*.test.ts"]
+
+
 def test_status_empty(tmp_path, capsys):
     db = str(tmp_path / "orch.db")
     rc = main(["status", "--db", db])

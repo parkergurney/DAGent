@@ -361,7 +361,7 @@ class VerifyResult(BaseModel):
    `protected_path_modified` — the anti-gaming check; an agent that can't make
    the tests pass will make the tests different. Default protected_paths to
    the test dirs verify_cmd exercises; TDD-shaped tasks opt out explicitly.
-2. **Baseline (cached on (repo, base_sha, verify_cmd)):** run setup+verify on
+2. **Baseline (cached on (repo, base_sha, verify_cmd, setup_cmd)):** run setup+verify on
    base_sha itself. Baseline red → `baseline_broken` → escalate, never retry.
    No number of retries fixes a repo whose tests were already failing; without
    this check a flaky upstream test burns the whole retry budget for nothing.

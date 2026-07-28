@@ -53,8 +53,8 @@ def cmd_add_task(args) -> int:
     task_id = create_task(
         conn, title=args.title, brief=args.brief, repo=repo,
         delivery_mode=args.delivery_mode, verify_cmd=args.verify_cmd,
-        setup_cmd=args.setup_cmd, max_retries=args.max_retries,
-        depends_on=args.depends_on,
+        setup_cmd=args.setup_cmd, protected_paths=args.protected_paths,
+        max_retries=args.max_retries, depends_on=args.depends_on,
     )
     print(task_id)
     return 0
@@ -175,6 +175,8 @@ def _print_task_detail(conn, task_id: str) -> int:
     print(f"  verify_cmd:    {task['verify_cmd']}")
     if task["setup_cmd"]:
         print(f"  setup_cmd:     {task['setup_cmd']}")
+    if task["protected_paths"]:
+        print(f"  protected:     {', '.join(json.loads(task['protected_paths']))}")
 
     if task["state"] == "needs_human":
         acted = conn.execute(
@@ -263,6 +265,12 @@ def main(argv=None) -> int:
     p_add.add_argument("--setup-cmd",
         help="run before verify_cmd, in the baseline scratch checkout and the "
              "worker's own worktree (e.g. 'npm install') -- design.md section 7")
+    p_add.add_argument("--protected-paths", action="append", default=[], metavar="GLOB",
+        help="path glob(s) the worker may not touch (anti-gaming check, design.md "
+             "section 7); repeatable. Defaults to the verify gate's own "
+             "Python/pytest-shaped globs (tests/**, test_*.py, *_test.py) -- pass "
+             "this explicitly for any repo whose tests don't live there, or the "
+             "check silently never fires")
     p_add.add_argument("--depends-on", action="append", default=[], metavar="TASK_ID")
     p_add.add_argument("--max-retries", type=int, default=2)
     p_add.set_defaults(func=cmd_add_task)

@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   delivery_mode TEXT NOT NULL CHECK (delivery_mode IN ('pr','local','scout')),
   verify_cmd    TEXT,
   setup_cmd     TEXT,
+  protected_paths TEXT,        -- JSON array of globs; NULL = verify gate's default
   state         TEXT NOT NULL DEFAULT 'blocked' CHECK (state IN
     ('blocked','queued','running','verifying','triage','needs_human',
      'delivering','delivered','failed','cancelled')),

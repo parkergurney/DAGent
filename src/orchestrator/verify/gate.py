@@ -156,7 +156,12 @@ def run_verify(req: VerifyRequest) -> VerifyResult:
 
 
 def _cached_baseline(req: VerifyRequest, repo) -> bool:
-    key = hashlib.sha256(f"{repo}|{req.base_sha}|{req.verify_cmd}".encode()).hexdigest()
+    # setup_cmd is part of the key: two tasks can share (repo, base_sha,
+    # verify_cmd) but run different setup, and a baseline verdict computed
+    # under one setup_cmd isn't valid evidence for the other.
+    key = hashlib.sha256(
+        f"{repo}|{req.base_sha}|{req.verify_cmd}|{req.setup_cmd}".encode()
+    ).hexdigest()
     cache_file = DATA_DIR / ".baseline_cache" / f"{key}.json"
     if cache_file.exists():
         return json.loads(cache_file.read_text())["passed"]
