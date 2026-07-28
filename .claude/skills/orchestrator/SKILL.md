@@ -21,10 +21,10 @@ file exist because one Bash approval for `run`/`daemon` unlocks a lot of
 unattended, hard-to-interrupt activity - keep them, don't route around them
 just because a request seems simple.
 
-## Charter
+## Opinions
 
-If `CHARTER.md` exists at the repo root, read it before acting. It holds the
-captain's working preferences (deterministic-first, minimal moving parts,
+If `OPINIONS.md` exists at the repo root, read it before acting. It holds the
+user's working preferences (deterministic-first, minimal moving parts,
 terse-by-default status, honest escalation) layered on top of the guardrails
 below - honor it the same way you'd honor an explicit instruction from the
 user. Don't wait to be asked; check for it once per session.

@@ -31,7 +31,7 @@ from orchestrator.worker import spawn_fake_worker, spawn_sdk_worker
 # needs you" and "here's your PR" moments. A backgrounded `run`/`daemon`
 # streams these so the calling session can watch this process's stdout
 # (e.g. the Monitor tool) instead of polling `status` -- the event-driven
-# wake firstmate's watcher gives its captain, built on the events table
+# wake firstmate's watcher gives its user, built on the events table
 # that's already this system's source of truth (design.md section 3).
 _NOTIFY_STATES = ("needs_human", "delivered", "failed")
 

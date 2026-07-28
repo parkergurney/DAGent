@@ -16,9 +16,9 @@ rationale in devlog.md.
 
 Working name TBD. "agent-orchestrator" is a placeholder.
 
-`CHARTER.md` (repo root) holds the captain's working preferences for how the
+`OPINIONS.md` (repo root) holds the user's working preferences for how the
 `orchestrator` CLI/skill should behave - lighter-weight than this file,
-captain-owned, edited freely. `repos.toml` (repo root) is a flat, manually-
+user-owned, edited freely. `repos.toml` (repo root) is a flat, manually-
 edited short-name -> path registry that `add-task --repo` can resolve; see
 docs/usage.md. Neither changes anything under `src/orchestrator/`.
 

@@ -163,7 +163,7 @@ def test_abandon_only_reachable_in_yolo_mode(tmp_path):
     assert state == "failed"
 
 
-def test_escalate_payload_carries_summary_and_question_for_the_captain(tmp_path):
+def test_escalate_payload_carries_summary_and_question_for_the_user(tmp_path):
     repo = init_repo(tmp_path)
     conn = connect()
     task_id = _create(conn, repo, "crash")
