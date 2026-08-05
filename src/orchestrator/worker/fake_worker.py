@@ -39,6 +39,19 @@ def emit(type_, **payload):
     print(json.dumps({"type": type_, "payload": payload}), flush=True)
 
 
+def _path_escapes_worktree(path_str, worktree: Path) -> bool:
+    """Duplicated from sdk_worker.py's guard of the same name rather than
+    imported -- the two workers deliberately don't share modules (see this
+    file's docstring), so each speaks the wire protocol standalone."""
+    candidate = Path(path_str)
+    resolved = candidate if candidate.is_absolute() else worktree / candidate
+    try:
+        resolved.resolve().relative_to(worktree.resolve())
+        return False
+    except (ValueError, OSError):
+        return True
+
+
 def _git(wt, *args):
     subprocess.run(
         ["git", "-C", str(wt), "-c", "user.email=fake@local", "-c", "user.name=fake", *args],
@@ -77,11 +90,45 @@ def _empty_diff(wt):
 
 @scenario("protected_edit")
 def _protected_edit(wt):
-    """Commits a change under tests/ -- the anti-gaming check."""
+    """Edits a test file that already existed at base_sha -- the anti-gaming
+    check. Requires the repo to be seeded with tests/test_fake.py before the
+    task's base_sha is captured (see tests/scenarios/test_fake_scenarios.py)."""
+    test_file = wt / "tests" / "test_fake.py"
+    test_file.write_text(test_file.read_text() + "\ndef test_y():\n    assert True\n")
+    emit("tool_used", tool="Edit", target="tests/test_fake.py")
+    _commit(wt)
+    emit("done_claimed", result="DONE_CLAIM: ok")
+
+
+@scenario("protected_new")
+def _protected_new(wt):
+    """Adds a brand-new file under tests/ -- exempt from the anti-gaming
+    check since it can't be replacing a test the worker couldn't pass."""
     test_dir = wt / "tests"
     test_dir.mkdir(exist_ok=True)
-    (test_dir / "test_fake.py").write_text("def test_x():\n    assert True\n")
-    emit("tool_used", tool="Edit", target="tests/test_fake.py")
+    (test_dir / "test_new.py").write_text("def test_x():\n    assert True\n")
+    emit("tool_used", tool="Write", target="tests/test_new.py")
+    _commit(wt)
+    emit("done_claimed", result="DONE_CLAIM: ok")
+
+
+@scenario("escape_worktree")
+def _escape_worktree(wt):
+    """Attempts a write to an absolute path outside the worktree -- the
+    batch01 regression (`sed -i` against an absolute path in the main
+    checkout, dirtying it via Bash, a tool the PreToolUse hook never
+    inspected). FakeWorker has no OS-level sandbox of its own, so this
+    exercises the same escape-detection guard sdk_worker.py's hook applies,
+    proving the check itself is correct; the OS-level Bash sandbox that
+    closes the real gap is verified separately (docs/devlog.md probe)."""
+    target = wt.parent / "escaped.txt"
+    if _path_escapes_worktree(str(target), wt):
+        emit("tool_used", tool="Bash", target=str(target),
+            error=f"path {str(target)!r} escapes the task worktree")
+    else:
+        target.write_text("escaped\n")  # only reached if the guard itself is broken
+    (wt / "output.txt").write_text("done\n")
+    emit("tool_used", tool="Write", target="output.txt")
     _commit(wt)
     emit("done_claimed", result="DONE_CLAIM: ok")
 

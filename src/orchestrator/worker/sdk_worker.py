@@ -15,11 +15,16 @@ Built on the four M1 spike findings (spike/m1_spike.py, docs/devlog.md):
     ASK: is the same idea for "blocked on a human decision" -- there is no
     interactive prompt in a headless SDK session, so the brief has to ask
     for a sentinel there too.
-  - The worktree cwd is NOT a sandbox boundary; a real run wrote outside it
-    in two of three spike runs. _path_escapes_worktree + the PreToolUse hook
-    below close that for file-editing tools. Bash is NOT guarded here --
-    shelling out to write files bypasses this; the verify gate's
-    uncommitted_changes/empty_diff checks are the backstop for that gap.
+  - The worktree cwd is NOT a permission-system boundary; a real run wrote
+    outside it in two of three spike runs. _path_escapes_worktree + the
+    PreToolUse hook below close that for file-editing tools (Read/Edit/
+    Write), but Bash was left uninspected -- shelling out (`sed -i` on an
+    absolute path, batch01) bypassed it twice in dogfooding. Claude Code's
+    native OS-level Bash sandbox (Seatbelt/bubblewrap, docs/design.md
+    section 8) now closes that gap: it restricts the Bash tool's process at
+    the OS level, independent of what the hook inspects. The two layers
+    compose -- hook = intent for structured tools, sandbox = capability for
+    Bash -- neither alone was sufficient.
   - PostToolUseFailure is a distinct hook event from PostToolUse and must be
     wired separately or failed tool calls vanish from the log.
   - Cost lands once per completed turn (ResultMessage.total_cost_usd); token
@@ -42,11 +47,17 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    ClaudeSDKError,
     HookMatcher,
+    PermissionResultAllow,
+    PermissionResultDeny,
     ResultMessage,
 )
 
 _PROTOCOL = """
+Commit your changes in the worktree before claiming done. Uncommitted work
+will fail verification.
+
 When you are completely finished, end your final message with exactly one line:
 DONE_CLAIM: <one-line summary of what you did>
 
@@ -91,6 +102,26 @@ def emit(type_, **payload) -> None:
     print(json.dumps({"type": type_, "payload": payload}), flush=True)
 
 
+async def _can_use_tool(tool_name, tool_input, context):
+    """Replaces permission_mode="bypassPermissions": that flag auto-grants
+    every decision the CLI would otherwise need to make, INCLUDING the
+    sandbox's own network-domain approval, which the SDK exposes as a
+    synthetic "SandboxNetworkAccess" tool call routed through this same
+    callback -- confirmed empirically, bypassPermissions let a sandboxed
+    curl through with a live HTTP response despite sandbox.network.
+    strictAllowlist=True, because there was no decision point left for
+    strictAllowlist to convert into a deny. Auto-allowing everything else
+    here (instead of bypassPermissions) keeps sessions headless -- no
+    hang waiting on a human for a plain in-worktree Read/Edit/Write -- while
+    this callback, not the CLI's blanket bypass, keeps ownership of the one
+    decision that must stay a real deny."""
+    if tool_name == "SandboxNetworkAccess":
+        return PermissionResultDeny(
+            message="network access is not permitted for worker sessions "
+                    "(verify/setup_cmd run outside the session, in the gate)")
+    return PermissionResultAllow()
+
+
 def _make_pre_tool_use(worktree: Path):
     async def hook(input_data, tool_use_id, context):
         path = input_data.get("tool_input", {}).get("file_path")
@@ -121,7 +152,14 @@ async def run(worktree: Path, brief: str, model: str | None) -> None:
     options = ClaudeAgentOptions(
         cwd=str(worktree),
         model=model,
-        permission_mode="bypassPermissions",  # worktree + verify gate is the isolation boundary
+        can_use_tool=_can_use_tool,  # headless auto-allow, except SandboxNetworkAccess (see docstring)
+        sandbox={
+            "enabled": True,
+            "autoAllowBashIfSandboxed": True,
+            "allowUnsandboxedCommands": False,  # dangerouslyDisableSandbox escape hatch is a no-op
+            "failIfUnavailable": True,  # hard-fail startup instead of silently running unsandboxed
+            "network": {"strictAllowlist": True},  # belt-and-suspenders; _can_use_tool is the real gate
+        },
         hooks={
             "PreToolUse": [HookMatcher(hooks=[_make_pre_tool_use(worktree)])],
             "PostToolUse": [HookMatcher(hooks=[_post_tool_use])],
@@ -130,7 +168,20 @@ async def run(worktree: Path, brief: str, model: str | None) -> None:
     )
     prompt = _prompt_with_protocol(brief)
 
-    async with ClaudeSDKClient(options=options) as client:
+    client = ClaudeSDKClient(options=options)
+    try:
+        await client.connect()
+    except ClaudeSDKError as e:
+        # failIfUnavailable=True makes a missing sandbox dependency (or an
+        # unsupported platform) a hard connect failure instead of the CLI's
+        # default warn-and-run-unsandboxed. Stderr is DEVNULL'd by the
+        # spawning process (orchestrator/worker/sdk.py), so emit() is the
+        # only way this reaches the operator -- a bare exit code looks like
+        # any other worker.exited crash.
+        emit("startup_failed", error=str(e))
+        sys.exit(1)
+
+    try:
         await client.query(prompt)
         while True:
             kind, extra, cost_usd, session_id = None, {}, None, None
@@ -157,6 +208,8 @@ async def run(worktree: Path, brief: str, model: str | None) -> None:
             if kind == "done_claimed":
                 emit("done_claimed", cost_usd=cost_usd, session_id=session_id, **extra)
             return  # done_claimed, or no sentinel -- exit without a claim, on purpose
+    finally:
+        await client.disconnect()
 
 
 def main() -> None:

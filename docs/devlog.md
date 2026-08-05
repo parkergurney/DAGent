@@ -504,3 +504,177 @@ verify_timeout_s=600 transcript_tail_tokens=3000`.
 The three-attempt convergence trace. Attempt 1 escaped the sandbox via sed -i on an absolute path → empty_diff. Attempt 2 edited the right worktree but didn't commit → uncommitted_changes. Attempt 3 clean → verify passed. Three distinct causes, three correct supervisor actions, converged. Paste the event trace. This is the best evidence you have that the taxonomy earns its keep, and it's near-publishable as-is.
 The bug: attempt 1's escape left db.py dirty in the main checkout; delivery has no dirty-tree preflight, so every subsequent merge failed identically. Environment problem retried as if it were a worker problem.
 The containment finding: the PreToolUse hook (if wired) doesn't stop Bash from writing to absolute paths outside the worktree. Path-based tool gating doesn't contain arbitrary shell.
+
+## 2026-08-05 - protected_path_modified narrowed to edits, not writes
+
+The anti-gaming check used to fire on any write under `protected_paths`,
+new files included.
+That conflated two different behaviors: a worker replacing a test it
+couldn't pass (gaming) and a worker adding a new test (a legitimate,
+TDD-shaped contribution).
+Narrowed `run_verify` (verify/gate.py) to use `git diff --name-status`
+instead of `--name-only`, so a path with git status `A` (added) is exempt
+and only edits/deletes/renames of a file that already existed at base_sha
+trip `protected_path_modified`.
+Design.md section 7 and its `verify-gate` skill mirror were updated inside
+the `sync:verify-gate` markers to match; `tests/test_design_sync.py` still
+passes.
+The `protected_edit` FakeWorker scenario had been asserting the old,
+now-wrong behavior by creating a fresh `tests/test_fake.py` -- fixed it to
+seed that file at base_sha first and edit it, and added a sibling
+`protected_new` scenario plus a `test_verify_gate.py` unit test proving new
+files under `tests/` pass clean.
+
+Also added a standing line to every worker brief's protocol block
+(worker/sdk_worker.py's `_PROTOCOL`): "Commit your changes in the worktree
+before claiming done."
+`uncommitted_changes` was already the single largest verify-gate failure
+cause in dogfooding; this is the cheapest possible fix, explicit contract
+language instead of relying on structural detection alone.
+
+## 2026-08-05 - native OS sandbox closes the Bash containment gap
+
+The arc, end to end. The PreToolUse hook (`_path_escapes_worktree` in
+sdk_worker.py) only ever inspected structured file tools (Read/Edit/Write).
+Batch01 dogfooding hit the gap it left open twice: a worker escaped via
+Bash, running the shape of `sed -i 's/.../.../ ' ~/Development/sqlite-utils/sqlite_utils/db.py`
+against an absolute path in the main checkout instead of its worktree.
+The write succeeded (nothing was watching Bash), dirtying `db.py` outside
+any task's worktree.
+Because the verify gate only diffs the worktree it was given, the escape
+was invisible to it -- the worker's own task even passed verify.
+The damage surfaced downstream instead: `local` delivery's dirty-tree
+preflight started failing for every *other* task in that repo, all
+retried as if they were the ones broken.
+"Path-based tool gating doesn't contain arbitrary shell" was the
+containment finding recorded in the 2026-08-04 entry above; this session
+closes it structurally instead of adding another path-parsing special case.
+
+Claude Code has a native OS-level Bash sandbox (Seatbelt on macOS,
+bubblewrap on Linux, v2.0.24+) built for exactly this: it restricts what
+the Bash tool's *process* can touch, enforced by the kernel, independent of
+whatever the hook can infer from the command string.
+Configuration surface: `ClaudeAgentOptions.sandbox` is a plain dict
+(`SandboxSettings`, a `TypedDict`, not validated at runtime) that the SDK
+merges verbatim into the same JSON object it sends the CLI via `--settings`
+(`_internal/transport/subprocess_cli.py`).
+That means keys the SDK's own type stub doesn't declare -- `failIfUnavailable`,
+`network.strictAllowlist` -- still reach the CLI correctly, since the CLI's
+settings schema (not the SDK's Python stub) is what actually validates them.
+Worth knowing before trusting an SDK stub as the source of truth for what
+a settings blob accepts.
+
+What sdk_worker.py sets on every session: `sandbox.enabled=True` (default
+write policy is cwd + subdirs + session temp dir, which already matches
+worker cwd = worktree, so no custom path rules were needed);
+`sandbox.allowUnsandboxedCommands=False`, which makes the model's escape
+hatch a no-op -- the docs call this parameter `dangerouslyDisableSandbox`,
+not `dangerouslyOverrideSandbox` as originally assumed going in, worth
+flagging since the wrong name would have silently failed to match anything;
+and `sandbox.failIfUnavailable=True`, which turns a missing dependency or
+unsupported platform into a hard connect failure instead of the CLI's
+default warn-and-run-unsandboxed.
+sdk_worker.py catches that failure around `client.connect()` specifically
+(not the whole session) and emits a `worker.startup_failed` event before
+exiting -- necessary because `spawn_sdk_worker` pipes the child's stderr to
+`DEVNULL`, so an uncaught exception's traceback would otherwise vanish and
+look like an ordinary crash.
+
+Added a FakeWorker scenario, `escape_worktree`, as the fast deterministic
+regression test: it duplicates sdk_worker.py's `_path_escapes_worktree`
+guard (the two workers don't share modules, by existing design) and proves
+the check itself denies an absolute-path write, asserting the target file
+is never created.
+FakeWorker has no real Bash tool or OS sandbox of its own, so this doesn't
+exercise the sandbox -- it exercises the same escape-detection logic, fast
+and free of a live SDK call.
+
+The sandbox itself needed a live probe, not just config inspection.
+Spawned a real sdk_worker.py session (same subprocess shape as
+`spawn_sdk_worker`) in a toy worktree, briefed to run
+`echo escaped > <absolute path in the main checkout, outside the worktree>`
+via the Bash tool.
+Result: `tool_used` with `error: "Exit code 1\n(eval):1: operation not
+permitted: <path>"`, no file created, main checkout's `git status
+--porcelain` empty, worker's own DONE_CLAIM correctly reported the command
+as blocked.
+The denial is enforced by Seatbelt itself, not by anything in this
+codebase -- exactly the property the hook alone could never provide for
+Bash.
+
+### The network config I shipped first didn't actually deny network
+
+First pass at item 5 (network implications) set
+`sandbox.network.strictAllowlist=True` with no allowed domains and called
+it done from config inspection alone, the same mistake the write-denial
+probe above was specifically designed to avoid making elsewhere.
+A follow-up review asked the obvious question before trusting it: does any
+legitimate worker behavior need `git fetch`, and is the denial actually
+verified, not just configured?
+Checked the worker flow first -- no code path ever runs `git fetch`/`pull`
+inside a worker session; `base_sha` comes from a local `git checkout -B`
+in `WorktreePool.acquire`, and `git push` for `pr` delivery happens in
+`delivery/__init__.py`, called directly by the scheduler process, never
+inside the sandboxed worker.
+So there's no legitimate need -- but then a live probe of the network
+config itself (`git fetch origin` and `curl` inside a real sdk_worker.py
+session) came back with a live HTTP response.
+`strictAllowlist=True` was doing nothing.
+
+Root cause: `permission_mode="bypassPermissions"` (kept from before the
+sandbox existed, to stop headless sessions hanging on approval prompts for
+plain in-worktree Read/Edit/Write) auto-grants *every* decision the CLI
+would otherwise need to make -- including the sandbox's own network-domain
+approval, which the SDK exposes as a synthetic `SandboxNetworkAccess` tool
+call routed through the same `can_use_tool`/permission pipeline as any
+other tool.
+Confirmed by isolating `permission_mode` from everything else: same
+sandbox config, `default` mode instead of `bypassPermissions` -> the same
+curl comes back `exit 56, CONNECT tunnel failed, 403` (denied, fast, no
+hang) instead of live HTML.
+Swapping in a `can_use_tool` callback (`_allow_everything`-shaped) that
+prints what it's asked to decide made the mechanism visible directly: it
+gets called with `tool_name="SandboxNetworkAccess", tool_input={"host":
+"example.com"}` for the curl attempt, and `bypassPermissions` was
+answering "allow" to that before this codebase ever got a say.
+
+Fix: replaced `permission_mode="bypassPermissions"` with
+`can_use_tool=_can_use_tool`, a callback that denies exactly
+`tool_name == "SandboxNetworkAccess"` and allows everything else -- keeps
+sessions headless (no hang on ordinary Read/Edit/Write) while this
+codebase, not the CLI's blanket bypass, owns the one decision that has to
+stay a real deny.
+Re-verified live against the actual `orchestrator.worker.sdk_worker`
+module (not a hand-built options object) on both properties at once: `curl`
+now denied with the same clean 403, and the worktree-escape write-denial
+probe from earlier in this entry still passes unchanged -- the OS-level
+filesystem sandbox doesn't care about `permission_mode`/`can_use_tool` at
+all, confirming that swap didn't quietly regress the thing this session
+was originally about.
+`strictAllowlist` is left set; it isn't what's doing the denying, but
+there's no reason to remove a second layer that's free.
+
+Lesson, stated plainly: a security control that "looks configured" is not
+verified until something has actually tried to defeat it and failed.
+The filesystem probe caught this the first time by accident of order (it
+ran before `strictAllowlist` was added); the network claim shipped on
+config-reading alone and was wrong.
+Every claim in this section now has a live probe behind it for exactly
+that reason.
+
+### Negative controls, not just positive probes
+
+A live probe that observes a denial once proves the denial happened in
+that run; it doesn't prove the denial happens *because* of the mechanism
+under test rather than something incidental to the test environment.
+Added the missing negative control for both regression tests: for
+`escape_worktree` (FakeWorker), monkeypatched `_path_escapes_worktree` to
+always return `False` (simulating a broken/disabled guard) and confirmed
+the write then goes through -- the passing test is sensitive to the guard,
+not passing by accident.
+For the real sandbox, reran the identical write-escape probe with
+`sandbox=` dropped entirely (everything else, including the PreToolUse
+hook, held constant) and confirmed the write succeeds -- reproducing the
+original batch01 failure exactly, which is the strongest evidence available
+that the earlier denial was the sandbox's doing and not, say, a stray
+macOS permission on the temp directory.

@@ -7,10 +7,12 @@ import asyncio
 import io
 import json
 
-from claude_agent_sdk import ResultMessage
+import pytest
+from claude_agent_sdk import ClaudeSDKError, PermissionResultAllow, PermissionResultDeny, ResultMessage
 
 from orchestrator.worker import sdk_worker
 from orchestrator.worker.sdk_worker import (
+    _can_use_tool,
     _parse_terminal,
     _path_escapes_worktree,
     _prompt_with_protocol,
@@ -66,6 +68,27 @@ def test_path_traversal_out_of_worktree_is_denied(tmp_path):
     assert _path_escapes_worktree("../escape.txt", wt) is True
 
 
+def test_can_use_tool_denies_sandbox_network_access():
+    """The regression test for the network-gate bug found live: permission_
+    mode="bypassPermissions" auto-granted the sandbox's own network-domain
+    approval (exposed to the SDK as a "SandboxNetworkAccess" tool call
+    routed through can_use_tool), silently defeating sandbox.network.
+    strictAllowlist -- a real curl went through with a live HTTP response
+    despite it. can_use_tool must own that one decision explicitly."""
+    result = asyncio.run(_can_use_tool("SandboxNetworkAccess", {"host": "example.com"}, None))
+    assert isinstance(result, PermissionResultDeny)
+
+
+def test_can_use_tool_allows_everything_else():
+    """Headless sessions have no human to answer a permission prompt, so
+    every other tool call must be auto-approved -- this callback replaces
+    permission_mode="bypassPermissions" for that purpose, minus the one
+    carve-out above."""
+    for tool_name in ("Write", "Edit", "Read", "Bash"):
+        result = asyncio.run(_can_use_tool(tool_name, {}, None))
+        assert isinstance(result, PermissionResultAllow)
+
+
 class _FakeClient:
     """Stands in for ClaudeSDKClient: turn 1 asks a question, turn 2 (after
     whatever run() queries back in) claims done. Lets the stdin-nudge path
@@ -75,11 +98,11 @@ class _FakeClient:
     def __init__(self, options=None):
         self.queries = []
 
-    async def __aenter__(self):
-        return self
+    async def connect(self, prompt=None):
+        pass
 
-    async def __aexit__(self, *exc):
-        return False
+    async def disconnect(self):
+        pass
 
     async def query(self, prompt, session_id="default"):
         self.queries.append(prompt)
@@ -123,3 +146,29 @@ def test_run_exits_without_resuming_when_stdin_closes(tmp_path, capsys, monkeypa
     assert fake.queries == [_prompt_with_protocol("set up a server")]
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert [e["type"] for e in events] == ["asked"]
+
+
+class _ConnectFailsClient:
+    """Stands in for a ClaudeSDKClient whose connect() raises -- e.g.
+    failIfUnavailable's hard fail when the OS sandbox can't start. Proves
+    run() surfaces that as a typed event and refuses to proceed, instead of
+    silently continuing unsandboxed or crashing with a swallowed traceback
+    (spawn_sdk_worker pipes stderr to DEVNULL)."""
+
+    def __init__(self, options=None):
+        pass
+
+    async def connect(self, prompt=None):
+        raise ClaudeSDKError("sandbox unavailable: bubblewrap not found")
+
+
+def test_run_exits_loudly_when_sandbox_fails_to_start(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(sdk_worker, "ClaudeSDKClient", lambda options=None: _ConnectFailsClient())
+
+    with pytest.raises(SystemExit) as exc_info:
+        asyncio.run(sdk_worker.run(tmp_path, "set up a server", None))
+    assert exc_info.value.code == 1
+
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [e["type"] for e in events] == ["startup_failed"]
+    assert "sandbox unavailable" in events[0]["payload"]["error"]

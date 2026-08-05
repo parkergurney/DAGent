@@ -10,10 +10,20 @@ from pathlib import Path
 
 from orchestrator.scheduler import Scheduler
 from orchestrator.store import connect, create_task, replay
-from tests.helpers import init_repo
+from tests.helpers import git, init_repo
 
-SCENARIOS = ["clean", "no_commit", "empty_diff", "protected_edit",
-            "stall", "ask", "crash", "wait"]
+SCENARIOS = ["clean", "no_commit", "empty_diff", "protected_edit", "protected_new",
+            "escape_worktree", "stall", "ask", "crash", "wait"]
+
+
+def _seed_existing_test_file(repo):
+    """protected_edit needs tests/test_fake.py to already exist at base_sha,
+    so editing it (vs. adding a new file) is what the anti-gaming check gates."""
+    test_dir = repo / "tests"
+    test_dir.mkdir()
+    (test_dir / "test_fake.py").write_text("def test_x():\n    assert True\n")
+    git("add", "-A", cwd=repo)
+    git("commit", "-qm", "seed existing test", cwd=repo)
 
 
 def _create(conn, repo, scenario):
@@ -36,6 +46,7 @@ def _run_batch(conn, repo, tmp_path):
 
 def test_all_scenarios_reach_correct_states(tmp_path):
     repo = init_repo(tmp_path)
+    _seed_existing_test_file(repo)
     conn = connect()
     ids = {name: _create(conn, repo, name) for name in SCENARIOS}
 
@@ -44,9 +55,11 @@ def test_all_scenarios_reach_correct_states(tmp_path):
     state = {name: conn.execute("SELECT state FROM tasks WHERE id = ?", (tid,)).fetchone()["state"]
             for name, tid in ids.items()}
 
-    assert state["clean"] == "delivered"
+    passing = ("clean", "protected_new", "escape_worktree")
+    for name in passing:
+        assert state[name] == "delivered", f"{name}: {state[name]}"
     for name in SCENARIOS:
-        if name != "clean":
+        if name not in passing:
             assert state[name] == "needs_human", f"{name}: {state[name]}"
 
     # design.md invariant 3, exercised across a whole fault-injection run:
@@ -124,6 +137,7 @@ def test_empty_diff_fails_verify(tmp_path):
 
 def test_protected_edit_fails_verify(tmp_path):
     repo = init_repo(tmp_path)
+    _seed_existing_test_file(repo)
     conn = connect()
     task_id = _create(conn, repo, "protected_edit")
 
@@ -131,6 +145,39 @@ def test_protected_edit_fails_verify(tmp_path):
 
     failures = [e for e in _events(conn, task_id) if e["type"] == "verify.failed"]
     assert json.loads(failures[0]["payload"])["cause"] == "protected_path_modified"
+
+
+def test_protected_new_file_passes_verify(tmp_path):
+    """A brand-new test file is a contribution, not gaming -- only edits to
+    a pre-existing protected file trip the check."""
+    repo = init_repo(tmp_path)
+    conn = connect()
+    task_id = _create(conn, repo, "protected_new")
+
+    _run_batch(conn, repo, tmp_path)
+
+    failures = [e for e in _events(conn, task_id) if e["type"] == "verify.failed"]
+    assert not failures
+
+
+def test_escape_worktree_write_denied(tmp_path):
+    """Regression test for batch01: a worker attempting to write outside its
+    worktree must be denied, and the shared location it targeted (here, the
+    worktree pool's own directory, standing in for the main checkout it
+    corrupted in batch01) must stay untouched."""
+    repo = init_repo(tmp_path)
+    conn = connect()
+    task_id = _create(conn, repo, "escape_worktree")
+
+    _run_batch(conn, repo, tmp_path)
+
+    assert not (tmp_path / "worktrees" / "escaped.txt").exists()
+    events = _events(conn, task_id)
+    denied = [e for e in events if e["type"] == "worker.tool_used"
+             and json.loads(e["payload"]).get("error")]
+    assert denied, "escape attempt should have been logged as a denied tool_used"
+    assert conn.execute("SELECT state FROM tasks WHERE id = ?",
+                        (task_id,)).fetchone()["state"] == "delivered"
 
 
 def test_stall_detected_by_watchdog(tmp_path):

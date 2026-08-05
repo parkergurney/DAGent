@@ -50,7 +50,7 @@ CREATE INDEX idx_events_task ON events(task_id, seq);
 task.created          task.state_changed      dep.satisfied
 worker.spawned        worker.tool_used        worker.messaged
 worker.asked          worker.done_claimed     worker.exited
-worker.stalled        (watchdog only)
+worker.stalled        (watchdog only)      worker.startup_failed
 verify.started        verify.passed           verify.failed
 supervisor.invoked    supervisor.acted        supervisor.failed
 delivery.started      delivery.pr_opened      delivery.merged_local
@@ -62,6 +62,12 @@ system.started        system.reconciled
 - `worker.tool_used` comes from a PostToolUse hook; log EVERY call but keep the
   payload minimal (tool name, target, duration_ms). Highest-volume event by
   ~100x; tool-call counts per task are a benchmark metric.
+- `worker.startup_failed` fires when the worker's own connect step raises
+  before any session starts — currently only `failIfUnavailable`'s hard fail
+  when the OS-level Bash sandbox can't start (docs/design.md section 8).
+  Distinct from `worker.exited` (a session that started and then crashed or
+  finished without a claim) so triage/operators can tell "never sandboxed"
+  from "sandboxed session died."
 - `verify.failed` payload includes a normalized failure signature (last
   assertion line, stripped of addresses/line numbers) so "same failure twice"
   is a cheap comparison, not vibes.

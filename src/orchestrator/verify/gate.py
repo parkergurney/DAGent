@@ -103,16 +103,22 @@ def run_verify(req: VerifyRequest) -> VerifyResult:
         return done(False, "uncommitted_changes", None, status)
 
     diff_stat = _git("diff", "--stat", req.base_sha, "HEAD", cwd=wt).stdout
-    diff_names = _git("diff", "--name-only", req.base_sha, "HEAD", cwd=wt).stdout.split()
+    name_status = [line.split("\t") for line in
+                   _git("diff", "--name-status", req.base_sha, "HEAD", cwd=wt).stdout.splitlines()
+                   if line]
+    diff_names = [parts[-1] for parts in name_status]
     if not diff_names:
         return done(False, "empty_diff", None, "", diff_stat)
 
     tests_modified = [f for f in diff_names if "test" in Path(f).name.lower()]
-    touched_protected = [f for f in diff_names
-                         if any(fnmatch.fnmatch(f, pat) for pat in req.protected_paths)]
-    if touched_protected:
+    # New files under protected_paths are exempt -- only edits/deletes/renames
+    # of a file that already existed at base_sha count as gaming the gate.
+    modified_protected = [parts[-1] for parts in name_status
+                          if parts[0] != "A"
+                          and any(fnmatch.fnmatch(parts[-1], pat) for pat in req.protected_paths)]
+    if modified_protected:
         return done(False, "protected_path_modified", None,
-                    "\n".join(touched_protected), diff_stat, touched_protected)
+                    "\n".join(modified_protected), diff_stat, modified_protected)
 
     # 2. baseline: base_sha must itself pass verify_cmd, cached on (repo, base_sha, verify_cmd)
     repo = req.repo or wt
