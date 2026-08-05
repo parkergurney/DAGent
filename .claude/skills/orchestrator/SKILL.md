@@ -173,6 +173,37 @@ tasks: 6 delivered, 3 running, 2 needs_human, 1 failed"), not pasted as-is -
 lead with whatever's actionable (`needs_human`, `failed`) rather than the
 raw ordering the command prints.
 
+## Reviewing delivered work and cleanup
+
+When the user asks to review a batch, don't point them at pooled worktree
+directories. Those are scratch execution slots and are removed/reused by the
+scheduler. Use delivered artifacts instead:
+
+- `pr`: run `orchestrator status <task_id>` and give them the PR URL, branch,
+  and commit SHA. The PR is the review surface.
+- `local`: run `orchestrator status <task_id>` and give them the printed
+  `git -C <repo> diff <before_sha>..<after_sha>` and `git log` commands. Local
+  delivery has already fast-forward-merged into `main`; there is no local diff
+  waiting in the worker worktree.
+- `scout`: point them at `data/<task_id>/report.md`.
+- Any delivered task with a `patch:` line has an event-specific saved patch.
+  `data/<task_id>/review.patch` is also kept as the latest convenience copy.
+
+When the user asks whether the orchestrator cleaned up after itself, check:
+
+```
+git -C <repo-root> worktree list
+git -C <repo-root> branch --list 'pool/slot-*'
+ls -la <worktree-root>
+git -C <repo-root> status --short
+```
+
+Expected after a completed non-daemon run: no pooled `slot-*` worktrees remain
+registered, no `pool/slot-*` scratch branches remain, the worktree root has no
+live slot dirs, and the target repo is clean except for intentional `local`
+deliveries already merged into `main`.
+For a daemon, cleanup happens when the daemon is stopped.
+
 ## Guardrails
 
 These come directly from a trust-boundary discussion about this tool: a

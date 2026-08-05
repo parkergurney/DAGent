@@ -126,10 +126,21 @@ SELECT source, sum(cost_usd) FROM events GROUP BY source;
 
 By hand:
 
-- **Read every `delivered` diff.** "Tests passed" is not the bar — *would you
-  merge this from a junior engineer*. Garbage that passes verification is a
-  finding about the **verify gate**, not a success. Watch for stub
-  implementations, weakened tests, changes wildly out of proportion to the brief.
+- **Read every delivered artifact.** Start with `orchestrator status <task_id>`:
+  for `pr`, review the PR URL/commit; for `local`, run the printed
+  `git diff <before_sha>..<after_sha>` and `git log` commands; for `scout`,
+  read `data/<task_id>/report.md`. The status `patch:` line points at the
+  event-specific saved patch, while `data/<task_id>/review.patch` is the latest
+  convenience copy after pooled worktrees are torn down. "Tests passed" is not
+  the bar — *would you merge this from a junior engineer*. Garbage that passes
+  verification is a finding about the **verify gate**, not a success. Watch for
+  stub implementations, weakened tests, changes wildly out of proportion to the
+  brief.
+- **Confirm cleanup.** After a non-daemon run, `git worktree list` for the
+  target repo should not show pooled `slot-*` worktrees, `data/worktrees`
+  should have no live slots, `git branch --list 'pool/slot-*'` should be
+  empty, and `git status --short` should be clean except intentional local
+  deliveries already merged into `main`.
 - **Re-run the replay invariant against this real event log** — first time it's
   seen real volume and interleaving.
 - **Judge each supervisor decision.** Defensible, not optimal, is the standard.

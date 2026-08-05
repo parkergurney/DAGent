@@ -55,6 +55,26 @@ def test_setup_cmd_runs_before_verify_in_both_baseline_and_worktree(tmp_path):
     assert result.cause == "tests_passed"
 
 
+def test_verify_saves_review_patch_for_committed_diff(tmp_path):
+    repo = init_repo(tmp_path)
+    wt, base_sha = _child_worktree(
+        repo, "review-patch",
+        lambda wt: (wt / "feature.txt").write_text("review me\n"),
+    )
+
+    req = VerifyRequest(task_id="review-task", worktree=str(wt), base_sha=base_sha,
+                        verify_cmd="true", repo=str(repo), timeout_s=10)
+    result = run_verify(req)
+
+    assert result.passed
+    assert result.patch_path
+    patch = open(result.patch_path).read()
+    assert "feature.txt" in patch
+    assert "+review me" in patch
+    latest = open(result.patch_path.rsplit("/", 1)[0] + "/review.patch").read()
+    assert latest == patch
+
+
 def test_setup_failed_when_setup_cmd_errors(tmp_path):
     """setup_cmd fails only in the worker's worktree (not at base_sha, where
     the baseline scratch checkout's setup_cmd run succeeds) -- e.g. the

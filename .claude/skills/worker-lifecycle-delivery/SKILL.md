@@ -82,8 +82,12 @@ gets fully specced:
 Per-task `delivery_mode`, firstmate-style, explicit:
 
 - `pr`: push branch, open PR via gh. Delivered = PR open. Merge is the
-  manager's call; merge tracking is an event.
-- `local`: approved fast-forward merge into the local default branch.
+  manager's call; merge tracking is an event. The delivery payload carries
+  `{url, branch, commit_sha}` so review does not depend on a live worktree.
+- `local`: approved fast-forward merge into the local default branch. The
+  delivery payload carries `{before_sha, after_sha, commit_sha}` so the
+  manager can review with `git diff before_sha..after_sha` after pooled
+  worktrees have been torn down.
 - `scout`: no push ever; report written to `data/<task_id>/report.md`.
 
 Delivery failures (push rejected, conflict) → `delivery.failed` → triage.

@@ -47,6 +47,7 @@ class VerifyResult:
     diff_stat: str
     tests_modified: list = field(default_factory=list)
     output_path: str | None = None
+    patch_path: str | None = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -85,16 +86,28 @@ def _save_output(task_id: str, label: str, output: str) -> str:
     return str(path)
 
 
+def _save_patch(task_id: str, text: str) -> str:
+    out_dir = DATA_DIR / task_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    latest = out_dir / "review.patch"
+    latest.write_text(text)
+    path = out_dir / f"review_{int(time.time() * 1000)}.patch"
+    path.write_text(text)
+    return str(path)
+
+
 def run_verify(req: VerifyRequest) -> VerifyResult:
     t0 = time.monotonic()
     wt = req.worktree
 
-    def done(passed, cause, exit_code, output, diff_stat="", tests_modified=None, flaky=False):
+    def done(passed, cause, exit_code, output, diff_stat="", tests_modified=None, flaky=False,
+             patch_path=None):
         return VerifyResult(
             passed=passed, cause=cause, exit_code=exit_code,
             duration_s=round(time.monotonic() - t0, 3), flaky=flaky,
             output_tail=_tail(output), diff_stat=diff_stat,
             tests_modified=tests_modified or [], output_path=_save_output(req.task_id, cause, output),
+            patch_path=patch_path,
         )
 
     # 1. preflight (git only, ms)
@@ -111,6 +124,8 @@ def run_verify(req: VerifyRequest) -> VerifyResult:
         return done(False, "empty_diff", None, "", diff_stat)
 
     tests_modified = [f for f in diff_names if "test" in Path(f).name.lower()]
+    patch_path = _save_patch(req.task_id,
+                             _git("diff", "--binary", req.base_sha, "HEAD", cwd=wt).stdout)
     # New files under protected_paths are exempt -- only edits/deletes/renames
     # of a file that already existed at base_sha count as gaming the gate.
     modified_protected = [parts[-1] for parts in name_status
@@ -118,24 +133,28 @@ def run_verify(req: VerifyRequest) -> VerifyResult:
                           and any(fnmatch.fnmatch(parts[-1], pat) for pat in req.protected_paths)]
     if modified_protected:
         return done(False, "protected_path_modified", None,
-                    "\n".join(modified_protected), diff_stat, modified_protected)
+                    "\n".join(modified_protected), diff_stat, modified_protected,
+                    patch_path=patch_path)
 
     # 2. baseline: base_sha must itself pass verify_cmd, cached on (repo, base_sha, verify_cmd)
     repo = req.repo or wt
     baseline_ok = _cached_baseline(req, repo)
     if not baseline_ok:
         return done(False, "baseline_broken", None,
-                    "baseline (base_sha) does not pass verify_cmd", diff_stat, tests_modified)
+                    "baseline (base_sha) does not pass verify_cmd", diff_stat, tests_modified,
+                    patch_path=patch_path)
 
     # 3. setup + the run
     if req.setup_cmd:
         code, out, timed_out = _run(req.setup_cmd, wt, req.timeout_s)
         if timed_out or code != 0:
-            return done(False, "setup_failed", code, out, diff_stat, tests_modified)
+            return done(False, "setup_failed", code, out, diff_stat, tests_modified,
+                        patch_path=patch_path)
 
     code, out, timed_out = _run(req.verify_cmd, wt, req.timeout_s)
     if timed_out:
-        return done(False, "timeout", None, out, diff_stat, tests_modified)
+        return done(False, "timeout", None, out, diff_stat, tests_modified,
+                    patch_path=patch_path)
 
     # 4. flake protocol: fail once, rerun; fail-fail sticks, fail-pass is flaky
     flaky = False
@@ -147,7 +166,8 @@ def run_verify(req: VerifyRequest) -> VerifyResult:
             code, out = code2, out2
 
     if code != 0:
-        return done(False, "tests_failed", code, out, diff_stat, tests_modified, flaky)
+        return done(False, "tests_failed", code, out, diff_stat, tests_modified, flaky,
+                    patch_path=patch_path)
 
     if req.hidden_cmd:
         hcode, hout, htimed_out = _run(req.hidden_cmd, wt, req.timeout_s)
@@ -156,9 +176,10 @@ def run_verify(req: VerifyRequest) -> VerifyResult:
             # hidden suite trains the worker to overfit it (design.md section 7).
             return done(False, "hidden_tests_failed", hcode,
                         "the change didn't hold up under additional checks",
-                        diff_stat, tests_modified)
+                        diff_stat, tests_modified, patch_path=patch_path)
 
-    return done(True, "tests_passed", code, out, diff_stat, tests_modified, flaky)
+    return done(True, "tests_passed", code, out, diff_stat, tests_modified, flaky,
+                patch_path=patch_path)
 
 
 def _cached_baseline(req: VerifyRequest, repo) -> bool:

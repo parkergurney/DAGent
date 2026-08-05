@@ -323,7 +323,9 @@ class Scheduler:
         result = run_verify(req)
         payload = {"cause": result.cause, "exit_code": result.exit_code,
                   "duration_s": result.duration_s, "flaky": result.flaky,
-                  "output_tail": result.output_tail}
+                  "output_tail": result.output_tail, "diff_stat": result.diff_stat,
+                  "tests_modified": result.tests_modified,
+                  "output_path": result.output_path, "patch_path": result.patch_path}
         if result.passed:
             s = append_event(self.conn, source="verifier", type="verify.passed",
                              task_id=task_id, payload=payload)

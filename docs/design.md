@@ -357,6 +357,7 @@ class VerifyResult(BaseModel):
     diff_stat: str
     tests_modified: list[str]
     output_path: str                # full logs on disk
+    patch_path: str | None          # saved review patch for committed diffs
 ```
 
 ### Execution order (cheapest first)
@@ -399,7 +400,8 @@ class VerifyResult(BaseModel):
 | timeout | ambiguous — supervisor reads duration vs baseline + transcript |
 
 Events: `verify.started`, then passed/failed with payload
-`{cause, exit_code, duration_s, flaky, rerun_count, failure_signature}`.
+`{cause, exit_code, duration_s, flaky, diff_stat, tests_modified,
+output_path, patch_path}`.
 <!-- /sync:verify-gate -->
 
 ---
@@ -483,8 +485,12 @@ gets fully specced:
 Per-task `delivery_mode`, firstmate-style, explicit:
 
 - `pr`: push branch, open PR via gh. Delivered = PR open. Merge is the
-  manager's call; merge tracking is an event.
-- `local`: approved fast-forward merge into the local default branch.
+  manager's call; merge tracking is an event. The delivery payload carries
+  `{url, branch, commit_sha}` so review does not depend on a live worktree.
+- `local`: approved fast-forward merge into the local default branch. The
+  delivery payload carries `{before_sha, after_sha, commit_sha}` so the
+  manager can review with `git diff before_sha..after_sha` after pooled
+  worktrees have been torn down.
 - `scout`: no push ever; report written to `data/<task_id>/report.md`.
 
 Delivery failures (push rejected, conflict) → `delivery.failed` → triage.

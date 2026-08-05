@@ -94,4 +94,6 @@ class WorktreePool:
         """Remove every pooled worktree. Call once, at shutdown."""
         for wt in self._slots:
             _git("worktree", "remove", "--force", str(wt), cwd=self.repo_root)
+        for i in range(self.size):
+            _git("branch", "-D", f"pool/slot-{i}", cwd=self.repo_root)
         self._slots.clear()

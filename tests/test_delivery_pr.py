@@ -5,6 +5,7 @@ needs gh or network -- the default `_gh_pr_create` is exercised live in
 tests/integration instead, wherever gh auth actually lives.
 """
 import asyncio
+import json
 import subprocess
 
 import pytest
@@ -46,6 +47,8 @@ def test_pr_pushes_branch_and_calls_open_pr(tmp_path):
 
     assert etype == "delivery.pr_opened"
     assert payload["url"] == "https://example.invalid/pr/1"
+    assert payload["branch"] == "task/t1"
+    assert payload["commit_sha"] == git("rev-parse", "task/t1", cwd=repo).stdout.strip()
     assert calls == [(str(repo), "task/t1")]
 
     # the branch really landed on the remote.
@@ -82,6 +85,25 @@ def test_pr_open_failure_after_a_successful_push_raises_delivery_error(tmp_path)
     assert "task/t1" in ls_remote.stdout
 
 
+@pytest.mark.parametrize(
+    ("remote_url", "expected"),
+    [
+        ("https://github.com/parkergurney/sqlite-utils.git", "parkergurney"),
+        ("git@github.com:parkergurney/sqlite-utils.git", "parkergurney"),
+        ("https://example.com/parkergurney/sqlite-utils.git", None),
+    ],
+)
+def test_github_owner_from_remote(remote_url, expected):
+    assert delivery._github_owner_from_remote(remote_url) == expected
+
+
+def test_head_arg_qualifies_fork_branch_with_origin_owner(tmp_path):
+    repo = init_repo(tmp_path)
+    git("remote", "add", "origin", "https://github.com/parkergurney/sqlite-utils.git", cwd=repo)
+
+    assert delivery._head_arg(repo, "task/t1") == "parkergurney:task/t1"
+
+
 def test_pr_mode_end_to_end_through_the_scheduler(tmp_path, monkeypatch):
     """Real FakeWorker task, real pooled worktree, real push to a local bare
     remote, PR-open swapped out so this stays gh/network-free."""
@@ -107,6 +129,17 @@ def test_pr_mode_end_to_end_through_the_scheduler(tmp_path, monkeypatch):
         "SELECT payload FROM events WHERE task_id = ? AND type = 'delivery.pr_opened'",
         (task_id,)).fetchone()
     assert opened is not None
+    payload = json.loads(opened["payload"])
+    assert payload["url"] == "https://example.invalid/pr/7"
+    assert payload["branch"] == f"task/{task_id}"
+    assert payload["commit_sha"]
+
+    verified = conn.execute(
+        "SELECT payload FROM events WHERE task_id = ? AND type = 'verify.passed'",
+        (task_id,)).fetchone()
+    verify_payload = json.loads(verified["payload"])
+    assert verify_payload["patch_path"]
+    assert verify_payload["diff_stat"]
 
     ls_remote = subprocess.run(["git", "ls-remote", "--heads", str(bare), f"task/{task_id}"],
                                capture_output=True, text=True, check=True)

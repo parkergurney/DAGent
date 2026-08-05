@@ -712,3 +712,34 @@ resolution behavior, and "do not hand back shell snippets for routine
 operation" guidance. Updated docs/usage.md, README.md, and OPINIONS.md to
 make natural-language operation the default mental model while preserving
 the guardrails: ask before choosing repo, delivery mode, daemon, or yolo.
+
+## 2026-08-05 - review artifacts survive worktree teardown
+
+Batch03 raised the practical review gap: pooled worktrees are scratch slots,
+so a post-run review process cannot depend on them still existing. The right
+artifact boundary is the event log plus files under `data/<task_id>/`.
+
+Verify now saves an event-specific `review_<ms>.patch` for every committed
+diff it grades, and keeps `review.patch` as the latest convenience copy.
+`verify.passed`/`verify.failed` payloads include `diff_stat`, `tests_modified`,
+`output_path`, and `patch_path`, so the patch trail survives retries and pool
+teardown.
+
+Delivery events now carry review metadata. `delivery.pr_opened` records
+`{url, branch, commit_sha}`. `delivery.merged_local` records
+`{before_sha, after_sha, commit_sha}` (plus rebase metadata when main moved),
+so local deliveries can be reviewed with `git diff before..after` after the
+task branch and worktree slot are gone.
+
+`orchestrator status <task_id>` now prints the review surface for delivered
+tasks: PR URL/branch/commit, local diff/log commands, scout report path, and
+saved patch path. Updated docs/usage.md, docs/dogfooding.md, the orchestrator
+skill, and the synced delivery-mode contract to point users at delivered
+artifacts, not pooled worktrees, and to verify cleanup with `git worktree
+list`, `git branch --list 'pool/slot-*'`, `ls data/worktrees`, and
+`git status --short`.
+
+Follow-up from the same batch03 cleanup audit: `WorktreePool.close()` already
+removed the slot worktree directories, but `git worktree remove` leaves the
+scratch branch behind. Close now deletes `pool/slot-*` branches after removing
+the worktrees, with a regression test in `tests/test_worktree_pool.py`.

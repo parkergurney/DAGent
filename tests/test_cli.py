@@ -152,6 +152,37 @@ def test_status_detail_shows_escalation_and_answer_hint(tmp_path, capsys):
     assert f"orchestrator answer {task_id}" in out
 
 
+def test_status_detail_shows_local_delivery_review_commands(tmp_path, capsys):
+    db = str(tmp_path / "orch.db")
+    conn = connect(db)
+    task_id = create_task(conn, title="delivered local", brief="b", repo="/repo",
+                          delivery_mode="local", verify_cmd="true")
+
+    s = append_event(conn, source="scheduler", type="dep.satisfied", task_id=task_id)
+    transition(conn, task_id, "queued", cause_seq=s)
+    s = append_event(conn, source="scheduler", type="worker.spawned", task_id=task_id)
+    transition(conn, task_id, "running", cause_seq=s, session_id="x", worktree="/wt",
+               base_sha="base")
+    s = append_event(conn, source="worker", type="worker.done_claimed", task_id=task_id)
+    transition(conn, task_id, "verifying", cause_seq=s)
+    s = append_event(conn, source="verifier", type="verify.passed", task_id=task_id,
+                     payload={"patch_path": "data/t/review.patch"})
+    transition(conn, task_id, "delivering", cause_seq=s)
+    s = append_event(conn, source="delivery", type="delivery.merged_local", task_id=task_id,
+                     payload={"branch": f"task/{task_id}", "before_sha": "abc123",
+                              "after_sha": "def456", "commit_sha": "def456"})
+    transition(conn, task_id, "delivered", cause_seq=s)
+    conn.close()
+
+    main(["status", task_id, "--db", db])
+    out = capsys.readouterr().out
+
+    assert "merged locally abc123..def456" in out
+    assert "git -C /repo diff abc123..def456" in out
+    assert "git -C /repo log --oneline abc123..def456" in out
+    assert "data/t/review.patch" in out
+
+
 def test_run_command_drives_a_real_task_to_delivered(tmp_path, capsys):
     """End-to-end through the CLI: add-task, then run with --fake-worker
     --fake-supervisor (free, deterministic) against a real toy repo."""

@@ -5,6 +5,7 @@ a remote).
 """
 import subprocess
 from pathlib import Path
+from urllib.parse import urlparse
 
 DATA_DIR = Path("data")
 
@@ -39,6 +40,14 @@ def _scout(task: dict) -> tuple:
     return "delivery.report_written", {"path": str(report)}
 
 
+def _rev_parse(ref: str, *, cwd) -> str:
+    proc = subprocess.run(["git", "rev-parse", ref], cwd=cwd,
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise DeliveryError(proc.stderr)
+    return proc.stdout.strip()
+
+
 def _local(task: dict) -> tuple:
     branch = f"task/{task['id']}"
     repo_root = task["repo"]
@@ -53,10 +62,18 @@ def _local(task: dict) -> tuple:
     if status.stdout.strip():
         raise DeliveryError(f"dirty_tree: uncommitted changes in {repo_root}:\n{status.stdout}")
 
+    before_sha = _rev_parse("main", cwd=repo_root)
+    commit_sha = _rev_parse(branch, cwd=repo_root)
     merge = subprocess.run(["git", "merge", "--ff-only", branch], cwd=repo_root,
                            capture_output=True, text=True)
     if merge.returncode == 0:
-        return "delivery.merged_local", {"branch": branch}
+        after_sha = _rev_parse("main", cwd=repo_root)
+        return "delivery.merged_local", {
+            "branch": branch,
+            "before_sha": before_sha,
+            "after_sha": after_sha,
+            "commit_sha": commit_sha,
+        }
 
     # main moved past the branch point: rebase onto main's current SHA and retry.
     main_sha = subprocess.run(["git", "rev-parse", "main"], cwd=repo_root,
@@ -74,12 +91,21 @@ def _local(task: dict) -> tuple:
                              capture_output=True, text=True)
     if remerge.returncode != 0:
         raise DeliveryError(remerge.stderr)
-    return "delivery.merged_local", {"branch": branch}
+    after_sha = _rev_parse("main", cwd=repo_root)
+    return "delivery.merged_local", {
+        "branch": branch,
+        "before_sha": before_sha,
+        "after_sha": after_sha,
+        "commit_sha": _rev_parse(branch, cwd=repo_root),
+        "rebased": True,
+        "original_commit_sha": commit_sha,
+    }
 
 
 def _pr(task: dict, *, open_pr) -> tuple:
     branch = f"task/{task['id']}"
     wt = task["worktree"]
+    commit_sha = _rev_parse("HEAD", cwd=wt)
     proc = subprocess.run(["git", "push", "-u", "origin", branch], cwd=wt,
                           capture_output=True, text=True)
     if proc.returncode != 0:
@@ -90,12 +116,36 @@ def _pr(task: dict, *, open_pr) -> tuple:
         raise
     except Exception as e:
         raise DeliveryError(str(e)) from e
-    return "delivery.pr_opened", {"url": url}
+    return "delivery.pr_opened", {"url": url, "branch": branch, "commit_sha": commit_sha}
 
 
 def _gh_pr_create(wt, branch: str) -> str:
-    proc = subprocess.run(["gh", "pr", "create", "--fill", "--head", branch], cwd=wt,
+    proc = subprocess.run(["gh", "pr", "create", "--fill", "--head", _head_arg(wt, branch)], cwd=wt,
                           capture_output=True, text=True)
     if proc.returncode != 0:
         raise DeliveryError(proc.stderr)
     return proc.stdout.strip()
+
+
+def _head_arg(wt, branch: str) -> str:
+    """For fork PRs, `gh pr create --head branch` may look in the upstream
+    repo instead of the fork. Qualify with the origin owner when possible.
+    """
+    proc = subprocess.run(["git", "remote", "get-url", "origin"], cwd=wt,
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        return branch
+    owner = _github_owner_from_remote(proc.stdout.strip())
+    return f"{owner}:{branch}" if owner else branch
+
+
+def _github_owner_from_remote(url: str) -> str | None:
+    if url.startswith("git@github.com:"):
+        path = url.removeprefix("git@github.com:")
+    else:
+        parsed = urlparse(url)
+        if parsed.netloc != "github.com":
+            return None
+        path = parsed.path.lstrip("/")
+    parts = path.removesuffix(".git").split("/")
+    return parts[0] if len(parts) >= 2 and parts[0] else None

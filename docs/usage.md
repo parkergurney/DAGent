@@ -3,7 +3,7 @@
 As of this session there's an `orchestrator` CLI (`add-task`, `run`, `daemon`,
 `answer`, `status`) layered over the `Scheduler` library, so day-to-day use
 doesn't require writing a Python script. The library is still there underneath
-for anyone embedding this in something else — see section 8.
+for anyone embedding this in something else — see section 9.
 
 This doc is the practical "how do I actually run tasks" companion to
 [design.md](design.md), which is the architecture reference.
@@ -171,7 +171,46 @@ dead session get a synthetic `worker.exited` and route through triage like
 any other crash, and the worktree pool wipes and re-checks-out every slot
 unconditionally.
 
-## 8. Using the library directly
+## 8. Reviewing delivered work and cleanup
+
+Do not review pooled worktree directories after a run. They are scratch slots,
+and the scheduler removes/reuses them during teardown. Review the delivered
+artifact recorded in events instead:
+
+```bash
+orchestrator status <task_id> --db data/orchestrator.db
+```
+
+For `pr`, status prints the PR URL, branch, and commit SHA. Review the PR.
+
+For `local`, status prints exact review commands:
+
+```bash
+git -C /path/to/repo diff <before_sha>..<after_sha>
+git -C /path/to/repo log --oneline <before_sha>..<after_sha>
+```
+
+For `scout`, read `data/<task_id>/report.md`.
+
+The verify gate also saves an event-specific patch for committed diffs and
+keeps `data/<task_id>/review.patch` as the latest convenience copy, so a patch
+artifact remains after pooled worktrees are torn down.
+
+To confirm cleanup after a completed non-daemon run:
+
+```bash
+git -C /path/to/repo worktree list
+git -C /path/to/repo branch --list 'pool/slot-*'
+ls -la data/worktrees
+git -C /path/to/repo status --short
+```
+
+Expected: no pooled `slot-*` worktrees remain registered, `data/worktrees`
+has no live slot dirs, no `pool/slot-*` scratch branches remain, and the
+target repo is clean except for intentional `local` deliveries already merged
+into `main`. For `daemon`, cleanup happens when the daemon exits.
+
+## 9. Using the library directly
 
 The CLI is a thin wrapper (`src/orchestrator/cli.py`) over `Scheduler` and
 `create_task`; embedding the orchestrator in something else (a larger tool, a
@@ -203,7 +242,7 @@ asyncio.run(scheduler.run_until_settled())          # one batch, like `orchestra
 `Scheduler` defaults) give the same free/deterministic dry run as
 `--fake-worker --fake-supervisor` above.
 
-## 9. Standalone CLIs
+## 10. Standalone CLIs
 
 ```bash
 # Grade one task's worktree against its verify_cmd, independent of any
@@ -217,7 +256,7 @@ verify-gate --task <task_id> --db data/orchestrator.db --json --record
 supervisor-replay data/<task_id>/packets/<seq>.json --model claude-sonnet-5
 ```
 
-## 10. What's not here yet
+## 11. What's not here yet
 
 - No `needs_human -> delivering` override (design.md's "manager overrides a
   failed verification" edge is specced but has no CLI path yet).

@@ -19,6 +19,21 @@ def test_open_creates_exactly_size_slots(tmp_path):
     pool.close()
 
 
+def test_close_deletes_scratch_slot_branches(tmp_path):
+    repo = init_repo(tmp_path)
+    pool = WorktreePool(repo, tmp_path / "worktrees", size=2)
+    pool.open()
+
+    branches = git("branch", "--list", "pool/slot-*", cwd=repo).stdout
+    assert "pool/slot-0" in branches
+    assert "pool/slot-1" in branches
+
+    pool.close()
+
+    branches = git("branch", "--list", "pool/slot-*", cwd=repo).stdout
+    assert branches.strip() == ""
+
+
 def test_acquire_gives_a_clean_checkout_of_a_fresh_branch(tmp_path):
     repo = init_repo(tmp_path)
     pool = WorktreePool(repo, tmp_path / "worktrees", size=2)

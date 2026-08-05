@@ -22,11 +22,16 @@ def _task_with_branch_worktree(repo, tmp_path, task_id="t1"):
 def test_local_clean_ff_only_merge(tmp_path):
     repo = init_repo(tmp_path)
     task = _task_with_branch_worktree(repo, tmp_path)
+    before = git("rev-parse", "main", cwd=repo).stdout.strip()
+    commit = git("rev-parse", "task/t1", cwd=repo).stdout.strip()
 
     etype, payload = delivery.deliver(task)
 
     assert etype == "delivery.merged_local"
     assert payload["branch"] == "task/t1"
+    assert payload["before_sha"] == before
+    assert payload["after_sha"] == commit
+    assert payload["commit_sha"] == commit
     log = git("log", "-1", "--pretty=%s", cwd=repo).stdout.strip()
     assert log == "worker change"
 
@@ -43,6 +48,9 @@ def test_local_rebases_and_retries_when_main_advanced_cleanly(tmp_path):
     etype, payload = delivery.deliver(task)
 
     assert etype == "delivery.merged_local"
+    assert payload["rebased"] is True
+    assert payload["original_commit_sha"] != payload["commit_sha"]
+    assert payload["after_sha"] == git("rev-parse", "main", cwd=repo).stdout.strip()
     assert (repo / "other.txt").exists()
     assert (repo / "change.txt").exists()
 

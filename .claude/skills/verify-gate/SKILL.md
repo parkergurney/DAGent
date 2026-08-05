@@ -42,6 +42,7 @@ class VerifyResult(BaseModel):
     diff_stat: str
     tests_modified: list[str]
     output_path: str                # full logs on disk
+    patch_path: str | None          # saved review patch for committed diffs
 ```
 
 ## Execution order (cheapest first)
@@ -84,5 +85,6 @@ class VerifyResult(BaseModel):
 | timeout | ambiguous — supervisor reads duration vs baseline + transcript |
 
 Events: `verify.started`, then passed/failed with payload
-`{cause, exit_code, duration_s, flaky, rerun_count, failure_signature}`.
+`{cause, exit_code, duration_s, flaky, diff_stat, tests_modified,
+output_path, patch_path}`.
 <!-- /sync:verify-gate -->

@@ -190,6 +190,36 @@ def _print_task_detail(conn, task_id: str) -> int:
                 marker = " (recommended)" if payload.get("recommended") == i else ""
                 print(f"    [{i}] {opt}{marker}")
             print(f'  resolve with:  orchestrator answer {task_id} "..."')
+    elif task["state"] == "delivered":
+        delivery_event = conn.execute(
+            "SELECT type, payload FROM events WHERE task_id = ? AND source = 'delivery' "
+            "AND type IN ('delivery.pr_opened', 'delivery.merged_local', "
+            "'delivery.report_written') ORDER BY seq DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+        verify_event = conn.execute(
+            "SELECT payload FROM events WHERE task_id = ? AND type = 'verify.passed' "
+            "ORDER BY seq DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+        if delivery_event:
+            payload = json.loads(delivery_event["payload"])
+            if delivery_event["type"] == "delivery.pr_opened":
+                print(f"  delivered:     PR opened at {payload.get('url', '')}")
+                print(f"  branch:        {payload.get('branch', '')}")
+                print(f"  commit:        {payload.get('commit_sha', '')}")
+            elif delivery_event["type"] == "delivery.merged_local":
+                before = payload.get("before_sha", "")
+                after = payload.get("after_sha", "")
+                print(f"  delivered:     merged locally {before[:12]}..{after[:12]}")
+                print(f"  review diff:   git -C {task['repo']} diff {before}..{after}")
+                print(f"  review log:    git -C {task['repo']} log --oneline {before}..{after}")
+            elif delivery_event["type"] == "delivery.report_written":
+                print(f"  delivered:     report written to {payload.get('path', '')}")
+        if verify_event:
+            verify_payload = json.loads(verify_event["payload"])
+            if verify_payload.get("patch_path"):
+                print(f"  patch:         {verify_payload['patch_path']}")
     return 0
 
 
