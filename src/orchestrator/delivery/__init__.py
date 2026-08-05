@@ -49,7 +49,19 @@ def _local(task: dict) -> tuple:
     proc = subprocess.run(["git", "merge", "--ff-only", branch], cwd=repo_root,
                           capture_output=True, text=True)
     if proc.returncode != 0:
-        raise DeliveryError(proc.stderr)
+        # main moved past the branch point -- rebase the task branch onto
+        # main and retry ff-only. Only helps when the rebase is textually
+        # clean; a conflicting rebase is aborted and the original error wins.
+        rebase = subprocess.run(["git", "rebase", "main"], cwd=task["worktree"],
+                                capture_output=True, text=True)
+        if rebase.returncode != 0:
+            subprocess.run(["git", "rebase", "--abort"], cwd=task["worktree"],
+                           capture_output=True, text=True)
+            raise DeliveryError(proc.stderr)
+        proc = subprocess.run(["git", "merge", "--ff-only", branch], cwd=repo_root,
+                              capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise DeliveryError(proc.stderr)
     return "delivery.merged_local", {"branch": branch}
 
 
