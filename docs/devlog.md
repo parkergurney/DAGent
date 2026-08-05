@@ -423,3 +423,80 @@ panes) or the `answer` command's restart-vs-nudge semantics for
 `needs_human` -- design.md's non-goals rule the first out for v1, and the
 second is an intentional, already-logged decision (2026-07-21 entry above),
 not a bug.
+
+## 2026-07-28 - design-sync test, baseline cache key fix, protected_paths (documented retroactively)
+
+Two commits landed on 2026-07-28 (`e3b48bb`, `ede1433`) without devlog entries.
+Closing that gap now because both are the fixes that closed defects an audit
+had previously flagged as open.
+
+`e3b48bb` added `tests/test_design_sync.py`.
+docs/design.md is the source of truth, but several `.claude/skills/*/SKILL.md`
+files intentionally restate parts of it so a session loads only the topic it
+needs instead of the whole doc.
+Both copies are wrapped in matching `<!-- sync:NAME -->` / `<!-- /sync:NAME
+-->` markers; the test extracts every marked block and asserts all copies of
+a given NAME agree, modulo heading-depth differences (design.md nests under
+numbered `## N.` sections, skills start fresh at `#`).
+Without this, a skill file and design.md can drift silently and a session
+loading only the skill acts on a stale contract.
+
+`ede1433` fixed two things together.
+First, `_cached_baseline`'s cache key in verify/gate.py hashed only
+`repo|base_sha|verify_cmd` -- two tasks sharing those three but running
+different `setup_cmd` would read each other's baseline verdict, which isn't
+valid evidence once setup diverges.
+`setup_cmd` is now part of the key.
+Second, `protected_paths` is now threaded end to end: a new nullable column
+on `tasks`, a parameter on `create_task`, and carried through `replay()` --
+previously there was no way for a task to declare which paths the verify
+gate should treat as off-limits for a worker to edit, `NULL` falling back to
+the gate's built-in defaults.
+
+## 2026-08-04 - editable-install/worktree gotcha (Python dogfood target)
+
+Trap for anyone reproducing the benchmark on a Python repo: an editable pip
+install resolves `import <package>` to the checkout it was installed from,
+not to whichever worktree a worker happens to be running in.
+Bare `pytest` in a worktree would then silently test the main checkout's
+code -- the worker's actual changes never execute, and every verify result
+from that task is meaningless.
+`python -m pytest` avoids this because it prepends cwd to `sys.path`, so the
+worktree's own package shadows the editable install.
+
+Proved it with a canary: added a `git worktree`, injected a `raise
+RuntimeError` into the worktree's copy of the package, then ran `python -m
+pytest -x -q` from the worktree (failed, as it must) and from the main
+checkout (passed, unaffected).
+Verify-gate invocations for Python repos must use `python -m pytest`, never
+bare `pytest`.
+
+## 2026-08-04 - sqlite-utils dogfood session: config, protected_paths, fork setup
+
+`sqlite-utils` is dogfood-only -- never reuse it as a bench task suite.
+It's the repo used to shake out real-worker bug classes FakeWorker can't
+produce, not a measurement target; reusing it for M6 benchmarking would
+contaminate the numbers.
+
+`protected_paths` needed no per-task flag here: sqlite-utils keeps its tests
+under `tests/`, which matches the verify gate's defaults (`tests/**`,
+`test_*.py`, `*_test.py`) with no configuration.
+First repo where the defaults just worked.
+
+Forked to `parkergurney/sqlite-utils` since we have no push rights to
+`simonw/sqlite-utils` and `pr` delivery mode would otherwise fail at
+delivery -- `delivery.failed` had no scheduler-level test before this,
+so this exercises that path for real instead of only in FakeWorker.
+`origin` now points at the fork, `upstream` at `simonw/sqlite-utils`.
+
+Test suite: 1374 passed, 16 skipped, ~6.5s, no flakes across 4 consecutive
+runs.
+No `flaky=true` stream expected from this baseline.
+
+Model aliases stay floating (`claude-sonnet-5`) for this dogfooding run --
+acceptable now, but must be version-pinned before M6 so a benchmark run is
+reproducible against a fixed model snapshot.
+
+Today's scheduler config:
+`max_concurrency=4 max_retries=2 max_nudges=2 stall_threshold_s=300
+verify_timeout_s=600 transcript_tail_tokens=3000`.

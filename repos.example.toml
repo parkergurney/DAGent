@@ -1,0 +1,5 @@
+# Flat registry of known local repo paths, so `orchestrator add-task --repo`
+# can take a short name instead of a full path (docs/usage.md section 2).
+
+[repos]
+project = "/path/to/your/local/project"
