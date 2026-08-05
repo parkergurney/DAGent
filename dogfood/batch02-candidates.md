@@ -52,10 +52,8 @@ skipped rather than forced, since the only well-scoped investigation-shaped
 issue in the remaining pool (`#242`-style async questions are used up) didn't
 clear the bar for "real, not busywork."
 Delivery: 12 local, 3 pr (#4, #6, #11), 0 scout.
-Protected paths: unchanged default (`tests/**`) on every task — under the
-new protected-path semantics (`protected_path_modified` only fires on edits
-to a file that already existed at `base_sha`; brand-new files are exempt) no
-task needs the `--protected-paths` override batch01's TDD-shaped tasks
-(#7/#8/#15 there) required. Every brief still gets the standing
-commit-before-done protocol line automatically (`sdk_worker.py`'s
-`_PROTOCOL`), so it doesn't need restating per brief.
+Protected paths: after batch02, the project default is empty because visible
+tests are normal feature-work surface. Use `--protected-paths` only for
+benchmark/hidden/instructor-owned checks a worker must not rewrite. Every
+brief still gets the standing commit-before-done protocol line automatically
+(`sdk_worker.py`'s `_PROTOCOL`), so it doesn't need restating per brief.

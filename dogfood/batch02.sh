@@ -3,11 +3,8 @@ set -euo pipefail
 DB=data/dogfood-b02.db
 VERIFY="/Users/parkergurney/.venvs/dogfood/bin/python -m pytest -x -q"
 # setup_cmd omitted -- deps pre-installed in ~/.venvs/dogfood
-# No TDD_PROTECTED override this batch -- under the new protected-path
-# semantics, protected_path_modified only fires on edits to a file that
-# already existed at base_sha, so a brand-new regression test always passes
-# clean against the default tests/** protected-paths. See
-# dogfood/batch02-candidates.md.
+# protected_paths defaults to empty after batch02 exposed that visible tests
+# are normal feature-work surface, not protected benchmark material.
 
 # See dogfood/batch02-candidates.md for sourcing, category, and composition
 # rationale for each task below.

@@ -27,8 +27,10 @@ def _seed_existing_test_file(repo):
 
 
 def _create(conn, repo, scenario):
+    protected_paths = ("tests/**",) if scenario in {"protected_edit", "protected_new"} else None
     return create_task(conn, title=scenario, brief=scenario, repo=str(repo),
-                       delivery_mode="scout", verify_cmd="true")
+                       delivery_mode="scout", verify_cmd="true",
+                       protected_paths=protected_paths)
 
 
 def _events(conn, task_id):

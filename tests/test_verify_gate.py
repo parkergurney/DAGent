@@ -175,11 +175,36 @@ def test_editing_existing_protected_file_fails_verify(tmp_path):
         lambda wt: (wt / "tests" / "test_x.py").write_text("def test_x():\n    assert False\n"))
 
     req = VerifyRequest(task_id="t5", worktree=str(wt), base_sha=base_sha,
-                        verify_cmd="true", repo=str(repo), timeout_s=10)
+                        verify_cmd="true", repo=str(repo), timeout_s=10,
+                        protected_paths=("tests/**",))
     result = run_verify(req)
 
     assert not result.passed
     assert result.cause == "protected_path_modified"
+
+
+def test_default_allows_editing_existing_test_file(tmp_path):
+    """Visible project tests are normal feature-work surface by default.
+    protected_paths is opt-in for benchmark/hidden/instructor-owned checks."""
+    repo = init_repo(tmp_path)
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_x.py").write_text("def test_x():\n    assert True\n")
+    git("add", "-A", cwd=repo)
+    git("commit", "-qm", "add existing test", cwd=repo)
+
+    wt, base_sha = _child_worktree(
+        repo, "edit_test_default",
+        lambda wt: (wt / "tests" / "test_x.py").write_text(
+            "def test_x():\n    assert True\n\n"
+            "def test_new_behavior():\n    assert True\n"))
+
+    req = VerifyRequest(task_id="t6", worktree=str(wt), base_sha=base_sha,
+                        verify_cmd="true", repo=str(repo), timeout_s=10)
+    result = run_verify(req)
+
+    assert result.passed
+    assert result.cause == "tests_passed"
+    assert result.tests_modified == ["tests/test_x.py"]
 
 
 def test_adding_new_protected_file_passes_verify(tmp_path):
@@ -192,7 +217,7 @@ def test_adding_new_protected_file_passes_verify(tmp_path):
         lambda wt: ((wt / "tests").mkdir(), (wt / "tests" / "test_new.py").write_text(
             "def test_x():\n    assert True\n")))
 
-    req = VerifyRequest(task_id="t6", worktree=str(wt), base_sha=base_sha,
+    req = VerifyRequest(task_id="t7", worktree=str(wt), base_sha=base_sha,
                         verify_cmd="true", repo=str(repo), timeout_s=10)
     result = run_verify(req)
 

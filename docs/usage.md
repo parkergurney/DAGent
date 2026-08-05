@@ -8,6 +8,27 @@ for anyone embedding this in something else — see section 8.
 This doc is the practical "how do I actually run tasks" companion to
 [design.md](design.md), which is the architecture reference.
 
+## 0. Intended operator experience
+
+The primary interface is natural language through an agent session that has
+this repo loaded. You should be able to say:
+
+- "queue a task to fix empty CSV imports in sqlite-utils"
+- "start the batch"
+- "what's blocked?"
+- "answer the task about URI paths with option 2"
+- "keep watching this repo for new tasks"
+
+The agent should translate that into `orchestrator add-task`, `run`, `status`,
+`answer`, or `daemon`, run the command, and report back in plain English. The
+CLI is the implementation boundary, not something the operator should have to
+drive by hand for ordinary use.
+
+The agent must still ask before crossing real trust boundaries: which repo to
+act on if ambiguous, which delivery mode to use, whether to launch the
+never-ending daemon, and whether to enable `--yolo`. Those choices can spawn
+real worker sessions, commit code, merge locally, or open PRs.
+
 ## 1. Install
 
 ```bash
@@ -39,11 +60,10 @@ Skipping it for a repo that needs one caches `baseline_broken` against the
 base branch forever, since the baseline checkout has no dependencies
 installed and nothing else ever retries it (design.md section 7).
 
-Pass `--protected-paths` (repeatable) for any repo whose tests don't live
-under `tests/**`, `test_*.py`, or `*_test.py` — the verify gate's anti-gaming
-check (design.md section 7) only looks at those globs unless you override
-it, so a JS/TS repo with `src/**/__tests__/` or `*.test.ts`, for example,
-silently gets no protection at all without this flag.
+Pass `--protected-paths` (repeatable) only for benchmark, hidden, or
+instructor-owned checks the worker must not rewrite. The default is empty
+because visible project tests are normal feature-work surface and often need
+to change with the implementation.
 
 Prints the new task's id (a ULID). Defaults to `data/orchestrator.db`; pass
 `--db` to use a different file. Chain tasks into a DAG with repeatable

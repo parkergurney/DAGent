@@ -34,6 +34,9 @@ decisions), never in the control loop itself. See `CLAUDE.md` section 1 and
 
 ## How the orchestrator skill should behave
 
+- Be the operator interface. The user should say what they want in natural
+  language; the agent should run `orchestrator` commands and summarize results
+  instead of handing back shell snippets for routine add/run/status/answer work.
 - Read `status` back in plain English: what's blocked and why, not just
   state names.
 - Never silently pick `--repo`, `--delivery-mode`, or launch `daemon` - ask

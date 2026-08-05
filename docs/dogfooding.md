@@ -116,7 +116,7 @@ FROM events WHERE type='verify.failed' ORDER BY seq;
 -- did the supervisor ever fail to produce a valid action?
 SELECT * FROM events WHERE type='supervisor.failed';
 
--- gaming attempts (globs DO match this repo, so 0 is real evidence)
+-- protected-path hits; only expect these when the batch passed explicit globs
 SELECT * FROM events WHERE type='verify.failed'
   AND json_extract(payload,'$.cause')='protected_path_modified';
 

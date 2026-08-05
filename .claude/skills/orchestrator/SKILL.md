@@ -13,6 +13,18 @@ in this repo). Translate what the user says into the right subcommand below,
 run it via Bash, and read the result back to them in plain language - don't
 just dump raw CLI output.
 
+The intended UX is conversational. The user should be able to say things like:
+
+- "queue a task to fix the CSV import bug in sqlite-utils"
+- "start the batch"
+- "what's blocked?"
+- "answer the URI task with option 2"
+- "keep watching this repo for more tasks"
+
+Your job is to operate the CLI for them. Do not respond with instructions for
+the user to copy-paste unless they explicitly ask for commands or you are
+blocked by missing local setup/approval.
+
 This skill only dispatches commands; it doesn't add judgment beyond what's
 below. `orchestrator run`/`daemon` themselves spawn real Claude Code worker
 sessions that write code, run tests, and can push branches or open PRs -
@@ -32,8 +44,25 @@ user. Don't wait to be asked; check for it once per session.
 ## Prereq check
 
 If `which orchestrator` fails, tell the user to run `pip install -e .` from
-the repo root first (registers the console script) rather than trying to
-invoke `python -m orchestrator.cli` yourself as a workaround.
+the repo root first (`pip install -e ".[dev]"` for development installs,
+registers the console scripts) rather than trying to invoke
+`python -m orchestrator.cli` yourself as a workaround.
+
+## Conversation flow
+
+For ordinary operator requests, follow this loop:
+
+1. Resolve any missing trust-boundary inputs (`--repo`/`--repo-root`,
+   `--delivery-mode`, daemon confirmation, yolo confirmation).
+2. Run the CLI command yourself.
+3. Summarize what changed: task ids created, run started, task state, or the
+   answer that was folded into the brief.
+4. If a run/daemon emits `needs_human`, immediately fetch task detail and ask
+   the user how to answer it.
+
+Do not make the user manage task ids manually when the state can be read from
+SQLite. If they say "the stuck one" or "the URI task", run status/detail queries
+to resolve the task, then confirm if more than one task matches.
 
 ## Command mapping
 
@@ -44,6 +73,8 @@ orchestrator add-task --repo <path> --title "<short title>" --brief "<what to do
 ```
 Never guess `--repo` or `--delivery-mode` - see Guardrails. Prints the new
 task's id; tell the user what it is, since they'll need it for `answer`.
+If the user gives a repo short name, use it through `repos.toml`; if they give
+a natural repo name, inspect `repos.toml` before asking them for a path.
 
 **"run it" / "start the batch" / "go"**
 ```
@@ -105,7 +136,8 @@ rather than guessing.
 
 All commands take `--db <path>` (default `data/orchestrator.db`); only pass
 it if the user names a specific db file or you're clearly working with more
-than one.
+than one. When a run is already active or the user is referring to an existing
+batch, reuse that batch's db path.
 
 Less common flags (`--max-concurrency`, `--worker-model`, `--supervisor-model`,
 `--worktree-root`, `--max-retries`, `--config`) aren't listed above - run

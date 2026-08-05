@@ -478,10 +478,10 @@ It's the repo used to shake out real-worker bug classes FakeWorker can't
 produce, not a measurement target; reusing it for M6 benchmarking would
 contaminate the numbers.
 
-`protected_paths` needed no per-task flag here: sqlite-utils keeps its tests
-under `tests/`, which matches the verify gate's defaults (`tests/**`,
-`test_*.py`, `*_test.py`) with no configuration.
-First repo where the defaults just worked.
+At the time, `protected_paths` needed no per-task flag here because
+sqlite-utils keeps its tests under `tests/`, matching the then-current
+verify gate defaults. Batch02 later proved that default was too blunt for
+normal feature work; see the 2026-08-05 opt-in entry below.
 
 Forked to `parkergurney/sqlite-utils` since we have no push rights to
 `simonw/sqlite-utils` and `pr` delivery mode would otherwise fail at
@@ -678,3 +678,37 @@ hook, held constant) and confirmed the write succeeds -- reproducing the
 original batch01 failure exactly, which is the strongest evidence available
 that the earlier denial was the sandbox's doing and not, say, a stray
 macOS permission on the temp directory.
+
+## 2026-08-05 - protected_paths is opt-in after batch02
+
+Batch02 showed the previous default was the wrong semantic boundary:
+protecting `tests/**` by default turned normal feature work into 13
+`protected_path_modified` failures. Workers were doing the right thing --
+adding or updating regression tests in the existing test modules -- and the
+verify gate treated that as gaming.
+
+Changed `DEFAULT_PROTECTED` to empty. `protected_paths` remains available
+for benchmark/hidden/instructor-owned checks that workers must not rewrite,
+and explicit protected paths still block edits/deletes/renames to files
+that existed at `base_sha` while allowing brand-new files. Visible project
+tests are now ordinary work surface by default.
+
+Updated the verify-gate contract in docs/design.md and the synced
+`.claude/skills/verify-gate` copy. Added coverage proving the new default
+allows edits to existing test files, while explicit `protected_paths` still
+catch protected edits.
+
+## 2026-08-05 - natural language is the operator interface
+
+Clarified the intended UX after the CLI usage walkthrough made the system
+sound more manual than it should be. The `orchestrator` CLI remains the
+implementation boundary and audit trail, but the operator-facing flow is a
+chat agent using `.claude/skills/orchestrator/SKILL.md`: user states intent,
+agent runs add-task/run/status/answer/daemon, and reports back in plain
+English.
+
+Updated the orchestrator skill with explicit conversation flow, repo/db
+resolution behavior, and "do not hand back shell snippets for routine
+operation" guidance. Updated docs/usage.md, README.md, and OPINIONS.md to
+make natural-language operation the default mental model while preserving
+the guardrails: ask before choosing repo, delivery mode, daemon, or yolo.

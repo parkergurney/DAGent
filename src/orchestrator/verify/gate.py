@@ -18,7 +18,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-DEFAULT_PROTECTED = ("tests/**", "test_*.py", "*_test.py")
+DEFAULT_PROTECTED = ()
 DATA_DIR = Path(os.environ.get("ORCH_DATA_DIR", "data"))
 
 

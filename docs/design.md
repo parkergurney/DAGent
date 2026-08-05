@@ -337,7 +337,7 @@ class VerifyRequest(BaseModel):
     hidden_cmd: str | None          # NOT in the brief; benchmark/paranoia
     setup_cmd: str | None           # cached per repo
     timeout_s: int = 600
-    protected_paths: list[str]      # globs the worker may not modify (existing files only)
+    protected_paths: list[str]      # opt-in globs the worker may not modify (existing files only)
     rerun_on_fail: bool = True      # flake detection
 
 class VerifyResult(BaseModel):
@@ -364,13 +364,13 @@ class VerifyResult(BaseModel):
 1. **Preflight (git, ms):** dirty worktree → `uncommitted_changes` (supervisor
    nudges "commit and re-claim"). Empty diff on a ship task → `empty_diff`
    (hallucinated completion). Diff modifies (edits, deletes, or renames) a
-   file that already existed at base_sha and matches `protected_paths` →
-   `protected_path_modified` — the anti-gaming check; an agent that can't make
-   the tests pass will make the tests different. New files under
-   protected_paths are exempt — a brand-new test is a contribution, not
-   gaming — so TDD-shaped tasks need no opt-out; only edits to pre-existing
-   tests are gated. Default protected_paths to the test dirs verify_cmd
-   exercises.
+   file that already existed at base_sha and matches explicit
+   `protected_paths` → `protected_path_modified` — the anti-gaming check for
+   benchmark/hidden/instructor-owned checks an agent must not rewrite. New
+   files under protected_paths are exempt — a brand-new test is a
+   contribution, not gaming. Default protected_paths is empty: visible project
+   tests are normal feature-work surface and often need to change with the
+   implementation.
 2. **Baseline (cached on (repo, base_sha, verify_cmd, setup_cmd)):** run setup+verify on
    base_sha itself. Baseline red → `baseline_broken` → escalate, never retry.
    No number of retries fixes a repo whose tests were already failing; without
@@ -394,7 +394,7 @@ class VerifyResult(BaseModel):
 | hidden_tests_failed | restart w/ non-revealing feedback; twice → escalate |
 | uncommitted_changes | nudge |
 | empty_diff | restart, pointed "you changed nothing" |
-| protected_path_modified | restart "revert X, solve without editing existing tests"; also a benchmark metric (gaming attempts per condition) |
+| protected_path_modified | restart/escalate "revert X or request an explicit protected-path exception"; also a benchmark metric (gaming attempts per condition) |
 | baseline_broken, setup_failed | escalate, never retry |
 | timeout | ambiguous — supervisor reads duration vs baseline + transcript |
 

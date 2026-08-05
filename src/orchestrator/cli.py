@@ -267,10 +267,9 @@ def main(argv=None) -> int:
              "worker's own worktree (e.g. 'npm install') -- design.md section 7")
     p_add.add_argument("--protected-paths", action="append", default=[], metavar="GLOB",
         help="path glob(s) the worker may not touch (anti-gaming check, design.md "
-             "section 7); repeatable. Defaults to the verify gate's own "
-             "Python/pytest-shaped globs (tests/**, test_*.py, *_test.py) -- pass "
-             "this explicitly for any repo whose tests don't live there, or the "
-             "check silently never fires")
+             "section 7); repeatable. Defaults to empty because visible project "
+             "tests are normal feature-work surface. Pass explicit globs only "
+             "for benchmark/hidden/instructor-owned checks the worker must not rewrite")
     p_add.add_argument("--depends-on", action="append", default=[], metavar="TASK_ID")
     p_add.add_argument("--max-retries", type=int, default=2)
     p_add.set_defaults(func=cmd_add_task)

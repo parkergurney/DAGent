@@ -7,6 +7,11 @@ by tests before anything is called done, and benchmarked against baselines.
 Design: [docs/design.md](docs/design.md). Status: M5 complete (worktree pool, dep resolution, all three delivery modes), plus an `orchestrator` CLI on top.
 Usage: [docs/usage.md](docs/usage.md).
 
+Day-to-day operation is meant to be natural language through an agent session:
+ask it to queue tasks, start or watch a batch, check status, and answer
+escalations. The agent uses the `orchestrator` CLI underneath; operators should
+only need raw commands for setup, debugging, or automation.
+
 ## Layout
 
     docs/design.md        full architecture design doc, the source of truth

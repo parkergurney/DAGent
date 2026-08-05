@@ -3,10 +3,8 @@ set -euo pipefail
 DB=data/dogfood-b01.db
 VERIFY="/Users/parkergurney/.venvs/dogfood/bin/python -m pytest -x -q"
 # setup_cmd omitted -- deps pre-installed in ~/.venvs/dogfood
-# TDD-shaped tasks (#7, #8, #15) need to add a regression test to be
-# verifiable at all, so their protected-paths is overridden away from the
-# tests/** default onto a harmless real path instead.
-TDD_PROTECTED="docs/**"
+# protected_paths defaults to empty; visible tests are normal feature-work
+# surface, so TDD-shaped tasks do not need a protected-path override.
 
 # See dogfood/batch01-candidates.md for sourcing, category, and composition
 # rationale for each task below.
@@ -57,12 +55,12 @@ t6=$(orchestrator add-task --db "$DB" --repo sqlite-utils \
 t7=$(orchestrator add-task --db "$DB" --repo sqlite-utils \
   --title "rows_where(offset=...) errors when limit isn't also given" \
   --brief "Passing offset without limit to rows_where() / pks_and_rows_where() produces invalid SQL (OFFSET with no LIMIT) and raises OperationalError instead of just returning the offset rows. (issue #816)" \
-  --verify-cmd "$VERIFY" --delivery-mode local --protected-paths "$TDD_PROTECTED")
+  --verify-cmd "$VERIFY" --delivery-mode local)
 
 t8=$(orchestrator add-task --db "$DB" --repo sqlite-utils \
   --title "rows_from_file() crashes on an empty or whitespace-only file" \
   --brief "With no explicit format, format auto-detection runs csv.Sniffer against the file's leading bytes; on an empty/whitespace-only file this raises an uncaught csv.Error instead of yielding zero rows. (issue #808)" \
-  --verify-cmd "$VERIFY" --delivery-mode local --protected-paths "$TDD_PROTECTED")
+  --verify-cmd "$VERIFY" --delivery-mode local)
 
 t9=$(orchestrator add-task --db "$DB" --repo sqlite-utils \
   --title "No way to de-register a SQL function registered via register_function()" \
@@ -92,6 +90,6 @@ t14=$(orchestrator add-task --db "$DB" --repo sqlite-utils \
 t15=$(orchestrator add-task --db "$DB" --repo sqlite-utils \
   --title "table.update() raises a bare AssertionError for a missing row" \
   --brief "When the primary key passed to .update() doesn't match any row, callers get an opaque AssertionError with no message rather than a documented exception type." \
-  --verify-cmd "$VERIFY" --delivery-mode local --protected-paths "$TDD_PROTECTED")
+  --verify-cmd "$VERIFY" --delivery-mode local)
 
 echo "batch01 created: $t1 $t2 $t3 $t4 $t5 $t6 $t7 $t8 $t9 $t10 $t11 $t12 $t13 $t14 $t15"

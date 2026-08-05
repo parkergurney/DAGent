@@ -17,7 +17,7 @@ def main(argv=None) -> int:
     p.add_argument("--task", required=True, help="task id")
     p.add_argument("--db", default="data/orchestrator.db")
     p.add_argument("--protected", action="append", default=None,
-                   help="protected-path glob; repeatable (default: tests/**, test_*.py, *_test.py)")
+                   help="protected-path glob; repeatable (default: empty)")
     p.add_argument("--setup-cmd", help="overrides the task's own setup_cmd if given")
     p.add_argument("--hidden-cmd")
     p.add_argument("--timeout", type=int, default=600)
