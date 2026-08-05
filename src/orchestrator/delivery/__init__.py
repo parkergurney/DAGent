@@ -42,26 +42,38 @@ def _scout(task: dict) -> tuple:
 def _local(task: dict) -> tuple:
     branch = f"task/{task['id']}"
     repo_root = task["repo"]
+
     current = subprocess.run(["git", "branch", "--show-current"], cwd=repo_root,
                              capture_output=True, text=True).stdout.strip()
     if current != "main":
         raise DeliveryError(f"repo not on main (on {current!r}); refusing local merge")
-    proc = subprocess.run(["git", "merge", "--ff-only", branch], cwd=repo_root,
-                          capture_output=True, text=True)
-    if proc.returncode != 0:
-        # main moved past the branch point -- rebase the task branch onto
-        # main and retry ff-only. Only helps when the rebase is textually
-        # clean; a conflicting rebase is aborted and the original error wins.
-        rebase = subprocess.run(["git", "rebase", "main"], cwd=task["worktree"],
-                                capture_output=True, text=True)
-        if rebase.returncode != 0:
-            subprocess.run(["git", "rebase", "--abort"], cwd=task["worktree"],
+
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=repo_root,
+                            capture_output=True, text=True)
+    if status.stdout.strip():
+        raise DeliveryError(f"dirty_tree: uncommitted changes in {repo_root}:\n{status.stdout}")
+
+    merge = subprocess.run(["git", "merge", "--ff-only", branch], cwd=repo_root,
                            capture_output=True, text=True)
-            raise DeliveryError(proc.stderr)
-        proc = subprocess.run(["git", "merge", "--ff-only", branch], cwd=repo_root,
-                              capture_output=True, text=True)
-        if proc.returncode != 0:
-            raise DeliveryError(proc.stderr)
+    if merge.returncode == 0:
+        return "delivery.merged_local", {"branch": branch}
+
+    # main moved past the branch point: rebase onto main's current SHA and retry.
+    main_sha = subprocess.run(["git", "rev-parse", "main"], cwd=repo_root,
+                              capture_output=True, text=True).stdout.strip()
+    rebase = subprocess.run(["git", "rebase", main_sha], cwd=task["worktree"],
+                            capture_output=True, text=True)
+    if rebase.returncode != 0:
+        subprocess.run(["git", "rebase", "--abort"], cwd=task["worktree"],
+                       capture_output=True, text=True)
+        raise DeliveryError(f"rebase_conflict: {rebase.stderr}\noriginal: {merge.stderr}")
+
+    # NOTE: verification ran against the pre-rebase base. See devlog —
+    # re-verification after rebase is required before this is sound.
+    remerge = subprocess.run(["git", "merge", "--ff-only", branch], cwd=repo_root,
+                             capture_output=True, text=True)
+    if remerge.returncode != 0:
+        raise DeliveryError(remerge.stderr)
     return "delivery.merged_local", {"branch": branch}
 
 

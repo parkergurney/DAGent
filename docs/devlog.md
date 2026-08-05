@@ -500,3 +500,7 @@ reproducible against a fixed model snapshot.
 Today's scheduler config:
 `max_concurrency=4 max_retries=2 max_nudges=2 stall_threshold_s=300
 verify_timeout_s=600 transcript_tail_tokens=3000`.
+
+The three-attempt convergence trace. Attempt 1 escaped the sandbox via sed -i on an absolute path → empty_diff. Attempt 2 edited the right worktree but didn't commit → uncommitted_changes. Attempt 3 clean → verify passed. Three distinct causes, three correct supervisor actions, converged. Paste the event trace. This is the best evidence you have that the taxonomy earns its keep, and it's near-publishable as-is.
+The bug: attempt 1's escape left db.py dirty in the main checkout; delivery has no dirty-tree preflight, so every subsequent merge failed identically. Environment problem retried as if it were a worker problem.
+The containment finding: the PreToolUse hook (if wired) doesn't stop Bash from writing to absolute paths outside the worktree. Path-based tool gating doesn't contain arbitrary shell.
