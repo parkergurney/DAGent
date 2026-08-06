@@ -10,7 +10,7 @@ from orchestrator.store import connect
 from tests.helpers import init_repo
 
 
-def _suite_file(tmp_path, repo, *, hidden_cmd="true", tasks=None):
+def _suite_file(tmp_path, repo, *, name="toy", hidden_cmd="true", tasks=None):
     tasks = tasks or [
         """
 [[tasks]]
@@ -23,13 +23,13 @@ hidden_cmd = "{hidden_cmd}"
     path = tmp_path / "suite.toml"
     path.write_text("""
 [bench]
-name = "toy"
+name = "{name}"
 repo = "{repo}"
 verify_cmd = "true"
 delivery_mode = "scout"
 
 {tasks}
-""".format(repo=repo, tasks="\n".join(tasks)))
+""".format(name=name, repo=repo, tasks="\n".join(tasks)))
     return path
 
 
@@ -144,3 +144,26 @@ def test_bench_cli_report(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "condition" in out
     assert "sequential" in out
+
+
+def test_bench_cli_report_recurses_and_summarizes_across_suites(tmp_path, capsys):
+    out_dir = tmp_path / "bench"
+    for suite_name in ("suite_one", "suite_two"):
+        repo_parent = tmp_path / suite_name / "target"
+        repo_parent.mkdir(parents=True)
+        repo = init_repo(repo_parent)
+        suite_path = _suite_file(tmp_path / suite_name, repo, name=suite_name)
+        run_benchmark(suite_path, condition="sequential", out_dir=out_dir,
+                      fake_worker=True, overwrite=True)
+
+    rc = bench_main(["report", str(out_dir)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "suite_one-sequential-seed1" in out
+    assert "suite_two-sequential-seed1" in out
+
+    rc = bench_main(["report", str(out_dir), "--summary", "--group-by", "condition"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "group\truns\ttasks" in out
+    assert "sequential\t2\t2\t2\t100.0%" in out

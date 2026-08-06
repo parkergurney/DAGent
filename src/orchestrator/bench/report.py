@@ -3,6 +3,7 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from statistics import mean
 
 from orchestrator.store import connect
 
@@ -27,6 +28,25 @@ class RunSummary:
     recovered_faults: int
     protected_path_modified: int
     verify_failed: int
+
+
+@dataclass(frozen=True)
+class GroupSummary:
+    group: str
+    runs: int
+    tasks: int
+    delivered: int
+    mean_rate: float
+    min_rate: float
+    max_rate: float
+    mean_wall_min: float
+    mean_tasks_per_hour: float
+    mean_cost_usd: float
+    total_cost_usd: float
+    interventions: int
+    recovered_faults: int
+    verify_failed: int
+    protected_path_modified: int
 
 
 def summarize_db(db_path: str | Path) -> RunSummary:
@@ -80,6 +100,35 @@ def summarize_db(db_path: str | Path) -> RunSummary:
     )
 
 
+def summarize_groups(rows: list[RunSummary], group_by: str = "condition") -> list[GroupSummary]:
+    groups: dict[str, list[RunSummary]] = {}
+    for row in rows:
+        key = _group_key(row, group_by)
+        groups.setdefault(key, []).append(row)
+
+    summaries = []
+    for key, items in sorted(groups.items()):
+        rates = [(r.delivered / r.tasks) if r.tasks else 0.0 for r in items]
+        summaries.append(GroupSummary(
+            group=key,
+            runs=len(items),
+            tasks=sum(r.tasks for r in items),
+            delivered=sum(r.delivered for r in items),
+            mean_rate=mean(rates) if rates else 0.0,
+            min_rate=min(rates) if rates else 0.0,
+            max_rate=max(rates) if rates else 0.0,
+            mean_wall_min=mean(r.wall_s / 60 for r in items) if items else 0.0,
+            mean_tasks_per_hour=mean(r.tasks_per_hour for r in items) if items else 0.0,
+            mean_cost_usd=mean(r.cost_usd for r in items) if items else 0.0,
+            total_cost_usd=sum(r.cost_usd for r in items),
+            interventions=sum(r.interventions for r in items),
+            recovered_faults=sum(r.recovered_faults for r in items),
+            verify_failed=sum(r.verify_failed for r in items),
+            protected_path_modified=sum(r.protected_path_modified for r in items),
+        ))
+    return summaries
+
+
 def format_table(rows: list[RunSummary]) -> str:
     headers = [
         "run_id", "condition", "seed", "tasks", "delivered", "rate", "wall_min",
@@ -109,11 +158,51 @@ def format_table(rows: list[RunSummary]) -> str:
     return "\n".join(rendered)
 
 
+def format_summary_table(rows: list[GroupSummary]) -> str:
+    headers = [
+        "group", "runs", "tasks", "delivered", "mean_rate", "rate_range",
+        "mean_wall_min", "mean_tasks/hr", "mean_cost", "total_cost", "human",
+        "recovered", "verify_failed", "protected",
+    ]
+    rendered = ["\t".join(headers)]
+    for r in rows:
+        rendered.append("\t".join([
+            r.group,
+            str(r.runs),
+            str(r.tasks),
+            str(r.delivered),
+            f"{r.mean_rate * 100:.1f}%",
+            f"{r.min_rate * 100:.1f}-{r.max_rate * 100:.1f}%",
+            f"{r.mean_wall_min:.1f}",
+            f"{r.mean_tasks_per_hour:.1f}",
+            f"{r.mean_cost_usd:.4f}",
+            f"{r.total_cost_usd:.4f}",
+            str(r.interventions),
+            str(r.recovered_faults),
+            str(r.verify_failed),
+            str(r.protected_path_modified),
+        ]))
+    return "\n".join(rendered)
+
+
 def find_run_dbs(path: str | Path) -> list[Path]:
     path = Path(path)
     if path.is_file():
         return [path]
     return sorted(path.glob("**/run.db"))
+
+
+def _group_key(row: RunSummary, group_by: str) -> str:
+    fields = {
+        "condition": row.condition,
+        "suite": row.suite,
+        "seed": str(row.seed),
+    }
+    parts = [part.strip() for part in group_by.split(",") if part.strip()]
+    bad = [part for part in parts if part not in fields]
+    if bad:
+        raise ValueError(f"unknown group field(s): {', '.join(bad)}")
+    return "/".join(fields[part] for part in parts)
 
 
 def _metadata(conn: sqlite3.Connection, db_path: str | Path) -> dict:

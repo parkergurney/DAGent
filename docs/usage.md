@@ -301,13 +301,17 @@ Summarize one DB or an entire runs directory:
 
 ```bash
 bench-run report data/bench
+bench-run report data/bench --summary --group-by condition
+bench-run report data/bench --summary --group-by suite,condition
 ```
 
 The report includes verified resolution rate, wall-clock throughput, cost split
 by worker/supervisor, human escalations, recovered injected faults,
-`verify.failed` count, and protected-path hits. `firstmate` remains a reserved
-comparison slot; the implemented conditions are `sequential`, `naive-parallel`,
-and `orchestrator`.
+`verify.failed` count, and protected-path hits. Plain `report` prints one row
+per run; `--summary` groups rows across every suite directory under the given
+parent and prints means plus rate ranges for publishable rollups. `firstmate`
+remains a reserved comparison slot; the implemented conditions are
+`sequential`, `naive-parallel`, and `orchestrator`.
 
 ## 12. What's not here yet
 

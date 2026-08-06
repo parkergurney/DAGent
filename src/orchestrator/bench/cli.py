@@ -3,7 +3,13 @@ import argparse
 import sys
 from pathlib import Path
 
-from orchestrator.bench.report import find_run_dbs, format_table, summarize_db
+from orchestrator.bench.report import (
+    find_run_dbs,
+    format_summary_table,
+    format_table,
+    summarize_db,
+    summarize_groups,
+)
 from orchestrator.bench.runner import CONDITIONS, run_benchmark
 
 
@@ -36,7 +42,10 @@ def cmd_report(args) -> int:
         print(f"no benchmark run DBs found under {args.path}", file=sys.stderr)
         return 1
     rows = [summarize_db(db) for db in dbs]
-    print(format_table(rows))
+    if args.summary:
+        print(format_summary_table(summarize_groups(rows, group_by=args.group_by)))
+    else:
+        print(format_table(rows))
     return 0
 
 
@@ -97,6 +106,11 @@ def main(argv=None) -> int:
 
     p_report = sub.add_parser("report", help="summarize one run.db or a runs directory")
     p_report.add_argument("path", nargs="?", default="data/bench")
+    p_report.add_argument("--summary", action="store_true",
+                          help="print grouped mean/spread rollups instead of per-run rows")
+    p_report.add_argument("--group-by", default="condition",
+                          help="comma-separated fields: condition, suite, seed "
+                               "(default: condition)")
     p_report.set_defaults(func=cmd_report)
 
     p_example = sub.add_parser("example-suite", help="write an example suite TOML")

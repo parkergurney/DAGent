@@ -768,3 +768,9 @@ wall-clock/throughput, cost split, human escalations, recovered injected
 faults, verify failures, and protected-path hits. FakeWorker tests cover suite
 loading, baseline runs, hidden-check failure, orchestrator condition execution,
 and report output.
+
+Confirmed before real calibration: `bench-run report data/bench` recursively
+finds every `**/run.db` across multiple suite directories, so three suites can
+share one merged artifact root. Added `--summary --group-by
+condition|suite|suite,condition` so Substack-level mean/range rollups do not
+require manually aggregating separate reports.
