@@ -67,23 +67,12 @@ Add a way to create a table that is written to storage right away, so it shows u
 hidden_cmd = "/Users/parkergurney/Development/agent-orchestrator/.venv/bin/python -m pytest hidden_tests/test_task5_persist_empty_tables.py -q"
 
 [[tasks]]
-id = "field-comparison"
-title = "Support comparing two fields of the same document"
+id = "remove-doc-ids-priority"
+title = "Make remove() prefer doc_ids over cond, like the other methods"
 brief = """
-Right now, query comparisons only work against a fixed literal value on the right-hand side. There's no supported way to write a query that compares two different fields of the same document against each other, and if you try the natural-looking syntax for it, it silently matches every single document instead of raising an error or comparing the actual values, which is a surprising and dangerous footgun.
+`get()`, `contains()`, and `update()` all agree on the same rule when you pass both a query condition and a list of document IDs at once: the explicit IDs win, and the condition is ignored.
+`remove()` is the odd one out: right now it checks the condition first, so passing both silently ignores the IDs you gave it and removes whatever the condition happens to match instead.
 
-Add real support for comparing one field's value against another field's value within the same document. Think through, and handle sensibly, the edge cases this naturally raises: one of the two fields being missing entirely, the two fields living at different nesting depths/paths, and the two fields holding values of different types. None of those cases should raise an error or match; a document should only match when both fields exist and their actual values are genuinely equal.
+Make `remove()` follow the same precedence as the other methods: when both `cond` and `doc_ids` are given, `doc_ids` should be the one that's honored.
 """
-hidden_cmd = "/Users/parkergurney/Development/agent-orchestrator/.venv/bin/python -m pytest hidden_tests/test_task6_field_comparison.py -q"
-
-[[tasks]]
-id = "no-reference-leak"
-title = "Stop leaking live references to stored data"
-brief = """
-This one has more surface area than the others, so take the time to trace every place data crosses the boundary between caller-owned objects and the database's internal storage.
-
-If you insert a document that contains a nested mutable value (a nested dict or list), and afterwards mutate the original object you passed in, that mutation can silently show up in the database, even though you never called insert/update again. The reverse leak also exists: a document handed back to you by a read (`get`, `search`, or iteration) can be a live reference into the database's own internal state, so mutating what you got back can silently corrupt what's stored.
-
-Make sure that once data has been inserted, later mutating the caller's original object has no effect on what's stored, and that mutating a document you got back from a read has no effect on the database either. Both directions need to be independent copies.
-"""
-hidden_cmd = "/Users/parkergurney/Development/agent-orchestrator/.venv/bin/python -m pytest hidden_tests/test_task7_no_reference_leak.py -q"
+hidden_cmd = "/Users/parkergurney/Development/agent-orchestrator/.venv/bin/python -m pytest hidden_tests/test_task6_remove_doc_ids_priority.py -q"

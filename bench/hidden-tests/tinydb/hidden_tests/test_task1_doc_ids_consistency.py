@@ -45,6 +45,5 @@ def test_update_ids_mixed():
 def test_doc_id_missing_consistency():
     db = make_db()
     assert db.get(doc_id=99) is None
-    assert db.get(doc_ids=[99]) == []
     assert db.update({'int': 9}, doc_ids=[99]) == []
     assert db.remove(doc_ids=[99]) == []

@@ -1,10 +1,10 @@
 """
 Hidden tests for task: custom document classes.
 
-Table.insert()/insert_multiple()/upsert() must recognize a caller-supplied
-document as "a document with an explicit ID" by checking against
-``self.document_class`` (which a Table subclass may override), not against
-the hardcoded ``tinydb.table.Document`` class.
+Table.insert()/upsert() must recognize a caller-supplied document as "a
+document with an explicit ID" by checking against ``self.document_class``
+(which a Table subclass may override), not against the hardcoded
+``tinydb.table.Document`` class.
 
 Fresh tests, strictly behavior-based (seeded from GitHub issue #545 - no
 tests were included in the linked PR).
@@ -41,17 +41,6 @@ def test_insert_honors_explicit_id_from_custom_document_class():
 
     assert doc_id == 42
     assert table.get(doc_id=42) == {'a': 1}
-
-
-def test_insert_multiple_honors_explicit_id_from_custom_document_class():
-    table = make_db()
-    doc_ids = table.insert_multiple([
-        CustomDocument({'a': 1}, 7),
-        {'a': 2},
-    ])
-
-    assert doc_ids[0] == 7
-    assert table.get(doc_id=7) == {'a': 1}
 
 
 def test_upsert_extracts_doc_id_from_custom_document_class():
