@@ -1,0 +1,89 @@
+[bench]
+name = "tinydb-suite"
+repo = "/Users/parkergurney/Development/bench-dirs/tinydb"
+base_branch = "bench-base"
+verify_cmd = "/Users/parkergurney/Development/agent-orchestrator/.venv/bin/python -m pytest tests -q"
+setup_cmd = "rm -rf hidden_tests && cp -R /Users/parkergurney/Development/agent-orchestrator/bench/hidden-tests/tinydb/hidden_tests hidden_tests"
+protected_paths = ["hidden_tests/**"]
+delivery_mode = "scout"
+max_retries = 2
+
+[[tasks]]
+id = "doc-ids-consistency"
+title = "Make missing-ID handling consistent across update/remove"
+brief = """
+When you call `update()` or `remove()` on a table and pass one or more document IDs, and one of those IDs doesn't actually exist, the call currently raises a `KeyError`.
+But `get()` already handles missing IDs gracefully: it returns `None` for a single missing ID and an empty list for a list of IDs that don't match anything.
+
+Make `update()` and `remove()` behave the same way: silently skip IDs that don't exist, and return only the list of IDs that were actually updated or removed.
+If a request mixes existing and non-existing IDs, only the existing ones should be affected, and the operation should not raise or fail partway through.
+"""
+hidden_cmd = "/Users/parkergurney/Development/agent-orchestrator/.venv/bin/python -m pytest hidden_tests/test_task1_doc_ids_consistency.py -q"
+
+[[tasks]]
+id = "lru-cache-set-update"
+title = "Fix the LRU cache's value update on existing keys"
+brief = """
+The LRU cache used internally for caching query results has a bug in its `set()` method: when you set a value for a key that's already in the cache, the cache correctly marks that key as recently used, but it never actually replaces the stored value; the old value is left in place.
+
+Fix `set()` so that giving an existing key a new value actually replaces what's stored, in addition to updating its recency.
+"""
+hidden_cmd = "/Users/parkergurney/Development/agent-orchestrator/.venv/bin/python -m pytest hidden_tests/test_task2_lru_cache_set_update.py -q"
+
+[[tasks]]
+id = "lru-cache-falsy-values"
+title = "Fix the LRU cache's handling of falsy cached values"
+brief = """
+The same cache has a subtler bug: it decides whether a key already exists by checking whether the currently cached value is truthy. That means a key whose cached value happens to be falsy (`0`, `False`, `\"\"`, etc.) gets treated as if it were missing entirely.
+As a result, setting a new value for such a key takes the wrong code path, which corrupts the cache's least-recently-used ordering and its eviction behavior.
+
+Make the "does this key already exist" check correct for falsy values too, independent of what value happens to be stored there.
+Note that this only fully resolves once existing keys also get their value correctly replaced.
+"""
+depends_on = ["lru-cache-set-update"]
+hidden_cmd = "/Users/parkergurney/Development/agent-orchestrator/.venv/bin/python -m pytest hidden_tests/test_task3_lru_cache_falsy_values.py -q"
+
+[[tasks]]
+id = "custom-document-class"
+title = "Respect custom document classes consistently"
+brief = """
+A table's document class (the class used to represent a stored document, which also carries the document's ID) can be customized by subclassing. This is a documented extension point, meant to support things like a different document ID type.
+
+However, several places in the insert/upsert code path that need to detect "this document already has an explicit ID assigned" check against the built-in default document class directly, instead of checking against whichever class the table was actually configured to use.
+As a result, if a table is configured with a custom document class that is not a subclass of the built-in one, TinyDB fails to recognize documents that carry an explicit ID: inserting silently assigns a new auto-generated ID instead of honoring the one provided, and upserting can incorrectly claim that no ID was given at all.
+
+Fix the ID-detection logic so it consistently respects whichever document class the table is configured to use, everywhere a document's explicit ID needs to be detected.
+"""
+hidden_cmd = "/Users/parkergurney/Development/agent-orchestrator/.venv/bin/python -m pytest hidden_tests/test_task4_document_class_isinstance.py -q"
+
+[[tasks]]
+id = "persist-empty-tables"
+title = "Allow a table to persist even when empty"
+brief = """
+Creating a table currently has no effect on storage until at least one document is written to it, so a table created but never populated does not show up if you reopen the database. There's no way to create a table that is guaranteed to persist immediately, even with zero documents in it.
+
+Add a way to create a table that is written to storage right away, so it shows up in the list of tables even before anything has been inserted into it, while tables created the normal way keep the current lazy behavior.
+"""
+hidden_cmd = "/Users/parkergurney/Development/agent-orchestrator/.venv/bin/python -m pytest hidden_tests/test_task5_persist_empty_tables.py -q"
+
+[[tasks]]
+id = "field-comparison"
+title = "Support comparing two fields of the same document"
+brief = """
+Right now, query comparisons only work against a fixed literal value on the right-hand side. There's no supported way to write a query that compares two different fields of the same document against each other, and if you try the natural-looking syntax for it, it silently matches every single document instead of raising an error or comparing the actual values, which is a surprising and dangerous footgun.
+
+Add real support for comparing one field's value against another field's value within the same document. Think through, and handle sensibly, the edge cases this naturally raises: one of the two fields being missing entirely, the two fields living at different nesting depths/paths, and the two fields holding values of different types. None of those cases should raise an error or match; a document should only match when both fields exist and their actual values are genuinely equal.
+"""
+hidden_cmd = "/Users/parkergurney/Development/agent-orchestrator/.venv/bin/python -m pytest hidden_tests/test_task6_field_comparison.py -q"
+
+[[tasks]]
+id = "no-reference-leak"
+title = "Stop leaking live references to stored data"
+brief = """
+This one has more surface area than the others, so take the time to trace every place data crosses the boundary between caller-owned objects and the database's internal storage.
+
+If you insert a document that contains a nested mutable value (a nested dict or list), and afterwards mutate the original object you passed in, that mutation can silently show up in the database, even though you never called insert/update again. The reverse leak also exists: a document handed back to you by a read (`get`, `search`, or iteration) can be a live reference into the database's own internal state, so mutating what you got back can silently corrupt what's stored.
+
+Make sure that once data has been inserted, later mutating the caller's original object has no effect on what's stored, and that mutating a document you got back from a read has no effect on the database either. Both directions need to be independent copies.
+"""
+hidden_cmd = "/Users/parkergurney/Development/agent-orchestrator/.venv/bin/python -m pytest hidden_tests/test_task7_no_reference_leak.py -q"

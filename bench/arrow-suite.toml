@@ -1,0 +1,71 @@
+[bench]
+name = "arrow-suite"
+repo = "/Users/parkergurney/Development/bench-dirs/arrow"
+base_branch = "bench-base"
+verify_cmd = "/Users/parkergurney/Development/agent-orchestrator/.venv/bin/python -m pytest -o addopts=\"\" tests -q"
+setup_cmd = "rm -rf hidden_tests && cp -R /Users/parkergurney/Development/agent-orchestrator/bench/hidden-tests/arrow/hidden_tests hidden_tests"
+protected_paths = ["hidden_tests/**"]
+delivery_mode = "scout"
+max_retries = 2
+
+[[tasks]]
+id = "shift-check-imaginary"
+title = "Let shift() skip the DST/imaginary-time check"
+brief = """
+Arrow's `shift()` method always checks whether the shifted result lands on a datetime that doesn't actually exist (an "imaginary" local time caused by a DST transition, such as the hour that gets skipped when clocks spring forward) and silently corrects it if so.
+This check adds overhead, and callers who know their date range never crosses a DST boundary have no way to skip it.
+Add a `check_imaginary` keyword argument to `shift()` (default `True`, preserving current behavior) that, when set to `False`, skips the DST/imaginary-time check and returns the raw shifted result as-is.
+"""
+hidden_cmd = "/Users/parkergurney/Development/agent-orchestrator/.venv/bin/python -m pytest -o addopts=\"\" hidden_tests/test_shift_check_imaginary.py -q"
+
+[[tasks]]
+id = "format-rfc3339-strict"
+title = "Add a strict RFC 3339 format with a T separator"
+brief = """
+Arrow's existing `FORMAT_RFC3339` format string uses a space between the date and time portions.
+Per RFC 3339, the "T" separator should be used to avoid ambiguity (this already matches what `str()` on an Arrow object produces).
+Add a new built-in format constant, `FORMAT_RFC3339_STRICT`, identical to `FORMAT_RFC3339` except that it uses "T" instead of a space as the date/time separator, usable with `.format()` exactly like the existing constant.
+Leave `FORMAT_RFC3339` itself unchanged.
+"""
+hidden_cmd = "/Users/parkergurney/Development/agent-orchestrator/.venv/bin/python -m pytest -o addopts=\"\" hidden_tests/test_format_rfc3339_strict.py -q"
+
+[[tasks]]
+id = "zoneinfo-dst-migration"
+title = "Migrate timezone handling to the standard library's zoneinfo"
+brief = """
+Arrow currently resolves timezone names (like `"America/Anchorage"` or `"local"`) and builds its internal UTC/local tzinfo objects using `dateutil`'s timezone utilities. Python's standard library now has its own timezone database support (`zoneinfo`, with a `backports.zoneinfo` package for versions that predate it).
+Migrate Arrow's timezone handling so that construction, parsing, and formatting all build tzinfo objects using the standard library's zoneinfo support instead of dateutil's timezone utilities, for UTC, `"local"`, and named IANA zones.
+Preserve existing behavior for ordinary times.
+Pay close attention to how a local wall-clock time that falls in a DST "gap" (one that never actually occurred, like 2:01 AM on a spring-forward day) gets resolved - it should resolve using the UTC offset that was in effect immediately before the transition, not after it.
+"""
+hidden_cmd = "/Users/parkergurney/Development/agent-orchestrator/.venv/bin/python -m pytest -o addopts=\"\" hidden_tests/test_zoneinfo_dst_migration.py -q"
+
+[[tasks]]
+id = "floor-ceil-week-start"
+title = "Support week_start in floor() and ceil()"
+brief = """
+Arrow's `span()` method already accepts a `week_start` keyword to control which weekday a `"week"` frame starts on, but the `floor()` and `ceil()` convenience methods (thin wrappers around `span()`) don't expose that option - calling `floor('week', week_start=7)` currently raises an error.
+Update `floor()` and `ceil()` to accept `week_start` (and any other keyword arguments `span()` supports) and pass them through, so both methods support the same customization `span()` already does.
+"""
+hidden_cmd = "/Users/parkergurney/Development/agent-orchestrator/.venv/bin/python -m pytest -o addopts=\"\" hidden_tests/test_floor_ceil_week_start.py -q"
+
+[[tasks]]
+id = "humanize-calendar-months"
+title = "Fix humanize() overcounting months across short months"
+brief = """
+`humanize()`'s output for differences in the multi-week-to-year range currently computes how many months apart two dates are by subtracting `(year * 12 + month)` for each date. This ignores the day-of-month, so it overcounts whenever the later date's day-of-month is earlier than the starting date's - for example, January 31 to May 1 is really 3 full months plus one extra day, but the naive subtraction reports it as 4 months.
+Fix `humanize()` so it computes the actual number of elapsed calendar months/years using proper date arithmetic (a calendar month has only fully elapsed once you've reached, or passed, the same day-of-month in the later month) rather than naive month-number subtraction.
+"""
+hidden_cmd = "/Users/parkergurney/Development/agent-orchestrator/.venv/bin/python -m pytest -o addopts=\"\" hidden_tests/test_humanize_calendar_months.py -q"
+
+[[tasks]]
+id = "humanize-16day-weeks"
+title = "Fix humanize() mislabeling 16-day differences as a month"
+brief = """
+`humanize()` has a rule that rounds a date difference up to a full calendar month whenever more than 14 days separate the two dates, even if no actual calendar month boundary has been crossed yet.
+This causes differences like 15-16 days within the same calendar month to be reported as "a month" (or "in a month") even though they're clearly closer to two weeks - for example, "today" January 9, an event on January 24 (15 days later) correctly shows "in two weeks", but one on January 25 (16 days later) incorrectly shows "in a month", which isn't close to accurate.
+Fix `humanize()` so a difference is only described in month terms once at least one real calendar month has actually elapsed; differences that stay within the current month should continue to be described using weeks, even close to the 2-week mark.
+Genuine calendar-month differences (a full month later, even if that happens to be 28-31 raw days) should still be described as "a month" as before.
+"""
+depends_on = ["humanize-calendar-months"]
+hidden_cmd = "/Users/parkergurney/Development/agent-orchestrator/.venv/bin/python -m pytest -o addopts=\"\" hidden_tests/test_humanize_16day_weeks.py -q"
