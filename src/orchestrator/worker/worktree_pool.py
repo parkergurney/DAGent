@@ -85,7 +85,14 @@ class WorktreePool:
         usually does) collides with git's one-worktree-per-branch rule.
         """
         branch = _git_ok("rev-parse", "--abbrev-ref", "HEAD", cwd=wt)
-        _git("checkout", "--detach", "HEAD", cwd=wt)
+        # A worker can leave the slot dirty, and a worker process may still be
+        # winding down when its done claim is handled.  Detaching must be
+        # forceful and checked: silently leaving the task branch attached
+        # makes the next acquire on another slot fail with Git's
+        # one-worktree-per-branch error.
+        _git_ok("checkout", "--detach", "--force", "HEAD", cwd=wt)
+        if _git_ok("rev-parse", "--abbrev-ref", "HEAD", cwd=wt) != "HEAD":
+            raise RuntimeError(f"failed to detach pooled worktree {wt}")
         if branch and branch != "HEAD":
             _git("branch", "-D", branch, cwd=self.repo_root)
         self._free.put_nowait(wt)
