@@ -53,7 +53,7 @@ def cmd_add_task(args) -> int:
     task_id = create_task(
         conn, title=args.title, brief=args.brief, repo=repo,
         delivery_mode=args.delivery_mode, verify_cmd=args.verify_cmd,
-        setup_cmd=args.setup_cmd, protected_paths=args.protected_paths,
+        hidden_cmd=args.hidden_cmd, setup_cmd=args.setup_cmd, protected_paths=args.protected_paths,
         max_retries=args.max_retries, depends_on=args.depends_on,
     )
     print(task_id)
@@ -72,6 +72,7 @@ def _build_scheduler(conn, args) -> Scheduler:
         max_nudges=cfg.max_nudges, stall_threshold_s=cfg.stall_threshold_s,
         wait_ceiling_s=cfg.wait_ceiling_s, verify_timeout_s=cfg.verify_timeout_s,
         transcript_tail_tokens=cfg.transcript_tail_tokens, yolo=args.yolo,
+        base_branch=args.base_branch,
     )
 
 
@@ -173,6 +174,8 @@ def _print_task_detail(conn, task_id: str) -> int:
     print(f"  repo:          {task['repo']}")
     print(f"  delivery_mode: {task['delivery_mode']}")
     print(f"  verify_cmd:    {task['verify_cmd']}")
+    if task["hidden_cmd"]:
+        print(f"  hidden_cmd:    {task['hidden_cmd']}")
     if task["setup_cmd"]:
         print(f"  setup_cmd:     {task['setup_cmd']}")
     if task["protected_paths"]:
@@ -269,6 +272,7 @@ def _add_scheduler_args(p) -> None:
     p.add_argument("--db", default="data/orchestrator.db")
     p.add_argument("--repo-root", required=True)
     p.add_argument("--worktree-root", default="data/worktrees")
+    p.add_argument("--base-branch", default="main")
     p.add_argument("--max-concurrency", type=int, default=4)
     p.add_argument("--worker-model")
     p.add_argument("--supervisor-model")
@@ -292,6 +296,9 @@ def main(argv=None) -> int:
     p_add.add_argument("--repo", required=True)
     p_add.add_argument("--delivery-mode", required=True, choices=["pr", "local", "scout"])
     p_add.add_argument("--verify-cmd")
+    p_add.add_argument("--hidden-cmd",
+        help="benchmark/instructor-owned check run after visible verify_cmd; never shown "
+             "to the worker brief")
     p_add.add_argument("--setup-cmd",
         help="run before verify_cmd, in the baseline scratch checkout and the "
              "worker's own worktree (e.g. 'npm install') -- design.md section 7")

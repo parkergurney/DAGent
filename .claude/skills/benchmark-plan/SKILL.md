@@ -13,9 +13,14 @@ Conditions (identical model, pinned version in config day one):
 - (c) firstmate
 - (d) this system
 
-All graded by the verify-gate CLI. (a)+(b) run first: they calibrate task
-difficulty (if naive-parallel resolves 90%, the suite is too easy and the
-comparison is dead) and exercise the harness before (d) exists.
+M6 machinery lives in `orchestrator.bench` and the `bench-run` CLI. It
+currently runs (a) as `sequential`, (b) as `naive-parallel`, and (d) as
+`orchestrator`; (c) is a reserved comparison slot, not implemented yet.
+
+All conditions are graded by the same verify gate, including stored
+`hidden_cmd` checks. (a)+(b) run first: they calibrate task difficulty (if
+naive-parallel resolves 90%, the suite is too easy and the comparison is dead)
+and exercise the harness before (d) exists.
 
 Workload: multi-task batches. Both of: a subset of SWE-bench Verified grouped
 by repo (parallel batches force worktree contention; free test-based grading;

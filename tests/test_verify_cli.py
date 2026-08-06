@@ -83,6 +83,28 @@ def test_cli_falls_back_to_the_task_rows_setup_cmd(tmp_path, capsys):
     assert out["passed"] is True
 
 
+def test_cli_falls_back_to_the_task_rows_hidden_cmd(tmp_path, capsys):
+    repo = init_repo(tmp_path)
+    db = tmp_path / "orch.db"
+    conn = connect(str(db))
+    task_id = create_task(conn, title="t", brief="clean", repo=str(repo),
+                          delivery_mode="scout", verify_cmd="true",
+                          hidden_cmd="test -f hidden.marker")
+    wt, base_sha = create_worktree(repo, tmp_path / "worktrees", task_id)
+    (wt / "output.txt").write_text("done\n")
+    git("add", "-A", cwd=wt)
+    git("commit", "-qm", "work", cwd=wt)
+    conn.execute("UPDATE tasks SET worktree=?, base_sha=? WHERE id=?", (str(wt), base_sha, task_id))
+    conn.commit()
+    conn.close()
+
+    code = verify_gate_main(["--task", task_id, "--db", str(db), "--json"])
+
+    assert code == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out["cause"] == "hidden_tests_failed"
+
+
 def test_cli_unknown_task_errors(tmp_path):
     db = tmp_path / "orch.db"
     connect(str(db)).close()

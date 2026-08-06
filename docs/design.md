@@ -144,11 +144,15 @@ CREATE TABLE tasks (
   repo          TEXT NOT NULL,
   delivery_mode TEXT NOT NULL,           -- 'pr' | 'local' | 'scout'
   verify_cmd    TEXT,                    -- null for scout
+  hidden_cmd    TEXT,                    -- benchmark/instructor-owned check, never in brief
+  setup_cmd     TEXT,
+  protected_paths TEXT,                  -- JSON array, null = none
   state         TEXT NOT NULL DEFAULT 'blocked',
   retries       INTEGER NOT NULL DEFAULT 0,
   max_retries   INTEGER NOT NULL DEFAULT 2,
   worktree      TEXT,
   session_id    TEXT,
+  base_sha      TEXT,
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );
@@ -163,7 +167,7 @@ CREATE TABLE events (
   seq        INTEGER PRIMARY KEY AUTOINCREMENT,  -- global monotonic order
   ts         TEXT NOT NULL,
   task_id    TEXT,                    -- null = team-level event
-  source     TEXT NOT NULL,           -- scheduler|worker|watchdog|verifier|supervisor|delivery|human
+  source     TEXT NOT NULL,           -- scheduler|worker|watchdog|verifier|supervisor|delivery|human|system
   type       TEXT NOT NULL,           -- dotted domain.verb, past tense
   payload    TEXT NOT NULL DEFAULT '{}',  -- FLAT json, no nesting
   session_id TEXT,
@@ -187,6 +191,9 @@ delivery.started      delivery.pr_opened      delivery.merged_local
 delivery.report_written                       delivery.failed
 human.messaged        human.approved          human.cancelled
 system.started        system.reconciled
+bench.run_started     bench.run_finished      bench.delivered
+bench.unsupervised_failed                    bench.fault_injected
+bench.fault_recovered
 ```
 
 - `worker.tool_used` comes from a PostToolUse hook; log EVERY call but keep the
@@ -246,9 +253,10 @@ class TriagePacket(BaseModel):
 
 Exclusions, deliberate: no team state (per-task judge; digest batching is a
 presentation concern), no filesystem access (if the packet isn't enough,
-escalate or restart — investigation belongs to workers), no memory (but prior
-`supervisor.acted` events are IN event_history, so it sees its own past
-actions on this task for free).
+escalate or restart — investigation belongs to workers), no `hidden_cmd`
+(hidden checks grade the task, never train the retry), no memory (but prior
+`supervisor.acted` events are IN event_history, so it sees its own past actions
+on this task for free).
 
 event_history compaction: collapse runs of `worker.tool_used` into counts
 ("47 tool calls: 31 Read, 9 Edit, 7 Bash over 14 min"); keep state changes,
@@ -508,9 +516,14 @@ Conditions (identical model, pinned version in config day one):
 - (c) firstmate
 - (d) this system
 
-All graded by the verify-gate CLI. (a)+(b) run first: they calibrate task
-difficulty (if naive-parallel resolves 90%, the suite is too easy and the
-comparison is dead) and exercise the harness before (d) exists.
+M6 machinery lives in `orchestrator.bench` and the `bench-run` CLI. It
+currently runs (a) as `sequential`, (b) as `naive-parallel`, and (d) as
+`orchestrator`; (c) is a reserved comparison slot, not implemented yet.
+
+All conditions are graded by the same verify gate, including stored
+`hidden_cmd` checks. (a)+(b) run first: they calibrate task difficulty (if
+naive-parallel resolves 90%, the suite is too easy and the comparison is dead)
+and exercise the harness before (d) exists.
 
 Workload: multi-task batches. Both of: a subset of SWE-bench Verified grouped
 by repo (parallel batches force worktree contention; free test-based grading;

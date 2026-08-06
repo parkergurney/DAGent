@@ -102,8 +102,8 @@ def append_event(conn, *, source, type, task_id=None, payload=None,
 
 
 def create_task(conn, *, title, brief, repo, delivery_mode, verify_cmd=None,
-                setup_cmd=None, protected_paths=None, max_retries=2, depends_on=(),
-                task_id=None) -> str:
+                hidden_cmd=None, setup_cmd=None, protected_paths=None, max_retries=2,
+                depends_on=(), task_id=None) -> str:
     """Insert a task (state='blocked') and emit task.created atomically.
 
     The task.created payload carries the full static definition so replay can
@@ -118,6 +118,7 @@ def create_task(conn, *, title, brief, repo, delivery_mode, verify_cmd=None,
         "repo": repo,
         "delivery_mode": delivery_mode,
         "verify_cmd": verify_cmd,
+        "hidden_cmd": hidden_cmd,
         "setup_cmd": setup_cmd,
         "protected_paths": protected_paths_json,
         "max_retries": max_retries,
@@ -126,10 +127,11 @@ def create_task(conn, *, title, brief, repo, delivery_mode, verify_cmd=None,
     with conn:
         conn.execute(
             "INSERT INTO tasks "
-            "(id, title, brief, repo, delivery_mode, verify_cmd, setup_cmd, protected_paths, "
+            "(id, title, brief, repo, delivery_mode, verify_cmd, hidden_cmd, setup_cmd, "
+            " protected_paths, "
             " state, retries, max_retries, worktree, session_id, base_sha, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,'blocked',0,?,NULL,NULL,NULL,?,?)",
-            (task_id, title, brief, repo, delivery_mode, verify_cmd, setup_cmd,
+            "VALUES (?,?,?,?,?,?,?,?,?,'blocked',0,?,NULL,NULL,NULL,?,?)",
+            (task_id, title, brief, repo, delivery_mode, verify_cmd, hidden_cmd, setup_cmd,
              protected_paths_json, max_retries, ts, ts),
         )
         for dep in depends_on:
@@ -202,6 +204,7 @@ def replay(events) -> dict:
                 "repo": payload["repo"],
                 "delivery_mode": payload["delivery_mode"],
                 "verify_cmd": payload.get("verify_cmd"),
+                "hidden_cmd": payload.get("hidden_cmd"),
                 "setup_cmd": payload.get("setup_cmd"),
                 "protected_paths": payload.get("protected_paths"),
                 "state": "blocked",

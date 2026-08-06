@@ -44,7 +44,8 @@ class Scheduler:
                 max_concurrency=4, stall_threshold_s=300, watchdog_interval_s=5,
                 verify_timeout_s=600, spawn_worker=spawn_fake_worker, worker_model=None,
                 supervisor=always_escalate,
-                max_nudges=2, wait_ceiling_s=1800, transcript_tail_tokens=3000, yolo=False):
+                max_nudges=2, wait_ceiling_s=1800, transcript_tail_tokens=3000, yolo=False,
+                base_branch="main"):
         self.conn = conn
         self.repo_root = repo_root
         self.worktree_root = worktree_root
@@ -59,6 +60,7 @@ class Scheduler:
         self.wait_ceiling_s = wait_ceiling_s
         self.transcript_tail_tokens = transcript_tail_tokens
         self.yolo = yolo
+        self.base_branch = base_branch
 
         # Pool size == max_concurrency: never a reason for more slots than
         # tasks that can be running at once (design.md section 8 / M5).
@@ -149,7 +151,7 @@ class Scheduler:
         """(queued|triage) -> running. `retries`, when given, is a restart's
         new count -- transition() folds it into the same state-change event
         as session_id/worktree/base_sha, no separate write."""
-        wt, base_sha = await self._pool.acquire(task["id"])
+        wt, base_sha = await self._pool.acquire(task["id"], base_branch=self.base_branch)
         proc = await self.spawn_worker(task, wt, model=self.worker_model)
         session_id = str(proc.pid)
 
@@ -318,7 +320,8 @@ class Scheduler:
             req_kwargs["protected_paths"] = tuple(json.loads(task["protected_paths"]))
         req = VerifyRequest(task_id=task_id, worktree=task["worktree"], base_sha=task["base_sha"],
                             verify_cmd=task["verify_cmd"] or "true", setup_cmd=task["setup_cmd"],
-                            timeout_s=self.verify_timeout_s, **req_kwargs)
+                            hidden_cmd=task["hidden_cmd"], timeout_s=self.verify_timeout_s,
+                            **req_kwargs)
         append_event(self.conn, source="verifier", type="verify.started", task_id=task_id)
         result = run_verify(req)
         payload = {"cause": result.cause, "exit_code": result.exit_code,

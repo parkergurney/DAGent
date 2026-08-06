@@ -40,9 +40,10 @@ class TriagePacket(BaseModel):
 
 Exclusions, deliberate: no team state (per-task judge; digest batching is a
 presentation concern), no filesystem access (if the packet isn't enough,
-escalate or restart — investigation belongs to workers), no memory (but prior
-`supervisor.acted` events are IN event_history, so it sees its own past
-actions on this task for free).
+escalate or restart — investigation belongs to workers), no `hidden_cmd`
+(hidden checks grade the task, never train the retry), no memory (but prior
+`supervisor.acted` events are IN event_history, so it sees its own past actions
+on this task for free).
 
 event_history compaction: collapse runs of `worker.tool_used` into counts
 ("47 tool calls: 31 Read, 9 Edit, 7 Bash over 14 min"); keep state changes,

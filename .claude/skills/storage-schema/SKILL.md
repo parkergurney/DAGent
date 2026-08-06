@@ -14,11 +14,15 @@ CREATE TABLE tasks (
   repo          TEXT NOT NULL,
   delivery_mode TEXT NOT NULL,           -- 'pr' | 'local' | 'scout'
   verify_cmd    TEXT,                    -- null for scout
+  hidden_cmd    TEXT,                    -- benchmark/instructor-owned check, never in brief
+  setup_cmd     TEXT,
+  protected_paths TEXT,                  -- JSON array, null = none
   state         TEXT NOT NULL DEFAULT 'blocked',
   retries       INTEGER NOT NULL DEFAULT 0,
   max_retries   INTEGER NOT NULL DEFAULT 2,
   worktree      TEXT,
   session_id    TEXT,
+  base_sha      TEXT,
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );
@@ -33,7 +37,7 @@ CREATE TABLE events (
   seq        INTEGER PRIMARY KEY AUTOINCREMENT,  -- global monotonic order
   ts         TEXT NOT NULL,
   task_id    TEXT,                    -- null = team-level event
-  source     TEXT NOT NULL,           -- scheduler|worker|watchdog|verifier|supervisor|delivery|human
+  source     TEXT NOT NULL,           -- scheduler|worker|watchdog|verifier|supervisor|delivery|human|system
   type       TEXT NOT NULL,           -- dotted domain.verb, past tense
   payload    TEXT NOT NULL DEFAULT '{}',  -- FLAT json, no nesting
   session_id TEXT,
@@ -57,6 +61,9 @@ delivery.started      delivery.pr_opened      delivery.merged_local
 delivery.report_written                       delivery.failed
 human.messaged        human.approved          human.cancelled
 system.started        system.reconciled
+bench.run_started     bench.run_finished      bench.delivered
+bench.unsupervised_failed                    bench.fault_injected
+bench.fault_recovered
 ```
 
 - `worker.tool_used` comes from a PostToolUse hook; log EVERY call but keep the

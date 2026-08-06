@@ -54,6 +54,17 @@ def test_add_task_with_protected_paths(tmp_path, capsys):
     assert json.loads(row["protected_paths"]) == ["spec/**", "*.test.ts"]
 
 
+def test_add_task_with_hidden_cmd(tmp_path, capsys):
+    db = str(tmp_path / "orch.db")
+    main(["add-task", "--db", db, "--title", "t", "--brief", "b", "--repo", "r",
+         "--delivery-mode", "scout", "--hidden-cmd", "pytest hidden_tests"])
+    task_id = capsys.readouterr().out.strip()
+
+    conn = connect(db)
+    row = conn.execute("SELECT hidden_cmd FROM tasks WHERE id=?", (task_id,)).fetchone()
+    assert row["hidden_cmd"] == "pytest hidden_tests"
+
+
 def test_status_empty(tmp_path, capsys):
     db = str(tmp_path / "orch.db")
     rc = main(["status", "--db", db])

@@ -15,4 +15,16 @@ def connect(path: str = ":memory:") -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")  # no-op on :memory:, real on file
     conn.executescript(_SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Tiny additive migrations for existing dogfood/benchmark DB files.
+
+    schema.sql remains the fresh-database source of truth; this only covers
+    columns added after early local DBs already existed.
+    """
+    task_cols = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
+    if "hidden_cmd" not in task_cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN hidden_cmd TEXT")

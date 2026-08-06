@@ -36,7 +36,7 @@ def main(argv=None) -> int:
     req = VerifyRequest(
         task_id=task["id"], worktree=task["worktree"], base_sha=task["base_sha"],
         verify_cmd=task["verify_cmd"] or "true", setup_cmd=args.setup_cmd or task["setup_cmd"],
-        hidden_cmd=args.hidden_cmd, timeout_s=args.timeout,
+        hidden_cmd=args.hidden_cmd or task["hidden_cmd"], timeout_s=args.timeout,
         protected_paths=tuple(args.protected) if args.protected else DEFAULT_PROTECTED,
     )
     result = run_verify(req)

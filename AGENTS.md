@@ -2,7 +2,8 @@
 
 Status: M5 complete (worktree pool, dep resolution, all three delivery modes),
 plus an `orchestrator` CLI (add-task/run/daemon/answer/status, docs/usage.md)
-layered on top so the system is usable without hand-writing a Python script.
+and initial M6 benchmark harness (`orchestrator.bench`, `bench-run`) layered on
+top so the system is usable without hand-writing a Python script.
 
 This file carries the always-relevant core: thesis, architecture, and the
 invariants that must never be violated. The full design doc lives in

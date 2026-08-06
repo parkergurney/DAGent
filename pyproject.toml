@@ -16,6 +16,7 @@ dev = ["pytest", "ruff"]
 orchestrator = "orchestrator.cli:main"
 verify-gate = "orchestrator.verify.cli:main"
 supervisor-replay = "orchestrator.supervisor.replay:main"
+bench-run = "orchestrator.bench.cli:main"
 
 [build-system]
 requires = ["hatchling"]

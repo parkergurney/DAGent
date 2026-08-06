@@ -743,3 +743,28 @@ Follow-up from the same batch03 cleanup audit: `WorktreePool.close()` already
 removed the slot worktree directories, but `git worktree remove` leaves the
 scratch branch behind. Close now deletes `pool/slot-*` branches after removing
 the worktrees, with a regression test in `tests/test_worktree_pool.py`.
+
+## 2026-08-05 - M6 benchmark harness skeleton
+
+Added the first real M6 machinery: `orchestrator.bench` plus the `bench-run`
+console script. Suite files are TOML (`[bench]` defaults plus `[[tasks]]`);
+each run writes a normal event-sourced `run.db`, a manifest, and copied suite
+metadata under `data/bench/<suite>/<condition>-seedN/`.
+
+Implemented three runnable conditions: `sequential`, `naive-parallel`, and
+`orchestrator`. The first two are no-supervision baselines driven through the
+same worker wire protocol and verify gate, then marked delivered/failed in the
+event log. The orchestrator condition uses `Scheduler` directly. `firstmate`
+stays a reserved comparison slot.
+
+Made hidden benchmark checks first-class task data. `tasks.hidden_cmd`,
+`create_task(..., hidden_cmd=...)`, replay, `orchestrator add-task
+--hidden-cmd`, `verify-gate` fallback, and scheduler verification all now pass
+the hidden command to the same deterministic `run_verify()` path. Existing DBs
+get an additive migration on connect.
+
+`bench-run report` summarizes SQL-over-events metrics: resolution,
+wall-clock/throughput, cost split, human escalations, recovered injected
+faults, verify failures, and protected-path hits. FakeWorker tests cover suite
+loading, baseline runs, hidden-check failure, orchestrator condition execution,
+and report output.

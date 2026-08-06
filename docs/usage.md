@@ -100,6 +100,7 @@ Useful flags (all optional):
 
 - `--worker-model` / `--supervisor-model` — override `config.py`'s defaults.
 - `--max-concurrency N` — worktree pool size / parallel task cap (default 4).
+- `--base-branch BRANCH` — branch each attempt starts from (default `main`).
 - `--fake-worker` — scripted `FakeWorker` instead of a real session (free,
   deterministic — for dry runs).
 - `--fake-supervisor` — always escalate instead of calling a live LLM
@@ -256,10 +257,63 @@ verify-gate --task <task_id> --db data/orchestrator.db --json --record
 supervisor-replay data/<task_id>/packets/<seq>.json --model claude-sonnet-5
 ```
 
-## 11. What's not here yet
+## 11. Benchmark Harness
+
+M6 starts with `bench-run`, a small harness over the same task/event DB and
+verify gate used by the orchestrator:
+
+```bash
+bench-run example-suite bench/example-suite.toml
+```
+
+Suite files are TOML. Put shared defaults under `[bench]`, then one `[[tasks]]`
+entry per issue:
+
+```toml
+[bench]
+name = "fresh-suite"
+repo = "/absolute/path/to/fresh-target-repo"
+verify_cmd = "python -m pytest -q"
+setup_cmd = "python -m pip install -e ."
+protected_paths = ["hidden_tests/**"]
+
+[[tasks]]
+id = "feature-a"
+title = "Implement feature A"
+brief = "Natural-language worker brief. Do not mention hidden tests."
+hidden_cmd = "python -m pytest hidden_tests/test_feature_a.py -q"
+```
+
+Run baselines first:
+
+```bash
+bench-run run --suite bench/fresh-suite.toml --condition sequential --seed 1
+bench-run run --suite bench/fresh-suite.toml --condition naive-parallel --seed 1 --max-concurrency 4
+bench-run run --suite bench/fresh-suite.toml --condition orchestrator --seed 1 --max-concurrency 4
+```
+
+Each run writes `data/bench/<suite>/<condition>-seedN/run.db`,
+`manifest.json`, and a copy of the suite/config. Pass `--overwrite` only when
+replacing a prior exploratory run. Pass `--kill-one-after S` to inject the M6
+fault-recovery probe.
+
+Summarize one DB or an entire runs directory:
+
+```bash
+bench-run report data/bench
+```
+
+The report includes verified resolution rate, wall-clock throughput, cost split
+by worker/supervisor, human escalations, recovered injected faults,
+`verify.failed` count, and protected-path hits. `firstmate` remains a reserved
+comparison slot; the implemented conditions are `sequential`, `naive-parallel`,
+and `orchestrator`.
+
+## 12. What's not here yet
 
 - No `needs_human -> delivering` override (design.md's "manager overrides a
   failed verification" edge is specced but has no CLI path yet).
-- Benchmark harness (M6/M7) isn't built yet; `bench/` is scaffolding only.
+- Firstmate benchmark condition is not wired yet; `bench-run` currently covers
+  sequential, naive-parallel, and orchestrator.
 - No auth/access control — this assumes a single trusted operator on one box,
   per design.md's stated non-goals.
