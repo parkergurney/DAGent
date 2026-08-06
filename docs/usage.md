@@ -313,6 +313,14 @@ parent and prints means plus rate ranges for publishable rollups. `firstmate`
 remains a reserved comparison slot; the implemented conditions are
 `sequential`, `naive-parallel`, and `orchestrator`.
 
+Benchmark worker sessions have no GitHub/web/search access. The same SDK
+worker backend is used for `sequential`, `naive-parallel`, and `orchestrator`;
+it denies sandbox network access, hosted web/search tools, GitHub hosts, and
+GitHub-looking `gh`/`git` commands so workers cannot inspect upstream PRs or
+solutions for the benchmark issues. `setup_cmd`, `verify_cmd`, and
+`hidden_cmd` still run outside the worker session in the verify gate, so keep
+those commands offline/reproducible yourself.
+
 ## 12. What's not here yet
 
 - No `needs_human -> delivering` override (design.md's "manager overrides a

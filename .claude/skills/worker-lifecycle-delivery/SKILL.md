@@ -65,8 +65,10 @@ gets fully specced:
   `curl` now fails with a proxy-level 403 (`CONNECT tunnel failed`), fast
   and clean, no hang. `strictAllowlist` is left set as defense in depth in
   case `can_use_tool` isn't consulted in some future CLI path, but it is
-  not what's doing the denying today. Workers don't need network anyway —
-  verify/setup_cmd run outside the session, in the gate.
+  not what's doing the denying today. Benchmark workers also explicitly deny
+  GitHub hosts, hosted web/search tools, and GitHub-looking `gh`/`git`
+  commands so they cannot inspect upstream PRs/solutions. Workers don't need
+  network anyway — verify/setup_cmd run outside the session, in the gate.
 - Both denials — filesystem escape and network — were spot-checked against
   a negative control, not just observed once: disabling the mechanism under
   test (dropping `sandbox=` entirely for the filesystem case; forcing

@@ -54,6 +54,23 @@ from claude_agent_sdk import (
     ResultMessage,
 )
 
+_GITHUB_HOSTS = ("github.com", "api.github.com", "raw.githubusercontent.com",
+                 "gist.github.com", "objects.githubusercontent.com")
+_HOSTED_WEB_TOOLS = {"WebFetch", "WebSearch"}
+_GITHUB_COMMAND_MARKERS = (
+    "github.com",
+    "api.github.com",
+    "raw.githubusercontent.com",
+    "gist.github.com",
+    "objects.githubusercontent.com",
+    "gh ",
+    "git fetch",
+    "git pull",
+    "git clone",
+    "git ls-remote",
+    "git remote update",
+)
+
 _PROTOCOL = """
 Commit your changes in the worktree before claiming done. Uncommitted work
 will fail verification.
@@ -116,10 +133,29 @@ async def _can_use_tool(tool_name, tool_input, context):
     this callback, not the CLI's blanket bypass, keeps ownership of the one
     decision that must stay a real deny."""
     if tool_name == "SandboxNetworkAccess":
+        host = str(tool_input.get("host", "")).lower()
+        if any(host == gh or host.endswith(f".{gh}") for gh in _GITHUB_HOSTS):
+            return PermissionResultDeny(
+                message="GitHub access is not permitted for benchmark worker sessions")
         return PermissionResultDeny(
             message="network access is not permitted for worker sessions "
                     "(verify/setup_cmd run outside the session, in the gate)")
+    if tool_name in _HOSTED_WEB_TOOLS:
+        return PermissionResultDeny(
+            message="hosted web/search tools are not permitted for benchmark worker sessions")
+    if _mentions_github(tool_input):
+        return PermissionResultDeny(
+            message="GitHub access is not permitted for benchmark worker sessions")
     return PermissionResultAllow()
+
+
+def _mentions_github(value) -> bool:
+    if isinstance(value, dict):
+        return any(_mentions_github(v) for v in value.values())
+    if isinstance(value, list | tuple):
+        return any(_mentions_github(v) for v in value)
+    text = str(value).lower()
+    return any(marker in text for marker in _GITHUB_COMMAND_MARKERS)
 
 
 def _make_pre_tool_use(worktree: Path):

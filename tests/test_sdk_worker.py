@@ -79,13 +79,42 @@ def test_can_use_tool_denies_sandbox_network_access():
     assert isinstance(result, PermissionResultDeny)
 
 
+def test_can_use_tool_denies_github_network_access():
+    for host in ("github.com", "api.github.com", "raw.githubusercontent.com"):
+        result = asyncio.run(_can_use_tool("SandboxNetworkAccess", {"host": host}, None))
+        assert isinstance(result, PermissionResultDeny)
+        assert "GitHub" in result.message
+
+
+def test_can_use_tool_denies_hosted_web_tools():
+    for tool_name in ("WebFetch", "WebSearch"):
+        result = asyncio.run(_can_use_tool(tool_name, {"url": "https://example.com"}, None))
+        assert isinstance(result, PermissionResultDeny)
+
+
+def test_can_use_tool_denies_github_mentions_in_other_tools():
+    inputs = [
+        ("Bash", {"command": "gh pr view 123"}),
+        ("Bash", {"command": "git ls-remote https://github.com/org/repo"}),
+        ("Read", {"file_path": "notes/github.com/solution.md"}),
+    ]
+    for tool_name, tool_input in inputs:
+        result = asyncio.run(_can_use_tool(tool_name, tool_input, None))
+        assert isinstance(result, PermissionResultDeny)
+
+
 def test_can_use_tool_allows_everything_else():
     """Headless sessions have no human to answer a permission prompt, so
     every other tool call must be auto-approved -- this callback replaces
     permission_mode="bypassPermissions" for that purpose, minus the one
     carve-out above."""
-    for tool_name in ("Write", "Edit", "Read", "Bash"):
-        result = asyncio.run(_can_use_tool(tool_name, {}, None))
+    for tool_name, tool_input in (
+        ("Write", {}),
+        ("Edit", {}),
+        ("Read", {"file_path": "src/app.py"}),
+        ("Bash", {"command": "python -m pytest"}),
+    ):
+        result = asyncio.run(_can_use_tool(tool_name, tool_input, None))
         assert isinstance(result, PermissionResultAllow)
 
 

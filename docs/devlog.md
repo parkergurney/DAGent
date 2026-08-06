@@ -774,3 +774,10 @@ finds every `**/run.db` across multiple suite directories, so three suites can
 share one merged artifact root. Added `--summary --group-by
 condition|suite|suite,condition` so Substack-level mean/range rollups do not
 require manually aggregating separate reports.
+
+Added an explicit benchmark contamination guardrail: workers now deny GitHub
+hosts, hosted web/search tools, and GitHub-looking `gh`/`git` commands in
+`_can_use_tool`, in addition to the generic `SandboxNetworkAccess` denial.
+This applies equally to `sequential`, `naive-parallel`, and `orchestrator`
+benchmark conditions because they all use the same SDK worker backend unless
+`--fake-worker` is passed.
