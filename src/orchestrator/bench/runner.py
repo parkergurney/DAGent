@@ -315,6 +315,8 @@ async def _run_baseline_task(
 
         if not done:
             code = await proc.wait()
+            await _reap_worker(proc)
+            reaped = True
             s = append_event(conn, source="worker", type="worker.exited", task_id=task_id,
                              session_id=str(proc.pid), payload={"exit_code": code})
             _fail_running_or_triage(conn, task_id, s, "worker exited without done claim")
