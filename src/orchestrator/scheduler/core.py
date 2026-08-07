@@ -39,15 +39,19 @@ from orchestrator.worker import WorktreePool, cleanup_worker_sandbox, spawn_fake
 _SETTLED_STATES = ("needs_human", "delivered", "failed", "cancelled")
 
 
-async def _terminate_and_reap(proc) -> None:
+async def _terminate_and_reap(proc, *, terminate: bool = True) -> None:
     """Stop a worker process group and wait until it is fully gone."""
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
+    if terminate:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
     try:
         await asyncio.wait_for(proc.wait(), timeout=5)
     except asyncio.TimeoutError:
+        if not terminate:
+            await proc.wait()
+            return
         # The caller cannot safely enter verification if the worker was not
         # reaped.  Give the direct process object one final kill attempt; the
         # scheduler's outer teardown will record the same failure if this
@@ -86,6 +90,7 @@ class Scheduler:
         # tasks that can be running at once (design.md section 8 / M5).
         self._pool = WorktreePool(repo_root, worktree_root, max_concurrency)
         self._procs: dict[str, asyncio.subprocess.Process] = {}
+        self._reaped_procs: set[object] = set()
         self._watchers: dict[str, asyncio.Task] = {}
         self._worktrees: dict[str, object] = {}
         self._last_event_ts: dict[str, float] = {}
@@ -219,6 +224,7 @@ class Scheduler:
                     # SDK/Claude process has exited.  Reap it before the
                     # verifier is allowed to materialize hidden files.
                     await _terminate_and_reap(proc)
+                    self._reaped_procs.add(proc)
                     await self._enter_verifying(task_id, s)
                     break
                 elif etype == "asked":
@@ -416,7 +422,9 @@ class Scheduler:
         self._wait_grace.pop(task_id, None)
 
         if proc is not None:
-            await _terminate_and_reap(proc)
+            already_reaped = proc in self._reaped_procs
+            await _terminate_and_reap(proc, terminate=not already_reaped)
+            self._reaped_procs.discard(proc)
             # asyncio doesn't close the subprocess transport just because the
             # process exited; leaving it for GC risks it firing after the
             # loop closes ("Exception ignored in: ...__del__ ... Event loop

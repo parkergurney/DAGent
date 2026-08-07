@@ -258,6 +258,7 @@ async def _run_baseline_task(
 ) -> None:
     wt = None
     proc = None
+    reaped = False
     task_id = task["id"]
     spawn_worker = spawn_fake_worker if fake_worker else spawn_sdk_worker
     try:
@@ -297,6 +298,7 @@ async def _run_baseline_task(
                 # worktree.  Reap the worker first so no live process can
                 # observe the verifier material.
                 await _reap_worker(proc)
+                reaped = True
                 _verify_and_finish_baseline(conn, task_id, cfg)
                 done = True
                 return
@@ -318,20 +320,24 @@ async def _run_baseline_task(
             _fail_running_or_triage(conn, task_id, s, "worker exited without done claim")
     finally:
         if proc is not None:
-            await _reap_worker(proc)
+            await _reap_worker(proc, terminate=not reaped)
         cleanup_worker_sandbox(proc)
         if wt is not None:
             pool.release(wt)
 
 
-async def _reap_worker(proc) -> None:
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
+async def _reap_worker(proc, *, terminate: bool = True) -> None:
+    if terminate:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
     try:
         await asyncio.wait_for(proc.wait(), timeout=5)
     except asyncio.TimeoutError:
+        if not terminate:
+            await proc.wait()
+            return
         proc.kill()
         await proc.wait()
 
