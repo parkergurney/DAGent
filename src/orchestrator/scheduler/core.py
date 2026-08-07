@@ -32,11 +32,35 @@ from orchestrator.store import append_event, transition
 from orchestrator.supervisor import ACTION_MODELS, always_escalate, build_packet
 from orchestrator.supervisor.llm import SupervisorResult
 from orchestrator.verify.gate import VerifyRequest, run_verify
-from orchestrator.worker import WorktreePool, spawn_fake_worker
+from orchestrator.worker import WorktreePool, cleanup_worker_sandbox, spawn_fake_worker
 
 # Team states in which nothing is left for the scheduler to drive; the team
 # is "settled" once every task sits in one of these.
 _SETTLED_STATES = ("needs_human", "delivered", "failed", "cancelled")
+
+
+async def _terminate_and_reap(proc, *, terminate: bool = True) -> None:
+    """Stop a worker process group and wait until it is fully gone."""
+    if terminate:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5)
+    except asyncio.TimeoutError:
+        if not terminate:
+            await proc.wait()
+            return
+        # The caller cannot safely enter verification if the worker was not
+        # reaped.  Give the direct process object one final kill attempt; the
+        # scheduler's outer teardown will record the same failure if this
+        # unusual platform/process state persists.
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        await proc.wait()
 
 
 class Scheduler:
@@ -66,6 +90,9 @@ class Scheduler:
         # tasks that can be running at once (design.md section 8 / M5).
         self._pool = WorktreePool(repo_root, worktree_root, max_concurrency)
         self._procs: dict[str, asyncio.subprocess.Process] = {}
+        self._reaped_tasks: set[str] = set()
+        self._reap_locks: dict[str, asyncio.Lock] = {}
+        self._exit_watchers: dict[str, asyncio.Task] = {}
         self._watchers: dict[str, asyncio.Task] = {}
         self._worktrees: dict[str, object] = {}
         self._last_event_ts: dict[str, float] = {}
@@ -163,6 +190,10 @@ class Scheduler:
         transition(self.conn, task["id"], "running", cause_seq=s, **fields)
 
         self._procs[task["id"]] = proc
+        self._reap_locks[task["id"]] = asyncio.Lock()
+        self._exit_watchers[task["id"]] = asyncio.create_task(
+            self._watch_process_exit(task["id"], proc)
+        )
         self._worktrees[task["id"]] = wt
         self._last_event_ts[task["id"]] = time.monotonic()
         self._watchers[task["id"]] = asyncio.create_task(self._watch(task["id"], proc))
@@ -195,6 +226,10 @@ class Scheduler:
                                      task_id=task_id, session_id=str(proc.pid), payload=payload,
                                      **usage_kwargs)
                     claimed_or_triaged = True
+                    # A done claim is a stream message, not proof that the
+                    # SDK/Claude process has exited.  Reap it before the
+                    # verifier is allowed to materialize hidden files.
+                    await self._reap_process(task_id, proc)
                     await self._enter_verifying(task_id, s)
                     break
                 elif etype == "asked":
@@ -321,6 +356,7 @@ class Scheduler:
         req = VerifyRequest(task_id=task_id, worktree=task["worktree"], base_sha=task["base_sha"],
                             verify_cmd=task["verify_cmd"] or "true", setup_cmd=task["setup_cmd"],
                             hidden_cmd=task["hidden_cmd"], timeout_s=self.verify_timeout_s,
+                            repo=task["repo"],
                             **req_kwargs)
         append_event(self.conn, source="verifier", type="verify.started", task_id=task_id)
         result = run_verify(req)
@@ -378,6 +414,15 @@ class Scheduler:
 
     # -- teardown ---------------------------------------------------------------
 
+    async def _watch_process_exit(self, task_id: str, proc) -> None:
+        await proc.wait()
+        await self._reap_process(task_id, proc)
+
+    async def _reap_process(self, task_id: str, proc) -> None:
+        async with self._reap_locks[task_id]:
+            await _terminate_and_reap(proc, terminate=task_id not in self._reaped_tasks)
+            self._reaped_tasks.add(task_id)
+
     async def _teardown(self, task_id: str, *, expect_proc=None) -> None:
         """Idempotent, and safe to call speculatively: if `expect_proc` is
         given and no longer matches what's tracked for task_id, a restart
@@ -387,20 +432,19 @@ class Scheduler:
             return
 
         proc = self._procs.pop(task_id, None)
+        exit_watcher = self._exit_watchers.pop(task_id, None)
         watcher = self._watchers.pop(task_id, None)
         self._last_event_ts.pop(task_id, None)
         self._wait_grace.pop(task_id, None)
 
+        if exit_watcher is not None and exit_watcher is not asyncio.current_task():
+            exit_watcher.cancel()
+            await asyncio.gather(exit_watcher, return_exceptions=True)
+
         if proc is not None:
-            if proc.returncode is None:
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    pass
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=5)
-                except asyncio.TimeoutError:
-                    pass
+            await self._reap_process(task_id, proc)
+            self._reaped_tasks.discard(task_id)
+            self._reap_locks.pop(task_id, None)
             # asyncio doesn't close the subprocess transport just because the
             # process exited; leaving it for GC risks it firing after the
             # loop closes ("Exception ignored in: ...__del__ ... Event loop
@@ -415,3 +459,4 @@ class Scheduler:
         wt = self._worktrees.pop(task_id, None)
         if wt is not None:
             self._pool.release(wt)
+        cleanup_worker_sandbox(proc)

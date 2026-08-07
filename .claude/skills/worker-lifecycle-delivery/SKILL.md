@@ -1,30 +1,47 @@
 ---
 name: worker-lifecycle-delivery
-description: Worker session lifecycle (SDK spike questions, event mapping, worktree pool, intervention mechanics) and the three delivery modes (pr/local/scout). Use when touching worker spawning, the Agent SDK integration, or delivery/git-push code, or asked how sessions get created, interrupted, or how a task gets delivered.
+description: Worker session lifecycle (event mapping, worktree pool, intervention mechanics, and worker/verification trust boundaries) and the three delivery modes (pr/local/scout). Use when touching worker spawning, the Agent SDK integration, or delivery/git-push code, or asked how sessions get created, interrupted, or how a task gets delivered.
 ---
 
-# Worker lifecycle (to be detailed after M1 spike)
+# Worker lifecycle
 
 <!-- sync:worker-lifecycle -->
-Sketch — the SDK spike (M1) answers the open questions before this section
-gets fully specced:
+Worker lifecycle is implemented by the SDK worker and scheduler:
 
 - One Agent SDK session per task, cwd = a pooled git worktree, per-task
   permission policy.
 - `worker.*` events map from: PostToolUse hook → `worker.tool_used`; result
   messages → `worker.messaged` / `worker.asked` / `worker.done_claimed`;
   session end → `worker.exited`.
-- Done-claim detection protocol: TBD in M1 (likely a required final structured
-  message or sentinel; do not rely on parsing prose).
+- Done-claim detection uses a required sentinel in the final structured result;
+  it never relies on parsing prose.
 - Intervention = injecting a message into the live session (supervisor
   nudge) or, once escalation has already torn the session down, requeuing
   with the intervention folded into the brief for a fresh one (manager
   answer via `orchestrator answer`, docs/usage.md). Logged as events either
   way; the orchestrator always knows a human intervened.
 - Worktree pool: raw `git worktree`, ~50 lines, no treehouse dependency.
-- Spike questions: does mid-session message injection work as assumed? cost
-  granularity per message or per session? what does "done" look like in the
-  stream? does PostToolUse fire for subagent tool calls (parent_tool_use_id)?
+- Worker trust boundary: every real SDK worker is launched through the
+  fail-closed macOS Seatbelt wrapper in `worker/sandbox.py`. Its allowlist is
+  the public task worktree, the Git metadata needed to commit, Python/SDK and
+  orchestrator runtime paths, and one private worker temp/config directory.
+  The target repository's parent, benchmark source directories, verifier
+  directories, and global temporary directories are not allowlisted. A
+  missing or unusable Seatbelt launcher aborts the worker; it never falls
+  back to an unsandboxed process. The Claude SDK sandbox remains defense in
+  depth inside that OS boundary. Unsupported hosts fail closed for real
+  workers; FakeWorker remains an unchanged deterministic test fixture.
+- Verification trust boundary: once a worker claims done, the scheduler
+  terminates and reaps its process before any setup runs. The verify gate then
+  creates a detached temporary worktree from the worker's exact `HEAD` and
+  runs `setup_cmd`, `verify_cmd`, and `hidden_cmd` there. Hidden material is
+  never copied into the worker checkout, which remains the committed delivery
+  artifact; the verifier worktree is removed afterward.
+- Benchmark preflight rejects protected hidden material already present in a
+  target repository or reusable worker slot and asserts configured hidden
+  verifier sources are outside each worker allowlist. It does not delete
+  contamination or rewrite historical benchmark runs; those runs remain
+  exploratory evidence.
 - Worktree escape is a two-layer defense, not one. The PreToolUse hook
   (`_path_escapes_worktree` in sdk_worker.py) denies escaping paths for
   structured file tools (Read/Edit/Write) only — it never inspected Bash,

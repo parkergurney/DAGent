@@ -3,6 +3,21 @@
 A few lines per working session. What was decided, what surprised you, what
 the agent nailed or fumbled. This file writes the Substack post.
 
+## 2026-08-07 - isolate benchmark workers from hidden verification
+- Added a fail-closed macOS Seatbelt launcher around every real SDK worker.
+  The outer allowlist contains only public worktree/Git metadata,
+  Python/SDK/orchestrator runtime paths, and a private worker temp/config
+  directory; unsupported hosts never fall back to unsandboxed workers. The
+  Claude SDK sandbox remains an inner defense.
+- Changed verification to terminate and reap the worker before creating a
+  detached checkout from its exact `HEAD`. Setup, visible tests, and hidden
+  tests run only in that temporary verifier checkout; the worker checkout is
+  left as the delivery commit and the verifier checkout is removed.
+- Added benchmark preflight checks for hidden material already present in
+  target repos/worker slots and for hidden source paths inside worker
+  allowlists. These checks do not delete contamination or rewrite historical
+  runs; old artifacts remain exploratory evidence.
+
 ## 2026-07-18
 - Consolidated design into docs/design.md (state machine, event schema,
   supervisor contract, verify gate contract, benchmark plan, milestones).

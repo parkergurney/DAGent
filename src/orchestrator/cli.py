@@ -301,7 +301,7 @@ def main(argv=None) -> int:
              "to the worker brief")
     p_add.add_argument("--setup-cmd",
         help="run before verify_cmd, in the baseline scratch checkout and the "
-             "worker's own worktree (e.g. 'npm install') -- design.md section 7")
+             "detached verifier checkout (e.g. 'npm install') -- design.md section 7")
     p_add.add_argument("--protected-paths", action="append", default=[], metavar="GLOB",
         help="path glob(s) the worker may not touch (anti-gaming check, design.md "
              "section 7); repeatable. Defaults to empty because visible project "

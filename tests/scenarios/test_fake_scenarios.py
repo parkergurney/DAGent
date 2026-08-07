@@ -42,7 +42,10 @@ def _run_batch(conn, repo, tmp_path):
     worktree_root = tmp_path / "worktrees"
     worktree_root.mkdir()
     sched = Scheduler(conn, repo, worktree_root, max_concurrency=len(SCENARIOS),
-                      stall_threshold_s=0.3, watchdog_interval_s=0.05, verify_timeout_s=10)
+                      # Ten subprocesses contend for Git metadata on slower CI
+                      # runners; keep the fault-injection watchdog fast while
+                      # allowing a real worker to finish startup/commit.
+                      stall_threshold_s=1.0, watchdog_interval_s=0.05, verify_timeout_s=10)
     asyncio.run(asyncio.wait_for(sched.run_until_settled(), timeout=30))
 
 

@@ -7,7 +7,7 @@ from orchestrator.bench.report import summarize_db
 from orchestrator.bench.runner import run_benchmark
 from orchestrator.bench.suite import load_suite
 from orchestrator.store import connect
-from tests.helpers import init_repo
+from tests.helpers import git, init_repo
 
 
 def _suite_file(tmp_path, repo, *, name="toy", hidden_cmd="true", tasks=None):
@@ -73,6 +73,95 @@ depends_on = ["a"]
 
     with pytest.raises(ValueError, match="depends on unknown"):
         load_suite(suite_path)
+
+
+def test_benchmark_rejects_existing_hidden_material_before_overwrite(tmp_path):
+    repo = init_repo(tmp_path)
+    hidden = repo / "hidden_tests"
+    hidden.mkdir()
+    (hidden / "secret.py").write_text("secret\n")
+    suite_path = _suite_file(tmp_path, repo)
+    suite_path.write_text(suite_path.read_text().replace(
+        'verify_cmd = "true"', 'verify_cmd = "true"\nprotected_paths = ["hidden_tests/**"]'))
+    out_dir = tmp_path / "bench"
+    prior = out_dir / "toy" / "sequential-seed1"
+    prior.mkdir(parents=True)
+    (prior / "historical.txt").write_text("keep me\n")
+
+    with pytest.raises(ValueError, match="protected hidden-test material"):
+        run_benchmark(suite_path, condition="sequential", out_dir=out_dir, overwrite=True)
+
+    assert (prior / "historical.txt").read_text() == "keep me\n"
+
+
+def test_benchmark_rejects_existing_non_hidden_protected_material(tmp_path):
+    repo = init_repo(tmp_path)
+    grader = repo / "grader"
+    grader.mkdir()
+    (grader / "secret.json").write_text("secret\n")
+    suite_path = _suite_file(tmp_path, repo)
+    suite_path.write_text(suite_path.read_text().replace(
+        'verify_cmd = "true"', 'verify_cmd = "true"\nprotected_paths = ["grader/**"]'))
+
+    with pytest.raises(ValueError, match="protected hidden-test material"):
+        run_benchmark(suite_path, condition="sequential", out_dir=tmp_path / "bench")
+
+
+def test_benchmark_rejects_non_hidden_protected_material_in_history(tmp_path):
+    repo = init_repo(tmp_path)
+    grader = repo / "grader"
+    grader.mkdir()
+    (grader / "secret.json").write_text("secret\n")
+    git("add", "grader/secret.json", cwd=repo)
+    git("commit", "-qm", "add grader material", cwd=repo)
+    (grader / "secret.json").unlink()
+    git("commit", "-am", "remove grader material", cwd=repo)
+    suite_path = _suite_file(tmp_path, repo)
+    suite_path.write_text(suite_path.read_text().replace(
+        'verify_cmd = "true"', 'verify_cmd = "true"\nprotected_paths = ["grader/**"]'))
+
+    with pytest.raises(ValueError, match="protected hidden-test material"):
+        run_benchmark(suite_path, condition="sequential", out_dir=tmp_path / "bench")
+
+
+def test_benchmark_resolves_symlinked_worker_slot_before_allowlist_check(tmp_path):
+    repo = init_repo(tmp_path)
+    worktrees = tmp_path / "worker-slots"
+    worktrees.mkdir()
+    actual = tmp_path / "actual-slot"
+    actual.mkdir()
+    (worktrees / "slot-0").symlink_to(actual, target_is_directory=True)
+    source = actual / "grader"
+    suite_path = tmp_path / "suite.toml"
+    suite_path.write_text(
+        f'''[bench]\nname = "toy"\nrepo = "{repo}"\nverify_cmd = "true"\n'''
+        f'''hidden_source_paths = ["{source}"]\n\n'''
+        '[[tasks]]\nid = "a"\ntitle = "A"\nbrief = "clean"\n'
+    )
+
+    with pytest.raises(ValueError, match="hidden verifier source"):
+        run_benchmark(
+            suite_path, condition="sequential", out_dir=tmp_path / "bench",
+            worktree_root=worktrees,
+        )
+
+
+def test_benchmark_rejects_hidden_source_inside_worker_allowlist(tmp_path):
+    repo = init_repo(tmp_path)
+    worktrees = tmp_path / "worker-slots"
+    source = worktrees / "slot-0" / "hidden_tests"
+    suite_path = tmp_path / "suite.toml"
+    suite_path.write_text(
+        f'''[bench]\nname = "toy"\nrepo = "{repo}"\nverify_cmd = "true"\n'''
+        f'''hidden_source_paths = ["{source}"]\n\n'''
+        '[[tasks]]\nid = "a"\ntitle = "A"\nbrief = "clean"\n'
+    )
+
+    with pytest.raises(ValueError, match="hidden verifier source"):
+        run_benchmark(
+            suite_path, condition="sequential", out_dir=tmp_path / "bench",
+            worktree_root=worktrees,
+        )
 
 
 def test_sequential_baseline_run_records_metrics(tmp_path):

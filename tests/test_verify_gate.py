@@ -55,6 +55,27 @@ def test_setup_cmd_runs_before_verify_in_both_baseline_and_worktree(tmp_path):
     assert result.cause == "tests_passed"
 
 
+def test_hidden_setup_runs_only_in_detached_verifier_worktree(tmp_path):
+    repo = init_repo(tmp_path)
+    wt, base_sha = _child_worktree(
+        repo, "hidden-boundary",
+        lambda wt: (wt / "feature.txt").write_text("committed worker change\n"),
+    )
+
+    req = VerifyRequest(
+        task_id="hidden-boundary", worktree=str(wt), base_sha=base_sha,
+        setup_cmd="mkdir -p hidden_tests && printf secret > hidden_tests/secret.txt",
+        verify_cmd="true",
+        hidden_cmd="test -f hidden_tests/secret.txt && test -f feature.txt",
+        repo=str(repo), timeout_s=10,
+    )
+    result = run_verify(req)
+
+    assert result.passed
+    assert not (wt / "hidden_tests").exists()
+    assert not git("status", "--porcelain", cwd=wt).stdout.strip()
+
+
 def test_verify_saves_review_patch_for_committed_diff(tmp_path):
     repo = init_repo(tmp_path)
     wt, base_sha = _child_worktree(

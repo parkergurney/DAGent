@@ -13,7 +13,9 @@ import hashlib
 import json
 import os
 import signal
+import shutil
 import subprocess
+import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -96,6 +98,32 @@ def _save_patch(task_id: str, text: str) -> str:
     return str(path)
 
 
+def _create_verifier_worktree(req: VerifyRequest) -> tuple[Path, Path] | None:
+    """Check out the worker's exact committed HEAD in a detached verifier WT.
+
+    The worker worktree is intentionally never used as the cwd for setup or
+    any test command.  ``setup_cmd`` commonly materializes hidden tests, so
+    this boundary must exist even when the worker has already exited.
+    """
+    repo = Path(req.repo or req.worktree).resolve()
+    worker = Path(req.worktree).resolve()
+    head = _git("rev-parse", "HEAD", cwd=worker)
+    if head.returncode != 0 or not head.stdout.strip():
+        return None
+    verifier = Path(tempfile.mkdtemp(prefix="orch_verifier_"))
+    add = _git("worktree", "add", "-q", "--detach", str(verifier),
+                head.stdout.strip(), cwd=repo)
+    if add.returncode != 0:
+        shutil.rmtree(verifier, ignore_errors=True)
+        return None
+    return verifier, repo
+
+
+def _remove_verifier_worktree(verifier: Path, repo: Path) -> None:
+    _git("worktree", "remove", "--force", str(verifier), cwd=repo)
+    shutil.rmtree(verifier, ignore_errors=True)
+
+
 def run_verify(req: VerifyRequest) -> VerifyResult:
     t0 = time.monotonic()
     wt = req.worktree
@@ -144,42 +172,54 @@ def run_verify(req: VerifyRequest) -> VerifyResult:
                     "baseline (base_sha) does not pass verify_cmd", diff_stat, tests_modified,
                     patch_path=patch_path)
 
-    # 3. setup + the run
-    if req.setup_cmd:
-        code, out, timed_out = _run(req.setup_cmd, wt, req.timeout_s)
-        if timed_out or code != 0:
-            return done(False, "setup_failed", code, out, diff_stat, tests_modified,
+    # 3. Create a detached verifier checkout from the exact worker HEAD.
+    # setup_cmd may copy hidden tests here; the worker checkout remains the
+    # committed delivery artifact throughout.
+    verifier_info = _create_verifier_worktree(req)
+    if verifier_info is None:
+        return done(False, "setup_failed", None,
+                    "could not create detached verifier worktree",
+                    diff_stat, tests_modified, patch_path=patch_path)
+    verifier, verifier_repo = verifier_info
+    try:
+        # 4. setup + the visible run, only in the verifier worktree.
+        if req.setup_cmd:
+            code, out, timed_out = _run(req.setup_cmd, verifier, req.timeout_s)
+            if timed_out or code != 0:
+                return done(False, "setup_failed", code, out, diff_stat, tests_modified,
+                            patch_path=patch_path)
+
+        code, out, timed_out = _run(req.verify_cmd, verifier, req.timeout_s)
+        if timed_out:
+            return done(False, "timeout", None, out, diff_stat, tests_modified,
                         patch_path=patch_path)
 
-    code, out, timed_out = _run(req.verify_cmd, wt, req.timeout_s)
-    if timed_out:
-        return done(False, "timeout", None, out, diff_stat, tests_modified,
+        # 5. flake protocol: fail once, rerun; fail-fail sticks, fail-pass is flaky
+        flaky = False
+        if code != 0 and req.rerun_on_fail:
+            code2, out2, timed_out2 = _run(req.verify_cmd, verifier, req.timeout_s)
+            if not timed_out2 and code2 == 0:
+                code, out, flaky = code2, out2, True
+            else:
+                code, out = code2, out2
+
+        if code != 0:
+            return done(False, "tests_failed", code, out, diff_stat, tests_modified, flaky,
+                        patch_path=patch_path)
+
+        if req.hidden_cmd:
+            hcode, hout, htimed_out = _run(req.hidden_cmd, verifier, req.timeout_s)
+            if htimed_out or hcode != 0:
+                # never leak hidden output into restart feedback -- otherwise the
+                # hidden suite trains the worker to overfit it (design.md section 7).
+                return done(False, "hidden_tests_failed", hcode,
+                            "the change didn't hold up under additional checks",
+                            diff_stat, tests_modified, patch_path=patch_path)
+
+        return done(True, "tests_passed", code, out, diff_stat, tests_modified, flaky,
                     patch_path=patch_path)
-
-    # 4. flake protocol: fail once, rerun; fail-fail sticks, fail-pass is flaky
-    flaky = False
-    if code != 0 and req.rerun_on_fail:
-        code2, out2, timed_out2 = _run(req.verify_cmd, wt, req.timeout_s)
-        if not timed_out2 and code2 == 0:
-            code, out, flaky = code2, out2, True
-        else:
-            code, out = code2, out2
-
-    if code != 0:
-        return done(False, "tests_failed", code, out, diff_stat, tests_modified, flaky,
-                    patch_path=patch_path)
-
-    if req.hidden_cmd:
-        hcode, hout, htimed_out = _run(req.hidden_cmd, wt, req.timeout_s)
-        if htimed_out or hcode != 0:
-            # never leak hidden output into restart feedback -- otherwise the
-            # hidden suite trains the worker to overfit it (design.md section 7).
-            return done(False, "hidden_tests_failed", hcode,
-                        "the change didn't hold up under additional checks",
-                        diff_stat, tests_modified, patch_path=patch_path)
-
-    return done(True, "tests_passed", code, out, diff_stat, tests_modified, flaky,
-                patch_path=patch_path)
+    finally:
+        _remove_verifier_worktree(verifier, verifier_repo)
 
 
 def _cached_baseline(req: VerifyRequest, repo) -> bool:
