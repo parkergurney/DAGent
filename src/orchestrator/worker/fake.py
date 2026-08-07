@@ -23,7 +23,8 @@ async def spawn_fake_worker(task: dict, worktree, *, model: str | None = None
     env = {**os.environ, "PYTHONPATH": os.pathsep.join([_SRC, os.environ.get("PYTHONPATH", "")])}
     return await asyncio.create_subprocess_exec(
         sys.executable, "-m", "orchestrator.worker.fake_worker",
-        "--scenario", task["brief"], "--worktree", str(worktree),
+        "--scenario", task.get("_fake_scenario", task["brief"]),
+        "--worktree", str(worktree),
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,

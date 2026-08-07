@@ -14,6 +14,7 @@ from orchestrator.worker.sandbox import (
     prepare_worker_sandbox,
     register_worker_sandbox,
 )
+from orchestrator.worker.contract import build_execution_contract
 
 # src/orchestrator/worker/sdk.py -> src/. Not launched through an installed
 # console entry point, so it needs this on PYTHONPATH to import `orchestrator`
@@ -36,7 +37,8 @@ async def spawn_sdk_worker(task: dict, worktree, *, model: str | None = None
         for char in str(task["id"])
     )
     brief_file = sandbox.private_dir / f"{safe_task_id}.brief"
-    brief_file.write_text(task["brief"])
+    brief_file.write_text(task.get("execution_contract") or
+                          build_execution_contract(task, str(worktree)))
 
     env = {**os.environ, "PYTHONPATH": os.pathsep.join([_SRC, os.environ.get("PYTHONPATH", "")])}
     env = sandbox.environment(env)

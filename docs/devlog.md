@@ -18,6 +18,32 @@ the agent nailed or fumbled. This file writes the Substack post.
   allowlists. These checks do not delete contamination or rewrite historical
   runs; old artifacts remain exploratory evidence.
 
+## 2026-08-07 - phase three: worker slots follow live execution
+- Audited the previous lifecycle: `_procs` was the concurrency counter, and a
+  worker remained in it until `_watch()`'s final teardown. Done workers therefore
+  held capacity through verification and supervisor triage; synchronous
+  verification also blocked the asyncio control loop.
+- New lifecycle: persist the candidate SHA and worker-end facts, reap the
+  containment unit, release the pooled checkout/worker lease, then run
+  verification or triage. Supervisor awaits never retain capacity for a worker
+  that is gone. Live ask/nudge/wait sessions remain leased because they still
+  own a live process and checkout.
+- Verification now accepts the durable candidate SHA and runs in a thread, so a
+  released pooled checkout may be reused without changing what is verified.
+  Pre-teardown dirty status is persisted so `uncommitted_changes` remains
+  distinguishable from `empty_diff`.
+- Added event-based `worker.slot_acquired`, `worker.slot_released`,
+  `worker.started`, `triage.started`, and `triage.finished` timing facts, with
+  reconciliation closing an orphaned lease. Benchmark reports derive queue
+  wait, slot occupancy, worker execution, verification, supervisor, triage,
+  retry-gap, peak-worker, and attempt metrics from those facts.
+- A deterministic fake-worker comparison against a compatibility harness for
+  the old lease lifetime measured new/old wall time of 0.439/0.465s with no
+  failures, 0.490/0.526s with one slow triage, 0.572/0.747s with simultaneous
+  failures, and 0.616/0.618s for retry after public failure. The improvement
+  is largest when several failures release slots together; the retry case is
+  dominated by its deliberate supervisor delay.
+
 ## 2026-07-18
 - Consolidated design into docs/design.md (state machine, event schema,
   supervisor contract, verify gate contract, benchmark plan, milestones).
@@ -796,3 +822,29 @@ hosts, hosted web/search tools, and GitHub-looking `gh`/`git` commands in
 This applies equally to `sequential`, `naive-parallel`, and `orchestrator`
 benchmark conditions because they all use the same SDK worker backend unless
 `--fake-worker` is passed.
+
+Implemented v2 phase one: attempts are durable rows with parent lineage,
+timestamps, supervisor guidance, and persistent candidate refs. Retry slots
+now check out the prior candidate commit, reconciliation preserves it, and
+public verification failures get deterministic signatures. Added a separate
+`verification.recovered` event/metric so injected-fault recovery remains
+independent.
+
+## 2026-08-07 - v2 phase two: event-triggered supervision
+
+The scheduler now leaves successful first attempts entirely outside the
+supervisor path. Model calls are reserved for explicit failure/ask/stall/exit
+events. Each call reserves a durable `supervisor_interventions` row before
+invocation and records canonical action type, bounded worker instruction,
+source/child lineage, token usage, cost, and timing. Existing action literals
+remain compatible; accounting maps them to RETRY, WAIT, ESCALATE_HUMAN,
+TERMINATE, and NUDGE.
+
+Equivalent repeated public failures now use deterministic policy. The default
+threshold is one descendant failure; normalized signature equality and a
+non-empty committed-tree diff determine whether new public evidence exists.
+Same-tree commits do not count as material change. The policy records prior
+and new signatures, candidate-change status, budget exhaustion, and truthful
+opaque evaluator escalation without paying for another model call. Intervention
+outcomes are observed as improved, no improvement, or regression evidence, not
+causal claims.

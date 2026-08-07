@@ -62,11 +62,7 @@ def test_restart_relaunches_and_bumps_retries(tmp_path):
     repo = init_repo(tmp_path)
     conn = connect()
     task_id = _create(conn, repo, "no_commit")
-    supervisor = ScriptedSupervisor([
-        Restart(feedback=None, reason="uncommitted changes"),
-        Escalate(summary="failed twice", question="how to proceed?", options=["review"],
-                 reason="same failure again"),
-    ])
+    supervisor = ScriptedSupervisor([Restart(feedback=None, reason="uncommitted changes")])
 
     _run(conn, repo, tmp_path, supervisor)
 
@@ -79,9 +75,12 @@ def test_restart_relaunches_and_bumps_retries(tmp_path):
     assert types.count("worker.spawned") == 2  # original + restart
     assert types.count("verify.failed") == 2
 
-    assert len(supervisor.packets) == 2
+    # The equivalent second public failure is handled deterministically; it
+    # must not purchase another supervisor decision.
+    assert len(supervisor.packets) == 1
     assert supervisor.packets[0].retries_remaining == 2
-    assert supervisor.packets[1].retries_remaining == 1  # reflects the restart's bump
+    policy = [e for e in _events(conn, task_id) if e["type"] == "recovery.policy_applied"]
+    assert json.loads(policy[-1]["payload"])["diagnosis_code"] == "repeated_identical_failure"
 
 
 class _EmptyStream:

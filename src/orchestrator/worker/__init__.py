@@ -9,6 +9,8 @@ from orchestrator.worker.sandbox import cleanup_worker_sandbox
 from orchestrator.worker.sdk import spawn_sdk_worker
 from orchestrator.worker.worktree import create_worktree, remove_worktree
 from orchestrator.worker.worktree_pool import WorktreePool
+from orchestrator.worker.contract import build_execution_contract
 
 __all__ = ["spawn_fake_worker", "spawn_sdk_worker", "cleanup_worker_sandbox",
-          "create_worktree", "remove_worktree", "WorktreePool"]
+          "create_worktree", "remove_worktree", "WorktreePool",
+          "build_execution_contract"]

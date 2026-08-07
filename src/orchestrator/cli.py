@@ -70,6 +70,7 @@ def _build_scheduler(conn, args) -> Scheduler:
         max_concurrency=args.max_concurrency, spawn_worker=spawn_worker,
         worker_model=args.worker_model or cfg.model_worker, supervisor=supervisor,
         max_nudges=cfg.max_nudges, stall_threshold_s=cfg.stall_threshold_s,
+        repeated_failure_threshold=cfg.repeated_failure_threshold,
         wait_ceiling_s=cfg.wait_ceiling_s, verify_timeout_s=cfg.verify_timeout_s,
         transcript_tail_tokens=cfg.transcript_tail_tokens, yolo=args.yolo,
         base_branch=args.base_branch,

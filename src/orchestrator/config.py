@@ -14,6 +14,9 @@ from pathlib import Path
 class Config:
     max_concurrency: int = 4
     max_retries: int = 2
+    # One equivalent descendant failure is enough to use deterministic
+    # escalation, unless a later candidate or signature supplies new evidence.
+    repeated_failure_threshold: int = 1
     max_nudges: int = 2
     stall_threshold_s: int = 300
     wait_ceiling_s: int = 1800

@@ -129,11 +129,22 @@ Design notes:
   `running`, check whether `session_id` is a live session; dead ones get a
   synthetic `worker.exited` event and route through triage like any other
   crash. No special recovery code path.
+- Worker capacity is a live execution lease, not a task-lifetime lease. After
+  a worker's candidate SHA and any dirty-worktree status are durable, the
+  process is reaped and its pooled checkout/worker lease is released before
+  verification or supervisor triage. Verification reads the durable candidate
+  ref, allowing another task to reuse the checkout. A live ask/nudge/wait
+  session retains its lease because the process and checkout are still needed
+  for the intervention.
 <!-- /sync:task-states -->
 
 ---
 
 ## 5. Storage schema
+
+Durable retry lineage is specified in [attempts.md](attempts.md): pooled
+worktrees are disposable, while each attempt retains an immutable candidate
+commit ref and explicit parent.
 
 <!-- sync:storage-schema -->
 ```sql
@@ -618,6 +629,7 @@ prayer. Never debug the orchestrator through paid nondeterministic workers.
 ```
 max_concurrency        = 4
 max_retries            = 2
+repeated_failure_threshold = 1  # equivalent descendant failures before deterministic escalation
 max_nudges             = 2
 stall_threshold_s      = 300      # watchdog silence before worker.stalled
 wait_ceiling_s         = 1800

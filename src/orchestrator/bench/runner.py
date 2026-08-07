@@ -24,6 +24,7 @@ from orchestrator.verify.gate import VerifyRequest, run_verify
 from orchestrator.bench.preflight import validate_benchmark_isolation
 from orchestrator.worker import (
     WorktreePool,
+    build_execution_contract,
     cleanup_worker_sandbox,
     spawn_fake_worker,
     spawn_sdk_worker,
@@ -130,7 +131,7 @@ def run_benchmark(
         asyncio.run(_run_orchestrator(
             conn, worker_repo, worktrees, cfg, max_concurrency, worker_model, supervisor_model,
             fake_worker, fake_supervisor, kill_one_after_s, suite.base_branch,
-            run_dir / "artifacts",
+            run_dir / "artifacts", run_id,
         ))
     else:
         concurrency = 1 if condition == "sequential" else max_concurrency
@@ -219,6 +220,7 @@ async def _run_orchestrator(
     conn, repo: Path, worktrees: Path, cfg: config.Config, max_concurrency: int,
     worker_model: str, supervisor_model: str, fake_worker: bool, fake_supervisor: bool,
     kill_one_after_s: float | None, base_branch: str, artifact_root: Path,
+    run_id: str,
 ) -> None:
     spawn_worker = spawn_fake_worker if fake_worker else spawn_sdk_worker
     if fake_supervisor:
@@ -238,6 +240,7 @@ async def _run_orchestrator(
         transcript_tail_tokens=cfg.transcript_tail_tokens,
         base_branch=base_branch,
         artifact_root=artifact_root,
+        run_id=run_id,
     )
     run_task = asyncio.create_task(scheduler.run_until_settled())
     killer = None
@@ -325,7 +328,8 @@ async def _run_baseline_task(
     spawn_worker = spawn_fake_worker if fake_worker else spawn_sdk_worker
     try:
         wt, base_sha = await pool.acquire(task_id, base_branch=base_branch)
-        proc = await spawn_worker(task, wt, model=worker_model)
+        worker_task = {**task, "execution_contract": build_execution_contract(task, str(wt))}
+        proc = await spawn_worker(worker_task, wt, model=worker_model)
         s = append_event(conn, source="scheduler", type="worker.spawned",
                          task_id=task_id, session_id=str(proc.pid))
         transition(conn, task_id, "running", cause_seq=s,
@@ -437,6 +441,7 @@ def _verify_and_finish_baseline(
         "tests_modified": result.tests_modified,
         "output_path": result.output_path,
         "patch_path": result.patch_path,
+        "failure_signature": result.failure_signature,
     }
     if result.passed:
         s = append_event(conn, source="verifier", type="verify.passed",

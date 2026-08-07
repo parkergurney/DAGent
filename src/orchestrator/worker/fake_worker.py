@@ -72,6 +72,25 @@ def _clean(wt):
     emit("done_claimed", result="DONE_CLAIM: ok")
 
 
+@scenario("retry_candidate")
+def _retry_candidate(wt):
+    """First execution commits a failing candidate; the retry must see and
+    repair that candidate instead of receiving a reset checkout."""
+    marker = wt / "retry_marker.txt"
+    solution = wt / "retry_solution.txt"
+    if marker.exists():
+        marker.unlink()
+        solution.write_text("fixed\n")
+        emit("tool_used", tool="Edit", target="retry_marker.txt")
+        _commit(wt, "repair retained candidate")
+    else:
+        marker.write_text("candidate one\n")
+        solution.write_text("draft\n")
+        emit("tool_used", tool="Write", target="retry_marker.txt")
+        _commit(wt, "candidate one")
+    emit("done_claimed", result="DONE_CLAIM: candidate")
+
+
 @scenario("no_commit")
 def _no_commit(wt):
     """Claims done but leaves the worktree dirty -- verify gate's cheapest

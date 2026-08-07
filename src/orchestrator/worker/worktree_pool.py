@@ -63,21 +63,35 @@ class WorktreePool:
             self._slots.append(wt)
             self._free.put_nowait(wt)
 
-    async def acquire(self, task_id: str, base_branch: str = "main") -> tuple[Path, str]:
-        """Wait for a free slot, reset it to a clean checkout of a fresh
-        task/<id> branch off base_branch, and return (path, base_sha)."""
+    def resolve_ref(self, ref: str) -> str:
+        """Resolve a trusted repository ref before a slot is acquired."""
+        return _git_ok("rev-parse", ref, cwd=self.repo_root)
+
+    def head(self, wt: Path) -> str:
+        return _git_ok("rev-parse", "HEAD", cwd=wt)
+
+    async def acquire(self, task_id: str, base_branch: str = "main", *,
+                      base_sha: str | None = None, branch: str | None = None
+                      ) -> tuple[Path, str]:
+        """Check out an explicit candidate into a disposable slot.
+
+        ``branch`` is optional for compatibility with the original pool API.
+        Scheduler attempts pass their durable ``attempt/<id>`` ref and source
+        commit; retrying therefore cannot silently fall back to ``main``.
+        """
         wt = await self._free.get()
-        branch = f"task/{task_id}"
+        branch = branch or f"task/{task_id}"
+        source = base_sha or base_branch
         _git("branch", "-D", branch, cwd=self.repo_root)
         # reset+clean before checkout: the previous occupant may have crashed
         # mid-edit and left uncommitted or untracked files behind.
         _git_ok("reset", "--hard", "HEAD", cwd=wt)
         _git_ok("clean", "-fdx", cwd=wt)
-        _git_ok("checkout", "-B", branch, base_branch, cwd=wt)
+        _git_ok("checkout", "-B", branch, source, cwd=wt)
         base_sha = _git_ok("rev-parse", "HEAD", cwd=wt)
         return wt, base_sha
 
-    def release(self, wt: Path) -> None:
+    def release(self, wt: Path, *, preserve_branch: bool = False) -> None:
         """Return a slot to the free pool. Detach HEAD and drop whatever
         task branch was checked out here first -- otherwise the branch name
         stays claimed by this worktree, and a same-task_id re-acquire that
@@ -93,7 +107,7 @@ class WorktreePool:
         _git_ok("checkout", "--detach", "--force", "HEAD", cwd=wt)
         if _git_ok("rev-parse", "--abbrev-ref", "HEAD", cwd=wt) != "HEAD":
             raise RuntimeError(f"failed to detach pooled worktree {wt}")
-        if branch and branch != "HEAD":
+        if branch and branch != "HEAD" and not preserve_branch:
             _git("branch", "-D", branch, cwd=self.repo_root)
         self._free.put_nowait(wt)
 

@@ -43,6 +43,7 @@ prayer. Never debug the orchestrator through paid nondeterministic workers.
 ```
 max_concurrency        = 4
 max_retries            = 2
+repeated_failure_threshold = 1  # equivalent descendant failures before deterministic escalation
 max_nudges             = 2
 stall_threshold_s      = 300      # watchdog silence before worker.stalled
 wait_ceiling_s         = 1800

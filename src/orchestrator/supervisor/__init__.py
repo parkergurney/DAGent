@@ -14,11 +14,17 @@ from orchestrator.supervisor.schema import (
     TriagePacket,
     TriggerEvent,
     Wait,
+    CANONICAL_ACTION_TYPES,
+    EscalateHuman,
+    Retry,
+    Terminate,
+    canonical_action_type,
 )
 
 __all__ = [
     "TriagePacket", "TriggerEvent", "EventRow",
-    "Nudge", "Restart", "Wait", "Escalate", "Abandon", "SupervisorAction", "ACTION_MODELS",
+    "Nudge", "Restart", "Retry", "Wait", "Escalate", "EscalateHuman", "Abandon", "Terminate",
+    "SupervisorAction", "ACTION_MODELS", "CANONICAL_ACTION_TYPES", "canonical_action_type",
     "compute_allowed_actions", "build_packet",
     "invoke_supervisor", "SupervisorResult", "always_escalate",
 ]

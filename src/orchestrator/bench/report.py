@@ -28,8 +28,20 @@ class RunSummary:
     supervisor_cost_usd: float
     interventions: int
     recovered_faults: int
+    verification_recoveries: int
     protected_path_modified: int
     verify_failed: int
+    queue_wait_s: float
+    slot_occupancy_s: float
+    worker_execution_s: float
+    verification_s: float
+    supervisor_s: float
+    triage_s: float
+    candidate_to_retry_s: float
+    peak_live_workers: int
+    worker_limit: int
+    attempts: int
+    verification_attempts: int
 
 
 @dataclass(frozen=True)
@@ -51,6 +63,7 @@ class GroupSummary:
     total_cost_usd: float
     interventions: int
     recovered_faults: int
+    verification_recoveries: int
     verify_failed: int
     protected_path_modified: int
 
@@ -73,12 +86,24 @@ def summarize_db(db_path: str | Path) -> RunSummary:
         row["source"]: row["cost"] or 0.0
         for row in conn.execute("SELECT source, SUM(cost_usd) cost FROM events GROUP BY source")
     }
-    interventions = conn.execute(
-        "SELECT COUNT(*) c FROM events WHERE type = 'supervisor.acted' "
-        "AND json_extract(payload, '$.action') = 'escalate'"
-    ).fetchone()["c"]
+    intervention_row = conn.execute(
+        "SELECT COUNT(*) c, COALESCE(SUM(cost_usd), 0.0) cost "
+        "FROM supervisor_interventions"
+    ).fetchone()
+    interventions = intervention_row["c"]
+    if interventions:
+        source_cost["supervisor"] = intervention_row["cost"]
+    else:
+        # Preserve reports for phase-one/manual databases with no rows here.
+        interventions = conn.execute(
+            "SELECT COUNT(*) c FROM events WHERE type = 'supervisor.acted' "
+            "AND json_extract(payload, '$.action') = 'escalate'"
+        ).fetchone()["c"]
     recovered_faults = conn.execute(
         "SELECT COUNT(DISTINCT task_id) c FROM events WHERE type = 'bench.fault_recovered'"
+    ).fetchone()["c"]
+    verification_recoveries = conn.execute(
+        "SELECT COUNT(DISTINCT task_id) c FROM events WHERE type = 'verification.recovered'"
     ).fetchone()["c"]
     protected = conn.execute(
         "SELECT COUNT(*) c FROM events WHERE type = 'verify.failed' "
@@ -88,6 +113,7 @@ def summarize_db(db_path: str | Path) -> RunSummary:
         "SELECT COUNT(*) c FROM events WHERE type = 'verify.failed'"
     ).fetchone()["c"]
     delivered = counts.get("delivered", 0)
+    timing = _scheduler_timing(conn)
     return RunSummary(
         run_id=meta.get("run_id", Path(db_path).stem),
         condition=meta.get("condition", "unknown"),
@@ -107,8 +133,10 @@ def summarize_db(db_path: str | Path) -> RunSummary:
         supervisor_cost_usd=source_cost.get("supervisor", 0.0),
         interventions=interventions,
         recovered_faults=recovered_faults,
+        verification_recoveries=verification_recoveries,
         protected_path_modified=protected,
         verify_failed=verify_failed,
+        **timing,
     )
 
 
@@ -139,6 +167,7 @@ def summarize_groups(rows: list[RunSummary], group_by: str = "condition") -> lis
             total_cost_usd=sum(r.cost_usd for r in items),
             interventions=sum(r.interventions for r in items),
             recovered_faults=sum(r.recovered_faults for r in items),
+            verification_recoveries=sum(r.verification_recoveries for r in items),
             verify_failed=sum(r.verify_failed for r in items),
             protected_path_modified=sum(r.protected_path_modified for r in items),
         ))
@@ -149,7 +178,10 @@ def format_table(rows: list[RunSummary]) -> str:
     headers = [
         "run_id", "condition", "seed", "tasks", "delivered", "rate", "wall_min",
         "tasks/hr", "tokens_in", "tokens_out", "cost", "worker", "supervisor", "human", "recovered",
-        "verify_failed", "protected",
+        "verify_failed", "verification_recoveries", "protected", "queue_wait_s",
+        "slot_occupancy_s", "worker_execution_s", "verification_s", "supervisor_s",
+        "triage_s", "candidate_to_retry_s", "peak_workers", "worker_limit", "attempts",
+        "verification_attempts",
     ]
     rendered = ["\t".join(headers)]
     for r in rows:
@@ -171,7 +203,19 @@ def format_table(rows: list[RunSummary]) -> str:
             str(r.interventions),
             str(r.recovered_faults),
             str(r.verify_failed),
+            str(r.verification_recoveries),
             str(r.protected_path_modified),
+            f"{r.queue_wait_s:.3f}",
+            f"{r.slot_occupancy_s:.3f}",
+            f"{r.worker_execution_s:.3f}",
+            f"{r.verification_s:.3f}",
+            f"{r.supervisor_s:.3f}",
+            f"{r.triage_s:.3f}",
+            f"{r.candidate_to_retry_s:.3f}",
+            str(r.peak_live_workers),
+            str(r.worker_limit),
+            str(r.attempts),
+            str(r.verification_attempts),
         ]))
     return "\n".join(rendered)
 
@@ -181,7 +225,7 @@ def format_summary_table(rows: list[GroupSummary]) -> str:
         "group", "runs", "tasks", "delivered", "mean_rate", "rate_range",
         "mean_wall_min", "mean_tasks/hr", "total_tokens_in", "total_tokens_out",
         "mean_tokens_in", "mean_tokens_out", "mean_cost", "total_cost", "human",
-        "recovered", "verify_failed", "protected",
+        "recovered", "verify_failed", "verification_recoveries", "protected",
     ]
     rendered = ["\t".join(headers)]
     for r in rows:
@@ -203,6 +247,7 @@ def format_summary_table(rows: list[GroupSummary]) -> str:
             str(r.interventions),
             str(r.recovered_faults),
             str(r.verify_failed),
+            str(r.verification_recoveries),
             str(r.protected_path_modified),
         ]))
     return "\n".join(rendered)
@@ -309,3 +354,90 @@ def _parse_ts(ts: str):
     from datetime import datetime
 
     return datetime.fromisoformat(ts)
+
+
+def _duration(start: str | None, end: str | None) -> float:
+    if not start or not end:
+        return 0.0
+    return max((_parse_ts(end) - _parse_ts(start)).total_seconds(), 0.0)
+
+
+def _scheduler_timing(conn: sqlite3.Connection) -> dict:
+    """Derive phase timing from durable events/attempt rows.
+
+    Slot accounting is event based: an acquire/release pair is one lease, and
+    the occupancy recorded on each event makes peak capacity auditable without
+    polling. Older benchmark DBs simply report zero for the phase-three fields.
+    """
+    events = [dict(row) for row in conn.execute(
+        "SELECT * FROM events ORDER BY seq"
+    )]
+    queued: dict[str, list[str]] = {}
+    queue_wait = 0.0
+    slot_acquired: dict[str, str] = {}
+    slot_occupancy = 0.0
+    peak = 0
+    observed_limit = 0
+    for event in events:
+        payload = json.loads(event["payload"] or "{}")
+        task_id = event["task_id"]
+        if event["type"] == "task.state_changed" and payload.get("to") == "queued":
+            queued.setdefault(task_id, []).append(event["ts"])
+        elif event["type"] == "worker.slot_acquired":
+            attempt_id = payload.get("attempt_id")
+            if attempt_id and attempt_id not in slot_acquired:
+                slot_acquired[attempt_id] = event["ts"]
+                if queued.get(task_id):
+                    queue_wait += _duration(queued[task_id].pop(0), event["ts"])
+            peak = max(peak, int(payload.get("occupancy", 0)))
+            observed_limit = max(observed_limit, int(payload.get("limit", 0)))
+        elif event["type"] == "worker.slot_released":
+            attempt_id = payload.get("attempt_id")
+            if attempt_id in slot_acquired:
+                slot_occupancy += _duration(slot_acquired.pop(attempt_id), event["ts"])
+
+    attempts = [dict(row) for row in conn.execute(
+        "SELECT * FROM attempts ORDER BY task_id, attempt_no"
+    )]
+    worker_execution = sum(_duration(a["worker_started_at"], a["worker_ended_at"])
+                           for a in attempts)
+    verification = sum(_duration(a["verification_started_at"], a["verification_ended_at"])
+                       for a in attempts)
+    candidate_to_retry = 0.0
+    by_task: dict[str, list[dict]] = {}
+    for attempt in attempts:
+        by_task.setdefault(attempt["task_id"], []).append(attempt)
+    for lineage in by_task.values():
+        for previous, child in zip(lineage, lineage[1:]):
+            candidate_to_retry += _duration(previous["worker_ended_at"],
+                                            child["worker_started_at"])
+
+    supervisor = sum(_duration(row["started_at"], row["ended_at"]) for row in conn.execute(
+        "SELECT started_at, ended_at FROM supervisor_interventions"
+    ))
+    triage_started: dict[int, str] = {}
+    triage = 0.0
+    for event in events:
+        payload = json.loads(event["payload"] or "{}")
+        cause_seq = payload.get("cause_seq")
+        if cause_seq is None:
+            continue
+        if event["type"] == "triage.started":
+            triage_started[cause_seq] = event["ts"]
+        elif event["type"] == "triage.finished" and cause_seq in triage_started:
+            triage += _duration(triage_started.pop(cause_seq), event["ts"])
+
+    metadata = _metadata(conn, "run.db")
+    return {
+        "queue_wait_s": round(queue_wait, 3),
+        "slot_occupancy_s": round(slot_occupancy, 3),
+        "worker_execution_s": round(worker_execution, 3),
+        "verification_s": round(verification, 3),
+        "supervisor_s": round(supervisor, 3),
+        "triage_s": round(triage, 3),
+        "candidate_to_retry_s": round(candidate_to_retry, 3),
+        "peak_live_workers": peak,
+        "worker_limit": int(metadata.get("max_concurrency", 0) or observed_limit),
+        "attempts": len(attempts),
+        "verification_attempts": sum(1 for e in events if e["type"] == "verify.started"),
+    }

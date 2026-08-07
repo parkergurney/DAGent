@@ -39,4 +39,11 @@ Design notes:
   `running`, check whether `session_id` is a live session; dead ones get a
   synthetic `worker.exited` event and route through triage like any other
   crash. No special recovery code path.
+- Worker capacity is a live execution lease, not a task-lifetime lease. After
+  a worker's candidate SHA and any dirty-worktree status are durable, the
+  process is reaped and its pooled checkout/worker lease is released before
+  verification or supervisor triage. Verification reads the durable candidate
+  ref, allowing another task to reuse the checkout. A live ask/nudge/wait
+  session retains its lease because the process and checkout are still needed
+  for the intervention.
 <!-- /sync:task-states -->

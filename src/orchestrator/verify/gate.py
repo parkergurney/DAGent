@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -36,6 +37,8 @@ class VerifyRequest:
     protected_paths: tuple = DEFAULT_PROTECTED
     rerun_on_fail: bool = True
     repo: str | None = None  # baseline scratch checkout; defaults to worktree's repo
+    candidate_sha: str | None = None  # durable attempt ref; worker worktree may be reused
+    worker_dirty: str | None = None  # status captured before disposable worktree release
     artifact_root: str | None = None  # per-run task artifact directory
 
 
@@ -51,6 +54,7 @@ class VerifyResult:
     tests_modified: list = field(default_factory=list)
     output_path: str | None = None
     patch_path: str | None = None
+    failure_signature: str | None = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -79,6 +83,34 @@ def _run(cmd, cwd, timeout_s) -> tuple:
 
 def _tail(s: str, n: int = 2000) -> str:
     return s[-n:]
+
+
+_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_HEX_ADDRESS = re.compile(r"0x[0-9a-fA-F]+")
+_ABS_PATH = re.compile(r"(?:/[A-Za-z0-9_.-]+){2,}")
+_LINE_NUMBER = re.compile(r"(?<=:)[0-9]+(?=(:|\b))")
+
+
+def normalize_failure_signature(cause: str, output: str = "", exit_code: int | None = None) -> str:
+    """Return a deterministic signature for a public verification failure.
+
+    Only stable failure text participates: ANSI escapes, absolute/temp paths,
+    addresses, line numbers, and surrounding whitespace are removed. Hidden
+    verifier output is never passed here by ``run_verify``.
+    """
+    text = _ANSI.sub("", output or "")
+    candidates = [line.strip() for line in text.splitlines() if line.strip()]
+    interesting = [line for line in candidates if re.search(
+        r"assert|assertion|error|failed|failure|fail|traceback|^E(?:\s|$)",
+        line, re.IGNORECASE,
+    )]
+    selected = (interesting[-1] if interesting else (candidates[-1] if candidates else ""))
+    selected = _ABS_PATH.sub("<path>", selected)
+    selected = _HEX_ADDRESS.sub("<address>", selected)
+    selected = _LINE_NUMBER.sub(":<line>", selected)
+    selected = " ".join(selected.split())
+    canonical = f"{cause}|{exit_code if exit_code is not None else ''}|{selected}"
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _artifact_dir(req: VerifyRequest) -> Path:
@@ -112,7 +144,7 @@ def _create_verifier_worktree(req: VerifyRequest) -> tuple[Path, Path] | None:
     """
     repo = Path(req.repo or req.worktree).resolve()
     worker = Path(req.worktree).resolve()
-    head = _git("rev-parse", "HEAD", cwd=worker)
+    head = _git("rev-parse", req.candidate_sha or "HEAD", cwd=repo if req.candidate_sha else worker)
     if head.returncode != 0 or not head.stdout.strip():
         return None
     verifier = Path(tempfile.mkdtemp(prefix="orch_verifier_"))
@@ -132,25 +164,33 @@ def _remove_verifier_worktree(verifier: Path, repo: Path) -> None:
 def run_verify(req: VerifyRequest) -> VerifyResult:
     t0 = time.monotonic()
     wt = req.worktree
+    git_cwd = Path(req.repo or wt).resolve() if req.candidate_sha else wt
+    candidate_ref = req.candidate_sha or "HEAD"
 
     def done(passed, cause, exit_code, output, diff_stat="", tests_modified=None, flaky=False,
-             patch_path=None, feedback=None):
+             patch_path=None, feedback=None, signature=True):
+        failure_signature = (
+            normalize_failure_signature(cause, output, exit_code) if not passed and signature else None
+        )
         return VerifyResult(
             passed=passed, cause=cause, exit_code=exit_code,
             duration_s=round(time.monotonic() - t0, 3), flaky=flaky,
             output_tail=_tail(feedback if feedback is not None else output), diff_stat=diff_stat,
             tests_modified=tests_modified or [], output_path=_save_output(req, cause, output),
             patch_path=patch_path,
+            failure_signature=failure_signature,
         )
 
     # 1. preflight (git only, ms)
-    status = _git("status", "--porcelain", cwd=wt).stdout
+    status = req.worker_dirty or (_git("status", "--porcelain", cwd=wt).stdout
+                                  if not req.candidate_sha else "")
     if status.strip():
         return done(False, "uncommitted_changes", None, status)
 
-    diff_stat = _git("diff", "--stat", req.base_sha, "HEAD", cwd=wt).stdout
+    diff_stat = _git("diff", "--stat", req.base_sha, candidate_ref, cwd=git_cwd).stdout
     name_status = [line.split("\t") for line in
-                   _git("diff", "--name-status", req.base_sha, "HEAD", cwd=wt).stdout.splitlines()
+                   _git("diff", "--name-status", req.base_sha, candidate_ref,
+                        cwd=git_cwd).stdout.splitlines()
                    if line]
     diff_names = [parts[-1] for parts in name_status]
     if not diff_names:
@@ -158,7 +198,8 @@ def run_verify(req: VerifyRequest) -> VerifyResult:
 
     tests_modified = [f for f in diff_names if "test" in Path(f).name.lower()]
     patch_path = _save_patch(req,
-                             _git("diff", "--binary", req.base_sha, "HEAD", cwd=wt).stdout)
+                             _git("diff", "--binary", req.base_sha, candidate_ref,
+                                  cwd=git_cwd).stdout)
     # New files under protected_paths are exempt -- only edits/deletes/renames
     # of a file that already existed at base_sha count as gaming the gate.
     modified_protected = [parts[-1] for parts in name_status
@@ -219,7 +260,7 @@ def run_verify(req: VerifyRequest) -> VerifyResult:
                 # hidden suite trains the worker to overfit it (design.md section 7).
                 return done(False, "hidden_tests_failed", hcode,
                             "the change didn't hold up under additional checks",
-                            diff_stat, tests_modified, patch_path=patch_path)
+                            diff_stat, tests_modified, patch_path=patch_path, signature=False)
 
         return done(True, "tests_passed", code, out, diff_stat, tests_modified, flaky,
                     patch_path=patch_path)

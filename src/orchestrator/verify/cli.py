@@ -45,7 +45,8 @@ def main(argv=None) -> int:
         payload = {"cause": result.cause, "exit_code": result.exit_code,
                   "duration_s": result.duration_s, "flaky": result.flaky,
                   "diff_stat": result.diff_stat, "tests_modified": result.tests_modified,
-                  "output_path": result.output_path, "patch_path": result.patch_path}
+                  "output_path": result.output_path, "patch_path": result.patch_path,
+                  "failure_signature": result.failure_signature}
         if result.passed:
             s = append_event(conn, source="verifier", type="verify.passed",
                              task_id=task["id"], payload=payload)

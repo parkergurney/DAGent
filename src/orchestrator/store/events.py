@@ -58,7 +58,10 @@ _TRANSITIONS = {
 # Columns transition() may update alongside the state change. `brief` joined
 # this set for needs_human -> queued (cli.py's `answer` command folds the
 # human's answer into the brief so the next attempt actually sees it).
-_UPDATABLE = {"session_id", "worktree", "retries", "max_retries", "base_sha", "brief"}
+_UPDATABLE = {
+    "session_id", "worktree", "retries", "max_retries", "base_sha", "brief",
+    "run_id", "current_attempt_id", "candidate_sha", "candidate_branch",
+}
 
 
 def _legal(frm: str, to: str) -> bool:
@@ -212,7 +215,11 @@ def replay(events) -> dict:
                 "max_retries": payload.get("max_retries", 2),
                 "worktree": None,
                 "session_id": None,
-                "base_sha": None,
+        "base_sha": None,
+        "run_id": None,
+        "current_attempt_id": None,
+        "candidate_sha": None,
+        "candidate_branch": None,
                 "created_at": e["ts"],
                 "updated_at": e["ts"],
             }
@@ -224,3 +231,137 @@ def replay(events) -> dict:
                 if col in payload:
                     t[col] = payload[col]
     return tasks
+
+
+# --- durable attempts -------------------------------------------------------
+
+_ATTEMPT_COLUMNS = {
+    "candidate_sha", "worker_dirty", "failure_cause", "failure_signature", "supervisor_feedback",
+    "execution_contract",
+    "worker_started_at", "worker_ended_at", "verification_started_at",
+    "verification_ended_at", "supervisor_started_at", "supervisor_ended_at",
+    "disposition", "updated_at",
+}
+
+_INTERVENTION_COLUMNS = {
+    "action_type", "diagnosis_code", "worker_instruction", "target_attempt_id",
+    "child_candidate_sha", "child_failure_signature", "eventual_delivery_outcome",
+    "verification_recovery_outcome", "tokens_in", "tokens_out", "cost_usd", "ended_at",
+    "updated_at",
+}
+
+
+def create_attempt(conn, *, task_id, run_id, attempt_no, base_sha,
+                   candidate_branch, execution_contract, parent_attempt_id=None,
+                   supervisor_feedback=None, attempt_id=None) -> str:
+    """Create an immutable attempt identity before a worker is spawned.
+
+    The candidate branch is an append-only lineage ref in the task repository;
+    worktree slots are only materialized views of this ref.
+    """
+    attempt_id = attempt_id or ulid()
+    ts = _now()
+    payload = {
+        "attempt_id": attempt_id, "task_id": task_id, "run_id": run_id,
+        "attempt_no": attempt_no, "parent_attempt_id": parent_attempt_id,
+        "base_sha": base_sha, "candidate_branch": candidate_branch,
+        "execution_contract": execution_contract,
+        "supervisor_feedback": supervisor_feedback,
+        "disposition": "created", "created_at": ts,
+    }
+    with conn:
+        conn.execute(
+            "INSERT INTO attempts "
+            "(id, task_id, run_id, attempt_no, parent_attempt_id, base_sha, "
+            " candidate_sha, candidate_branch, failure_cause, failure_signature, "
+            " supervisor_feedback, execution_contract, disposition, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,NULL,?,NULL,NULL,?,?,?, ?,?)",
+            (attempt_id, task_id, run_id, attempt_no, parent_attempt_id, base_sha,
+             candidate_branch, supervisor_feedback, execution_contract, "created", ts, ts),
+        )
+        _insert_event(conn, ts, source="scheduler", type="attempt.created",
+                      task_id=task_id, payload=payload)
+    return attempt_id
+
+
+def update_attempt(conn, attempt_id, *, source="scheduler", event_type="attempt.updated",
+                   **fields) -> int:
+    """Durably update attempt facts and emit the corresponding audit event."""
+    bad = set(fields) - _ATTEMPT_COLUMNS
+    if bad:
+        raise ValueError(f"cannot update attempt columns {bad}")
+    if not fields:
+        raise ValueError("attempt update requires at least one field")
+    row = conn.execute("SELECT task_id FROM attempts WHERE id = ?", (attempt_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"unknown attempt {attempt_id!r}")
+    fields = dict(fields)
+    fields["updated_at"] = _now()
+    with conn:
+        cols = ", ".join(f"{name} = ?" for name in fields)
+        conn.execute(f"UPDATE attempts SET {cols} WHERE id = ?",
+                     [*fields.values(), attempt_id])
+        return _insert_event(conn, fields["updated_at"], source=source, type=event_type,
+                             task_id=row["task_id"], payload={"attempt_id": attempt_id, **fields})
+
+
+def latest_attempt(conn, task_id):
+    return conn.execute(
+        "SELECT * FROM attempts WHERE task_id = ? ORDER BY attempt_no DESC LIMIT 1",
+        (task_id,),
+    ).fetchone()
+
+
+# --- supervisor intervention accounting -----------------------------------
+
+def create_intervention(conn, *, task_id, source_attempt_id, source_candidate_sha,
+                        source_failure_signature, started_at=None, intervention_id=None) -> str:
+    """Reserve accounting before a supervisor model call starts."""
+    intervention_id = intervention_id or ulid()
+    ts = started_at or _now()
+    with conn:
+        conn.execute(
+            "INSERT INTO supervisor_interventions "
+            "(id, task_id, source_attempt_id, source_candidate_sha, source_failure_signature, "
+            " started_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+            (intervention_id, task_id, source_attempt_id, source_candidate_sha,
+             source_failure_signature, ts, ts, ts),
+        )
+        _insert_event(conn, ts, source="supervisor", type="supervisor.intervention_started",
+                      task_id=task_id,
+                      payload={"intervention_id": intervention_id,
+                               "source_attempt_id": source_attempt_id,
+                               "source_candidate_sha": source_candidate_sha,
+                               "source_failure_signature": source_failure_signature})
+    return intervention_id
+
+
+def update_intervention(conn, intervention_id, **fields) -> int:
+    """Update derived intervention facts and append an audit event."""
+    bad = set(fields) - _INTERVENTION_COLUMNS
+    if bad:
+        raise ValueError(f"cannot update intervention columns {bad}")
+    if not fields:
+        raise ValueError("intervention update requires at least one field")
+    row = conn.execute(
+        "SELECT task_id FROM supervisor_interventions WHERE id = ?", (intervention_id,)
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"unknown intervention {intervention_id!r}")
+    fields = dict(fields)
+    fields["updated_at"] = _now()
+    with conn:
+        cols = ", ".join(f"{name} = ?" for name in fields)
+        conn.execute(f"UPDATE supervisor_interventions SET {cols} WHERE id = ?",
+                     [*fields.values(), intervention_id])
+        return _insert_event(
+            conn, fields["updated_at"], source="supervisor", type="supervisor.intervention_updated",
+            task_id=row["task_id"], payload={"intervention_id": intervention_id, **fields},
+        )
+
+
+def interventions_for_target(conn, attempt_id):
+    return conn.execute(
+        "SELECT * FROM supervisor_interventions WHERE target_attempt_id = ? ORDER BY created_at",
+        (attempt_id,),
+    ).fetchall()

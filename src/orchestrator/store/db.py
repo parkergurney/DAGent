@@ -28,3 +28,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
     task_cols = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
     if "hidden_cmd" not in task_cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN hidden_cmd TEXT")
+    for name, sql_type in (
+        ("run_id", "TEXT"),
+        ("current_attempt_id", "TEXT"),
+        ("candidate_sha", "TEXT"),
+        ("candidate_branch", "TEXT"),
+    ):
+        if name not in task_cols:
+            conn.execute(f"ALTER TABLE tasks ADD COLUMN {name} {sql_type}")
+    attempt_cols = {row["name"] for row in conn.execute("PRAGMA table_info(attempts)")}
+    if "worker_dirty" not in attempt_cols:
+        conn.execute("ALTER TABLE attempts ADD COLUMN worker_dirty TEXT")

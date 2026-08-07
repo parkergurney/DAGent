@@ -4,6 +4,8 @@ local ff-merge path below (which merges into the repo's default branch, not
 a remote).
 """
 import subprocess
+import shutil
+import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -49,7 +51,7 @@ def _rev_parse(ref: str, *, cwd) -> str:
 
 
 def _local(task: dict) -> tuple:
-    branch = f"task/{task['id']}"
+    branch = task.get("candidate_branch") or f"task/{task['id']}"
     repo_root = task["repo"]
 
     current = subprocess.run(["git", "branch", "--show-current"], cwd=repo_root,
@@ -78,14 +80,38 @@ def _local(task: dict) -> tuple:
     # main moved past the branch point: rebase onto main's current SHA and retry.
     main_sha = subprocess.run(["git", "rev-parse", "main"], cwd=repo_root,
                               capture_output=True, text=True).stdout.strip()
+    # The scheduler's worker checkout is disposable and may already have been
+    # reused. Rebase the durable branch in a private checkout unless the
+    # caller supplied a checkout that is still on this branch.
+    rebase_wt = task.get("worktree")
+    owned_temp = False
+    if not rebase_wt or not Path(rebase_wt).exists() or subprocess.run(
+        ["git", "branch", "--show-current"], cwd=rebase_wt,
+        capture_output=True, text=True,
+    ).stdout.strip() != branch:
+        rebase_wt = tempfile.mkdtemp(prefix="orch_delivery_")
+        add = subprocess.run(["git", "worktree", "add", "-q", str(rebase_wt), branch],
+                             cwd=repo_root, capture_output=True, text=True)
+        if add.returncode != 0:
+            shutil.rmtree(rebase_wt, ignore_errors=True)
+            raise DeliveryError(add.stderr)
+        owned_temp = True
     rebase = subprocess.run(
         ["git", "-c", "user.name=orchestrator", "-c", "user.email=orchestrator@localhost",
-         "rebase", main_sha], cwd=task["worktree"],
-                            capture_output=True, text=True)
+         "rebase", main_sha], cwd=rebase_wt, capture_output=True, text=True)
     if rebase.returncode != 0:
-        subprocess.run(["git", "rebase", "--abort"], cwd=task["worktree"],
+        subprocess.run(["git", "rebase", "--abort"], cwd=rebase_wt,
                        capture_output=True, text=True)
+        if owned_temp:
+            subprocess.run(["git", "worktree", "remove", "--force", rebase_wt],
+                           cwd=repo_root, capture_output=True, text=True)
+            shutil.rmtree(rebase_wt, ignore_errors=True)
         raise DeliveryError(f"rebase_conflict: {rebase.stderr}\noriginal: {merge.stderr}")
+
+    if owned_temp:
+        subprocess.run(["git", "worktree", "remove", "--force", rebase_wt],
+                       cwd=repo_root, capture_output=True, text=True)
+        shutil.rmtree(rebase_wt, ignore_errors=True)
 
     # NOTE: verification ran against the pre-rebase base. See devlog —
     # re-verification after rebase is required before this is sound.
@@ -106,14 +132,21 @@ def _local(task: dict) -> tuple:
 
 def _pr(task: dict, *, open_pr) -> tuple:
     branch = f"task/{task['id']}"
-    wt = task["worktree"]
-    commit_sha = _rev_parse("HEAD", cwd=wt)
-    proc = subprocess.run(["git", "push", "-u", "origin", branch], cwd=wt,
+    source_ref = task.get("candidate_branch") or branch
+    repo = task.get("repo") or task["worktree"]
+    if source_ref != branch:
+        materialize = subprocess.run(["git", "branch", "-f", branch, source_ref],
+                                     cwd=repo, capture_output=True, text=True)
+        if materialize.returncode != 0:
+            raise DeliveryError(materialize.stderr)
+    commit_sha = _rev_parse(branch, cwd=repo)
+    proc = subprocess.run(
+        ["git", "push", "-u", "origin", f"{branch}:refs/heads/{branch}"], cwd=repo,
                           capture_output=True, text=True)
     if proc.returncode != 0:
         raise DeliveryError(proc.stderr)
     try:
-        url = open_pr(wt, branch)
+        url = open_pr(repo, branch)
     except DeliveryError:
         raise
     except Exception as e:
