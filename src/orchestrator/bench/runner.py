@@ -353,6 +353,7 @@ def _verify_and_finish_baseline(conn, task_id: str, cfg: config.Config) -> None:
         task_id=task_id,
         worktree=task["worktree"],
         base_sha=task["base_sha"],
+        repo=task["repo"],
         verify_cmd=task["verify_cmd"] or "true",
         hidden_cmd=task["hidden_cmd"],
         setup_cmd=task["setup_cmd"],

@@ -356,6 +356,7 @@ class Scheduler:
         req = VerifyRequest(task_id=task_id, worktree=task["worktree"], base_sha=task["base_sha"],
                             verify_cmd=task["verify_cmd"] or "true", setup_cmd=task["setup_cmd"],
                             hidden_cmd=task["hidden_cmd"], timeout_s=self.verify_timeout_s,
+                            repo=task["repo"],
                             **req_kwargs)
         append_event(self.conn, source="verifier", type="verify.started", task_id=task_id)
         result = run_verify(req)

@@ -78,7 +78,9 @@ def _local(task: dict) -> tuple:
     # main moved past the branch point: rebase onto main's current SHA and retry.
     main_sha = subprocess.run(["git", "rev-parse", "main"], cwd=repo_root,
                               capture_output=True, text=True).stdout.strip()
-    rebase = subprocess.run(["git", "rebase", main_sha], cwd=task["worktree"],
+    rebase = subprocess.run(
+        ["git", "-c", "user.name=orchestrator", "-c", "user.email=orchestrator@localhost",
+         "rebase", main_sha], cwd=task["worktree"],
                             capture_output=True, text=True)
     if rebase.returncode != 0:
         subprocess.run(["git", "rebase", "--abort"], cwd=task["worktree"],
