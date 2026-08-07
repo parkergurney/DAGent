@@ -1,6 +1,7 @@
 """Seatbelt worker-boundary tests that do not require a Claude API call."""
 
 import asyncio
+import sys
 
 import pytest
 
@@ -40,3 +41,15 @@ def test_real_worker_fails_closed_on_unsupported_host(tmp_path, monkeypatch):
     monkeypatch.setattr(sandbox.platform, "system", lambda: "Linux")
     with pytest.raises(sandbox.WorkerSandboxUnavailable, match="refusing to run unsandboxed"):
         asyncio.run(spawn_sdk_worker({"id": "task-1", "brief": "ignored"}, tmp_path))
+
+
+def test_runtime_allowlist_ignores_caller_import_roots(tmp_path, monkeypatch):
+    """A caller's PYTHONPATH must not turn the benchmark root into worker input."""
+    project_root = tmp_path / "benchmark-root"
+    project_root.mkdir()
+    monkeypatch.setattr(sys, "path", [str(project_root), str(tmp_path / "other-import-root")])
+
+    runtime_paths = sandbox._runtime_paths()
+
+    assert project_root.resolve() not in runtime_paths
+    assert (tmp_path / "other-import-root").resolve() not in runtime_paths

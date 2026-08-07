@@ -16,7 +16,7 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from orchestrator import config
+from orchestrator import config, delivery
 from orchestrator.scheduler import Scheduler
 from orchestrator.store import append_event, connect, create_task, transition
 from orchestrator.supervisor import invoke_supervisor
@@ -442,8 +442,24 @@ def _verify_and_finish_baseline(
         s = append_event(conn, source="verifier", type="verify.passed",
                          task_id=task_id, payload=payload)
         transition(conn, task_id, "delivering", cause_seq=s)
-        s = append_event(conn, source="system", type="bench.delivered", task_id=task_id)
+        try:
+            event_type, event_payload = delivery.deliver(
+                task,
+                artifact_root=str(artifact_root / task_id),
+            )
+        except delivery.DeliveryError as exc:
+            s = append_event(conn, source="delivery", type="delivery.failed",
+                             task_id=task_id, payload={"error": str(exc)})
+            transition(conn, task_id, "triage", cause_seq=s)
+            s = append_event(conn, source="system", type="bench.unsupervised_failed",
+                             task_id=task_id, payload={"reason": "delivery_failed"})
+            transition(conn, task_id, "failed", cause_seq=s)
+            return
+
+        s = append_event(conn, source="delivery", type=event_type,
+                         task_id=task_id, payload=event_payload)
         transition(conn, task_id, "delivered", cause_seq=s)
+        append_event(conn, source="system", type="bench.delivered", task_id=task_id)
         if conn.execute(
             "SELECT 1 FROM events WHERE task_id = ? AND type = 'bench.fault_injected'",
             (task_id,),

@@ -221,6 +221,25 @@ def test_sequential_baseline_run_records_metrics(tmp_path):
     assert summary.delivered == 1
 
 
+def test_baseline_conditions_use_run_scoped_delivery(tmp_path):
+    repo = init_repo(tmp_path)
+    suite_path = _suite_file(tmp_path, repo)
+
+    manifest = run_benchmark(
+        suite_path, condition="sequential", out_dir=tmp_path / "bench",
+        fake_worker=True, overwrite=True,
+    )
+
+    conn = connect(manifest.db)
+    delivery_event = conn.execute(
+        "SELECT payload FROM events WHERE type='delivery.report_written'"
+    ).fetchone()
+    assert delivery_event is not None
+    report_path = Path(json.loads(delivery_event["payload"])['path'])
+    assert report_path.is_relative_to(Path(manifest.run_dir) / "artifacts")
+    assert report_path.exists()
+
+
 def test_naive_parallel_reserves_distinct_queued_tasks(tmp_path):
     repo = init_repo(tmp_path)
     suite_path = _suite_file(tmp_path, repo, tasks=[

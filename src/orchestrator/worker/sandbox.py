@@ -61,9 +61,12 @@ def _runtime_paths() -> set[Path]:
     python_bin = Path(sys.executable).resolve().parent
     paths.add(python_bin)
 
-    for value in sys.path:
-        if value:
-            paths.add(_resolve_existing(value))
+    # Do not allowlist arbitrary import roots from the caller.  In particular,
+    # pytest and programmatic users commonly put the repository root on
+    # ``sys.path``/``PYTHONPATH``; doing so here would expose the benchmark
+    # checkout, including its hidden-test source, to the worker.  The
+    # interpreter's standard/runtime locations are covered explicitly below,
+    # and the orchestrator source is covered by ``_ORCHESTRATOR_SRC``.
     for value in sysconfig.get_paths().values():
         if value:
             paths.add(_resolve_existing(value))
