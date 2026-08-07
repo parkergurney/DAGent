@@ -13,6 +13,7 @@ not an untrusted execution boundary.
 from __future__ import annotations
 
 import platform
+import json
 import shutil
 import string
 import subprocess
@@ -39,6 +40,53 @@ _ENV_PREFIXES = ("LC_", "ANTHROPIC_", "CLAUDE_")
 
 def _resolve_existing(path: str | Path) -> Path:
     return Path(path).expanduser().resolve(strict=False)
+
+
+def _home_dir() -> Path:
+    return Path.home()
+
+
+def _copy_private_file(source: Path, destination: Path) -> None:
+    """Copy one operator-owned auth file without following a symlink."""
+    if not source.is_file() or source.is_symlink():
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, destination)
+    # Auth material must not inherit a permissive mode from the operator's
+    # config tree.  The worker needs to read it, but no other user should.
+    destination.chmod(0o600)
+
+
+def _stage_claude_auth(private_dir: Path) -> None:
+    """Stage only the Claude authentication inputs needed by a worker.
+
+    Claude Code stores credentials in ``~/.claude/.credentials.json`` on
+    Linux/Windows and in the macOS Keychain.  The latter is not a file we can
+    safely copy; Claude Code can consult the Keychain directly.  ``~/.claude``
+    is deliberately never copied.  On all platforms, retain only the
+    account metadata Claude Code uses to associate OAuth credentials with the
+    logged-in account; do not copy the host's project history or settings.
+    """
+    config_dir = private_dir / "claude-config"
+    config_dir.mkdir(mode=0o700)
+
+    credentials = _home_dir() / ".claude" / ".credentials.json"
+    _copy_private_file(credentials, config_dir / ".credentials.json")
+
+    # Claude Code's global config lives beside ~/.claude.  Recreate only its
+    # OAuth account metadata under the isolated HOME; the original file also
+    # contains project history, cached usage, and other operator state.
+    global_config = _home_dir() / ".claude.json"
+    if global_config.is_file() and not global_config.is_symlink():
+        try:
+            payload = json.loads(global_config.read_text())
+        except (OSError, ValueError):
+            payload = {}
+        account = payload.get("oauthAccount")
+        if isinstance(account, dict):
+            isolated_config = private_dir / ".claude.json"
+            isolated_config.write_text(json.dumps({"oauthAccount": account}, separators=(",", ":")))
+            isolated_config.chmod(0o600)
 
 
 def _git_path(worktree: Path, *args: str) -> Path:
@@ -172,6 +220,7 @@ class WorkerSandbox:
             private_dir = Path(tempfile.mkdtemp(
                 prefix=f".orch-worker-{safe_task_id}-", dir=wt.parent,
             )).resolve()
+            _stage_claude_auth(private_dir)
             allowed = {wt, git_dir, git_common_dir, private_dir, *_runtime_paths()}
             allowlist = tuple(sorted(allowed, key=str))
             profile = _profile(allowlist, private_dir)
@@ -198,6 +247,10 @@ class WorkerSandbox:
             key: value for key, value in base.items()
             if key in _ENV_EXACT or any(key.startswith(prefix) for prefix in _ENV_PREFIXES)
         }
+        # Keep Claude Code's global config and any credential file inside the
+        # worker's private directory.  This prevents a child from reading the
+        # operator's full ~/.claude tree through HOME-based lookups.
+        env["HOME"] = str(self.private_dir)
         env["PYTHONPATH"] = str(_ORCHESTRATOR_SRC)
         # Claude and Python must not use a shared /tmp.  CLAUDE_CONFIG_DIR is
         # also private so a worker cannot read or alter the operator's CLI

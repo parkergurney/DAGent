@@ -1,6 +1,8 @@
 """Seatbelt worker-boundary tests that do not require a Claude API call."""
 
 import asyncio
+import json
+import os
 import sys
 
 import pytest
@@ -53,3 +55,48 @@ def test_runtime_allowlist_ignores_caller_import_roots(tmp_path, monkeypatch):
 
     assert project_root.resolve() not in runtime_paths
     assert (tmp_path / "other-import-root").resolve() not in runtime_paths
+
+
+def test_stages_only_minimal_claude_auth_inputs(tmp_path, monkeypatch):
+    """Worker config must not inherit the operator's full Claude state."""
+    host_home = tmp_path / "host-home"
+    (host_home / ".claude").mkdir(parents=True)
+    credentials = host_home / ".claude" / ".credentials.json"
+    credentials.write_text('{"refreshToken":"secret"}')
+    (host_home / ".claude" / "settings.json").write_text('{"permissions":{"allow":[]}}')
+    (host_home / ".claude" / "history.jsonl").write_text("private history\n")
+    (host_home / ".claude.json").write_text(json.dumps({
+        "oauthAccount": {"accountUuid": "account-1", "organizationUuid": "org-1"},
+        "projects": {"/private/project": {"lastTotalInputTokens": 123}},
+        "secretCache": "must-not-copy",
+    }))
+    monkeypatch.setattr(sandbox, "_home_dir", lambda: host_home)
+
+    private = tmp_path / "private"
+    private.mkdir()
+    sandbox._stage_claude_auth(private)
+
+    assert (private / "claude-config" / ".credentials.json").read_text() == credentials.read_text()
+    assert json.loads((private / ".claude.json").read_text()) == {
+        "oauthAccount": {"accountUuid": "account-1", "organizationUuid": "org-1"}
+    }
+    assert not (private / "claude-config" / "settings.json").exists()
+    assert not (private / "claude-config" / "history.jsonl").exists()
+    assert "must-not-copy" not in (private / ".claude.json").read_text()
+    assert os.stat(private / "claude-config" / ".credentials.json").st_mode & 0o777 == 0o600
+    assert os.stat(private / ".claude.json").st_mode & 0o777 == 0o600
+
+
+def test_staging_does_not_follow_auth_symlinks(tmp_path, monkeypatch):
+    host_home = tmp_path / "host-home"
+    (host_home / ".claude").mkdir(parents=True)
+    secret = tmp_path / "secret.json"
+    secret.write_text('{"refreshToken":"secret"}')
+    (host_home / ".claude" / ".credentials.json").symlink_to(secret)
+    monkeypatch.setattr(sandbox, "_home_dir", lambda: host_home)
+
+    private = tmp_path / "private"
+    private.mkdir()
+    sandbox._stage_claude_auth(private)
+
+    assert not (private / "claude-config" / ".credentials.json").exists()
