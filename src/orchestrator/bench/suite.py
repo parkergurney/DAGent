@@ -17,6 +17,7 @@ class BenchTask:
     hidden_cmd: str | None = None
     setup_cmd: str | None = None
     protected_paths: tuple[str, ...] = ()
+    hidden_source_paths: tuple[str, ...] = ()
     depends_on: tuple[str, ...] = ()
     delivery_mode: str = "scout"
     max_retries: int | None = None
@@ -31,6 +32,7 @@ class BenchSuite:
     hidden_cmd: str | None = None
     setup_cmd: str | None = None
     protected_paths: tuple[str, ...] = ()
+    hidden_source_paths: tuple[str, ...] = ()
     delivery_mode: str = "scout"
     max_retries: int = 2
     tasks: tuple[BenchTask, ...] = field(default_factory=tuple)
@@ -51,6 +53,7 @@ def load_suite(path: str | Path) -> BenchSuite:
         "hidden_cmd": bench.get("hidden_cmd"),
         "setup_cmd": bench.get("setup_cmd"),
         "protected_paths": tuple(bench.get("protected_paths", [])),
+        "hidden_source_paths": tuple(bench.get("hidden_source_paths", [])),
         "delivery_mode": bench.get("delivery_mode", "scout"),
         "max_retries": int(bench.get("max_retries", 2)),
     }
@@ -75,6 +78,8 @@ def load_suite(path: str | Path) -> BenchSuite:
             hidden_cmd=row.get("hidden_cmd", suite_defaults["hidden_cmd"]),
             setup_cmd=row.get("setup_cmd", suite_defaults["setup_cmd"]),
             protected_paths=tuple(row.get("protected_paths", suite_defaults["protected_paths"])),
+            hidden_source_paths=tuple(row.get(
+                "hidden_source_paths", suite_defaults["hidden_source_paths"])),
             depends_on=deps,
             delivery_mode=row.get("delivery_mode", suite_defaults["delivery_mode"]),
             max_retries=row.get("max_retries"),
@@ -88,6 +93,7 @@ def load_suite(path: str | Path) -> BenchSuite:
         hidden_cmd=suite_defaults["hidden_cmd"],
         setup_cmd=suite_defaults["setup_cmd"],
         protected_paths=suite_defaults["protected_paths"],
+        hidden_source_paths=suite_defaults["hidden_source_paths"],
         delivery_mode=suite_defaults["delivery_mode"],
         max_retries=suite_defaults["max_retries"],
         tasks=tuple(tasks),

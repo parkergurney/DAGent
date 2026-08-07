@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import random
+import signal
 import shutil
 import time
 from dataclasses import asdict, dataclass
@@ -17,7 +18,13 @@ from orchestrator.scheduler import Scheduler
 from orchestrator.store import append_event, connect, create_task, transition
 from orchestrator.supervisor import invoke_supervisor
 from orchestrator.verify.gate import VerifyRequest, run_verify
-from orchestrator.worker import WorktreePool, spawn_fake_worker, spawn_sdk_worker
+from orchestrator.bench.preflight import validate_benchmark_isolation
+from orchestrator.worker import (
+    WorktreePool,
+    cleanup_worker_sandbox,
+    spawn_fake_worker,
+    spawn_sdk_worker,
+)
 from orchestrator.bench.suite import BenchSuite, load_suite
 
 CONDITIONS = {"sequential", "naive-parallel", "orchestrator"}
@@ -59,6 +66,16 @@ def run_benchmark(
         raise ValueError("suite must define [bench].repo or --repo-root must be passed")
     repo = Path(repo_value)
     cfg = config.load(config_path)
+
+    worktrees = Path(worktree_root) if worktree_root else (
+        Path(out_dir) / suite.name / f"{condition}-seed{seed}" / "worktrees"
+    )
+    # This must precede overwrite handling and run materialization.  A
+    # contaminated target is an operator finding, not disposable scratch.
+    validate_benchmark_isolation(
+        suite, repo, worktrees,
+        worker_slots=1 if condition == "sequential" else max_concurrency,
+    )
 
     run_id = f"{suite.name}-{condition}-seed{seed}"
     run_dir = Path(out_dir) / suite.name / f"{condition}-seed{seed}"
@@ -276,6 +293,10 @@ async def _run_baseline_task(
                                  tokens_out=payload.get("tokens_out"),
                                  cost_usd=payload.get("cost_usd"))
                 transition(conn, task_id, "verifying", cause_seq=s)
+                # Hidden setup happens in run_verify's detached verifier
+                # worktree.  Reap the worker first so no live process can
+                # observe the verifier material.
+                await _reap_worker(proc)
                 _verify_and_finish_baseline(conn, task_id, cfg)
                 done = True
                 return
@@ -299,8 +320,22 @@ async def _run_baseline_task(
         if proc is not None and proc.returncode is None:
             proc.kill()
             await proc.wait()
+        cleanup_worker_sandbox(proc)
         if wt is not None:
             pool.release(wt)
+
+
+async def _reap_worker(proc) -> None:
+    if proc.returncode is None:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
 
 
 def _verify_and_finish_baseline(conn, task_id: str, cfg: config.Config) -> None:

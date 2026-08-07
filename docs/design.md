@@ -384,14 +384,16 @@ class VerifyResult(BaseModel):
    base_sha itself. Baseline red → `baseline_broken` → escalate, never retry.
    No number of retries fixes a repo whose tests were already failing; without
    this check a flaky upstream test burns the whole retry budget for nothing.
-3. **The run:** setup_cmd (own cause — env problem ≠ code problem), then
-   verify_cmd under timeout, worker session inactive. Kill the process GROUP
-   on timeout; test runners orphan children.
+3. **The run:** after the worker has been terminated and reaped, create a
+   detached verifier worktree from its exact `HEAD`. Run setup_cmd (own cause
+   — env problem ≠ code problem), then verify_cmd under timeout, in that
+   verifier worktree only. Kill the process GROUP on timeout; test runners
+   orphan children. The worker checkout remains untouched for delivery.
 4. **Flake protocol + hidden check:** fail → rerun once. Fail-fail →
    `tests_failed`. Fail-pass → PASSED with `flaky=true` (don't burn retries on
    nondeterminism the worker didn't cause) — but log loudly; flake rate per
    repo is a benchmark covariate and a finding. If visible passed, run
-   hidden_cmd. `hidden_tests_failed` restart feedback must NOT leak hidden
+   hidden_cmd in the detached verifier worktree. `hidden_tests_failed` restart feedback must NOT leak hidden
    output — say the change didn't hold up under additional checks, without
    revealing which. Otherwise hidden tests train the worker to overfit them.
 
@@ -433,6 +435,27 @@ gets fully specced:
   answer via `orchestrator answer`, docs/usage.md). Logged as events either
   way; the orchestrator always knows a human intervened.
 - Worktree pool: raw `git worktree`, ~50 lines, no treehouse dependency.
+- Worker trust boundary: every real SDK worker is launched through the
+  fail-closed macOS Seatbelt wrapper in `worker/sandbox.py`. Its allowlist is
+  the public task worktree, the Git metadata needed to commit, Python/SDK and
+  orchestrator runtime paths, and one private worker temp/config directory.
+  The target repository's parent, benchmark source directories, verifier
+  directories, and global temporary directories are not allowlisted. A
+  missing or unusable Seatbelt launcher aborts the worker; it never falls
+  back to an unsandboxed process. The Claude SDK sandbox remains defense in
+  depth inside that OS boundary. Unsupported hosts fail closed for real
+  workers; FakeWorker remains an unchanged deterministic test fixture.
+- Verification trust boundary: once a worker claims done, the scheduler
+  terminates and reaps its process before any setup runs. The verify gate then
+  creates a detached temporary worktree from the worker's exact `HEAD` and
+  runs `setup_cmd`, `verify_cmd`, and `hidden_cmd` there. Hidden material is
+  never copied into the worker checkout, which remains the committed delivery
+  artifact; the verifier worktree is removed afterward.
+- Benchmark preflight rejects protected hidden material already present in a
+  target repository or reusable worker slot and asserts configured hidden
+  verifier sources are outside each worker allowlist. It does not delete
+  contamination or rewrite historical benchmark runs; those runs remain
+  exploratory evidence.
 - Spike questions: does mid-session message injection work as assumed? cost
   granularity per message or per session? what does "done" look like in the
   stream? does PostToolUse fire for subagent tool calls (parent_tool_use_id)?

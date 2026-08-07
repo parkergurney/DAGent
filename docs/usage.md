@@ -54,8 +54,8 @@ orchestrator add-task \
 
 Pass `--setup-cmd` for any repo whose verify command needs an install step
 first (e.g. `--setup-cmd "npm install"`).
-It runs before `verify_cmd` in both the worker's own worktree and the
-verify gate's throwaway baseline checkout.
+It runs before `verify_cmd` in the verify gate's detached verifier checkout
+and throwaway baseline checkout; it never runs in the live worker process.
 Skipping it for a repo that needs one caches `baseline_broken` against the
 base branch forever, since the baseline checkout has no dependencies
 installed and nothing else ever retries it (design.md section 7).
@@ -276,6 +276,8 @@ repo = "/absolute/path/to/fresh-target-repo"
 verify_cmd = "python -m pytest -q"
 setup_cmd = "python -m pip install -e ."
 protected_paths = ["hidden_tests/**"]
+# Optional when setup_cmd's hidden source is not an obvious absolute path.
+# hidden_source_paths = ["/absolute/path/to/instructor-tests"]
 
 [[tasks]]
 id = "feature-a"
@@ -318,8 +320,12 @@ worker backend is used for `sequential`, `naive-parallel`, and `orchestrator`;
 it denies sandbox network access, hosted web/search tools, GitHub hosts, and
 GitHub-looking `gh`/`git` commands so workers cannot inspect upstream PRs or
 solutions for the benchmark issues. `setup_cmd`, `verify_cmd`, and
-`hidden_cmd` still run outside the worker session in the verify gate, so keep
-those commands offline/reproducible yourself.
+`hidden_cmd` run outside the worker session in the verify gate. After the
+worker exits, the gate creates a detached checkout from the worker's exact
+commit; hidden setup and tests run only there, and the worker checkout remains
+free of hidden files for delivery. Keep those commands offline/reproducible
+yourself. Benchmark preflight rejects existing protected hidden material in a
+target repo or worker slot and never deletes contaminated historical state.
 
 ## 12. What's not here yet
 

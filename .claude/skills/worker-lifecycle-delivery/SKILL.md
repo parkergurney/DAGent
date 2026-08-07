@@ -22,6 +22,27 @@ gets fully specced:
   answer via `orchestrator answer`, docs/usage.md). Logged as events either
   way; the orchestrator always knows a human intervened.
 - Worktree pool: raw `git worktree`, ~50 lines, no treehouse dependency.
+- Worker trust boundary: every real SDK worker is launched through the
+  fail-closed macOS Seatbelt wrapper in `worker/sandbox.py`. Its allowlist is
+  the public task worktree, the Git metadata needed to commit, Python/SDK and
+  orchestrator runtime paths, and one private worker temp/config directory.
+  The target repository's parent, benchmark source directories, verifier
+  directories, and global temporary directories are not allowlisted. A
+  missing or unusable Seatbelt launcher aborts the worker; it never falls
+  back to an unsandboxed process. The Claude SDK sandbox remains defense in
+  depth inside that OS boundary. Unsupported hosts fail closed for real
+  workers; FakeWorker remains an unchanged deterministic test fixture.
+- Verification trust boundary: once a worker claims done, the scheduler
+  terminates and reaps its process before any setup runs. The verify gate then
+  creates a detached temporary worktree from the worker's exact `HEAD` and
+  runs `setup_cmd`, `verify_cmd`, and `hidden_cmd` there. Hidden material is
+  never copied into the worker checkout, which remains the committed delivery
+  artifact; the verifier worktree is removed afterward.
+- Benchmark preflight rejects protected hidden material already present in a
+  target repository or reusable worker slot and asserts configured hidden
+  verifier sources are outside each worker allowlist. It does not delete
+  contamination or rewrite historical benchmark runs; those runs remain
+  exploratory evidence.
 - Spike questions: does mid-session message injection work as assumed? cost
   granularity per message or per session? what does "done" look like in the
   stream? does PostToolUse fire for subagent tool calls (parent_tool_use_id)?

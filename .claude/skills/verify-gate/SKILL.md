@@ -61,14 +61,16 @@ class VerifyResult(BaseModel):
    base_sha itself. Baseline red → `baseline_broken` → escalate, never retry.
    No number of retries fixes a repo whose tests were already failing; without
    this check a flaky upstream test burns the whole retry budget for nothing.
-3. **The run:** setup_cmd (own cause — env problem ≠ code problem), then
-   verify_cmd under timeout, worker session inactive. Kill the process GROUP
-   on timeout; test runners orphan children.
+3. **The run:** after the worker has been terminated and reaped, create a
+   detached verifier worktree from its exact `HEAD`. Run setup_cmd (own cause
+   — env problem ≠ code problem), then verify_cmd under timeout, in that
+   verifier worktree only. Kill the process GROUP on timeout; test runners
+   orphan children. The worker checkout remains untouched for delivery.
 4. **Flake protocol + hidden check:** fail → rerun once. Fail-fail →
    `tests_failed`. Fail-pass → PASSED with `flaky=true` (don't burn retries on
    nondeterminism the worker didn't cause) — but log loudly; flake rate per
    repo is a benchmark covariate and a finding. If visible passed, run
-   hidden_cmd. `hidden_tests_failed` restart feedback must NOT leak hidden
+   hidden_cmd in the detached verifier worktree. `hidden_tests_failed` restart feedback must NOT leak hidden
    output — say the change didn't hold up under additional checks, without
    revealing which. Otherwise hidden tests train the worker to overfit them.
 

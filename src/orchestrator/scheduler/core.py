@@ -32,11 +32,32 @@ from orchestrator.store import append_event, transition
 from orchestrator.supervisor import ACTION_MODELS, always_escalate, build_packet
 from orchestrator.supervisor.llm import SupervisorResult
 from orchestrator.verify.gate import VerifyRequest, run_verify
-from orchestrator.worker import WorktreePool, spawn_fake_worker
+from orchestrator.worker import WorktreePool, cleanup_worker_sandbox, spawn_fake_worker
 
 # Team states in which nothing is left for the scheduler to drive; the team
 # is "settled" once every task sits in one of these.
 _SETTLED_STATES = ("needs_human", "delivered", "failed", "cancelled")
+
+
+async def _terminate_and_reap(proc) -> None:
+    """Stop a worker process group and wait until it is fully gone."""
+    if proc.returncode is None:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5)
+    except asyncio.TimeoutError:
+        # The caller cannot safely enter verification if the worker was not
+        # reaped.  Give the direct process object one final kill attempt; the
+        # scheduler's outer teardown will record the same failure if this
+        # unusual platform/process state persists.
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        await proc.wait()
 
 
 class Scheduler:
@@ -195,6 +216,10 @@ class Scheduler:
                                      task_id=task_id, session_id=str(proc.pid), payload=payload,
                                      **usage_kwargs)
                     claimed_or_triaged = True
+                    # A done claim is a stream message, not proof that the
+                    # SDK/Claude process has exited.  Reap it before the
+                    # verifier is allowed to materialize hidden files.
+                    await _terminate_and_reap(proc)
                     await self._enter_verifying(task_id, s)
                     break
                 elif etype == "asked":
@@ -415,3 +440,4 @@ class Scheduler:
         wt = self._worktrees.pop(task_id, None)
         if wt is not None:
             self._pool.release(wt)
+        cleanup_worker_sandbox(proc)
