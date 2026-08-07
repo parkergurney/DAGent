@@ -42,6 +42,7 @@ import json, os, shutil, subprocess, sys
 from pathlib import Path
 
 wt = Path({str(wt)!r})
+public = Path({str(wt / "public.txt")!r})
 hidden = Path({str(hidden)!r})
 sink = Path({str(sink)!r})
 attempts = {{}}

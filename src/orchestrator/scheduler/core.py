@@ -41,11 +41,10 @@ _SETTLED_STATES = ("needs_human", "delivered", "failed", "cancelled")
 
 async def _terminate_and_reap(proc) -> None:
     """Stop a worker process group and wait until it is fully gone."""
-    if proc.returncode is None:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
     try:
         await asyncio.wait_for(proc.wait(), timeout=5)
     except asyncio.TimeoutError:
@@ -417,15 +416,7 @@ class Scheduler:
         self._wait_grace.pop(task_id, None)
 
         if proc is not None:
-            if proc.returncode is None:
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    pass
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=5)
-                except asyncio.TimeoutError:
-                    pass
+            await _terminate_and_reap(proc)
             # asyncio doesn't close the subprocess transport just because the
             # process exited; leaving it for GC risks it firing after the
             # loop closes ("Exception ignored in: ...__del__ ... Event loop

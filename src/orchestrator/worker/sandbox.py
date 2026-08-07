@@ -224,5 +224,5 @@ def path_is_worker_visible(path: str | Path, worktree: str | Path, *, allowlist=
         # For benchmark preflight we do not need Git metadata or a temp dir.
         roots = (_resolve_existing(worktree), *_runtime_paths())
     else:
-        roots = (*tuple(allowlist), *_runtime_paths())
+        roots = tuple(_resolve_existing(root) for root in allowlist) + tuple(_runtime_paths())
     return any(candidate == root or root in candidate.parents for root in roots)

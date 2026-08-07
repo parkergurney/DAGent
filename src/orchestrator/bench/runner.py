@@ -317,20 +317,18 @@ async def _run_baseline_task(
                              session_id=str(proc.pid), payload={"exit_code": code})
             _fail_running_or_triage(conn, task_id, s, "worker exited without done claim")
     finally:
-        if proc is not None and proc.returncode is None:
-            proc.kill()
-            await proc.wait()
+        if proc is not None:
+            await _reap_worker(proc)
         cleanup_worker_sandbox(proc)
         if wt is not None:
             pool.release(wt)
 
 
 async def _reap_worker(proc) -> None:
-    if proc.returncode is None:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
     try:
         await asyncio.wait_for(proc.wait(), timeout=5)
     except asyncio.TimeoutError:
