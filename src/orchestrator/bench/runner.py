@@ -4,11 +4,14 @@ Each run writes a normal orchestrator event DB so reports can be computed from
 the same task/event model across baselines and the orchestrator condition.
 """
 import asyncio
+from io import BytesIO
 import json
 import os
 import random
 import signal
 import shutil
+import subprocess
+import tarfile
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -88,39 +91,52 @@ def run_benchmark(
     if config_path:
         shutil.copy2(config_path, run_dir / "config.toml")
 
+    # The source repository is an operator/verifier input, not a worker
+    # trust-boundary input.  A fresh public snapshot gives workers normal Git
+    # behavior without giving them the source repository's historical object
+    # database, refs, alternates, or reflogs.
+    worker_repo = _materialize_worker_repo(repo, suite.base_branch, run_dir / "worker-repo")
+    validate_benchmark_isolation(
+        suite, worker_repo, worktrees,
+        worker_slots=1 if condition == "sequential" else max_concurrency,
+    )
+
     db_path = run_dir / "run.db"
     worktrees = Path(worktree_root) if worktree_root else run_dir / "worktrees"
     worker_model = worker_model or cfg.model_worker
     supervisor_model = supervisor_model or cfg.model_supervisor
 
     conn = connect(str(db_path))
-    _materialize_tasks(conn, suite, str(repo), suite.max_retries)
+    _materialize_tasks(conn, suite, str(worker_repo), suite.max_retries)
     append_event(conn, source="system", type="bench.run_started", payload={
         "run_id": run_id,
         "suite": suite.name,
         "condition": condition,
         "seed": seed,
         "repo": str(repo),
+        "worker_repo": str(worker_repo),
         "max_concurrency": max_concurrency,
         "worker_model": worker_model,
         "supervisor_model": supervisor_model if condition == "orchestrator" else None,
         "fake_worker": fake_worker,
         "fake_supervisor": fake_supervisor,
         "kill_one_after_s": kill_one_after_s,
+        "artifact_root": str(run_dir / "artifacts"),
     })
 
     started = time.monotonic()
     random.seed(seed)
     if condition == "orchestrator":
         asyncio.run(_run_orchestrator(
-            conn, repo, worktrees, cfg, max_concurrency, worker_model, supervisor_model,
+            conn, worker_repo, worktrees, cfg, max_concurrency, worker_model, supervisor_model,
             fake_worker, fake_supervisor, kill_one_after_s, suite.base_branch,
+            run_dir / "artifacts",
         ))
     else:
         concurrency = 1 if condition == "sequential" else max_concurrency
         asyncio.run(_run_baseline(
-            conn, repo, worktrees, cfg, concurrency, worker_model, fake_worker, kill_one_after_s,
-            suite.base_branch,
+            conn, worker_repo, worktrees, cfg, concurrency, worker_model, fake_worker, kill_one_after_s,
+            suite.base_branch, run_dir / "artifacts",
         ))
 
     append_event(conn, source="system", type="bench.run_finished", payload={
@@ -133,6 +149,49 @@ def run_benchmark(
     (run_dir / "manifest.json").write_text(json.dumps(asdict(manifest), indent=2))
     conn.close()
     return manifest
+
+
+def _materialize_worker_repo(source_repo: str | Path, base_branch: str,
+                             destination: str | Path) -> Path:
+    """Create a worker-visible Git repository from one public source tree.
+
+    This intentionally does not clone or add an object alternates path.  The
+    resulting repository has one commit containing only the selected public
+    tree, so objects reachable only from source history cannot be recovered by
+    a worker through Git plumbing.
+    """
+    source = Path(source_repo).resolve()
+    dest = Path(destination).resolve()
+    if dest.exists():
+        raise FileExistsError(f"worker repository already exists: {dest}")
+    dest.mkdir(parents=True)
+    archive = subprocess.run(
+        ["git", "archive", "--format=tar", base_branch],
+        cwd=source, check=True, capture_output=True,
+    ).stdout
+    with tarfile.open(fileobj=BytesIO(archive), mode="r:") as tar:
+        # git archive is produced by the trusted source repository; data
+        # filtering additionally prevents a malformed archive from escaping
+        # the destination directory.
+        tar.extractall(dest, filter="data")
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=dest, check=True,
+                       capture_output=True, text=True)
+
+    git("init", "-q", "-b", base_branch)
+    subprocess.run(
+        ["git", "-c", "user.name=orchestrator benchmark",
+         "-c", "user.email=benchmark@localhost", "add", "-A"],
+        cwd=dest, check=True, capture_output=True, text=True,
+    )
+    subprocess.run(
+        ["git", "-c", "user.name=orchestrator benchmark",
+         "-c", "user.email=benchmark@localhost", "commit", "-qm",
+         "public benchmark snapshot"],
+        cwd=dest, check=True, capture_output=True, text=True,
+    )
+    return dest
 
 
 def _materialize_tasks(conn, suite: BenchSuite, repo: str, default_max_retries: int) -> dict[str, str]:
@@ -159,7 +218,7 @@ def _materialize_tasks(conn, suite: BenchSuite, repo: str, default_max_retries: 
 async def _run_orchestrator(
     conn, repo: Path, worktrees: Path, cfg: config.Config, max_concurrency: int,
     worker_model: str, supervisor_model: str, fake_worker: bool, fake_supervisor: bool,
-    kill_one_after_s: float | None, base_branch: str,
+    kill_one_after_s: float | None, base_branch: str, artifact_root: Path,
 ) -> None:
     spawn_worker = spawn_fake_worker if fake_worker else spawn_sdk_worker
     if fake_supervisor:
@@ -168,7 +227,8 @@ async def _run_orchestrator(
         supervisor = always_escalate
     else:
         async def supervisor(packet):
-            return await invoke_supervisor(packet, model=supervisor_model)
+            return await invoke_supervisor(packet, model=supervisor_model,
+                                           artifact_root=artifact_root / "supervisor")
 
     scheduler = Scheduler(
         conn, repo, worktrees, max_concurrency=max_concurrency,
@@ -177,6 +237,7 @@ async def _run_orchestrator(
         max_nudges=cfg.max_nudges, wait_ceiling_s=cfg.wait_ceiling_s,
         transcript_tail_tokens=cfg.transcript_tail_tokens,
         base_branch=base_branch,
+        artifact_root=artifact_root,
     )
     run_task = asyncio.create_task(scheduler.run_until_settled())
     killer = None
@@ -207,7 +268,7 @@ async def _kill_one_scheduler_worker(conn, scheduler: Scheduler, delay_s: float)
 async def _run_baseline(
     conn, repo: Path, worktrees: Path, cfg: config.Config, concurrency: int,
     worker_model: str, fake_worker: bool, kill_one_after_s: float | None,
-    base_branch: str,
+    base_branch: str, artifact_root: Path,
 ) -> None:
     pool = WorktreePool(repo, worktrees, concurrency)
     pool.open()
@@ -233,6 +294,7 @@ async def _run_baseline(
                     break
                 task = asyncio.create_task(_run_baseline_task(
                     conn, dict(row), pool, cfg, worker_model, fake_worker, base_branch,
+                    artifact_root,
                 ))
                 running[task] = row["id"]
             if not running:
@@ -254,7 +316,7 @@ async def _run_baseline(
 
 async def _run_baseline_task(
     conn, task: dict, pool: WorktreePool, cfg: config.Config,
-    worker_model: str, fake_worker: bool, base_branch: str,
+    worker_model: str, fake_worker: bool, base_branch: str, artifact_root: Path,
 ) -> None:
     wt = None
     proc = None
@@ -299,7 +361,7 @@ async def _run_baseline_task(
                 # observe the verifier material.
                 await _reap_worker(proc)
                 reaped = True
-                _verify_and_finish_baseline(conn, task_id, cfg)
+                _verify_and_finish_baseline(conn, task_id, cfg, artifact_root)
                 done = True
                 return
             if etype == "asked":
@@ -344,7 +406,9 @@ async def _reap_worker(proc, *, terminate: bool = True) -> None:
         await proc.wait()
 
 
-def _verify_and_finish_baseline(conn, task_id: str, cfg: config.Config) -> None:
+def _verify_and_finish_baseline(
+    conn, task_id: str, cfg: config.Config, artifact_root: Path,
+) -> None:
     task = dict(conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone())
     req_kwargs = {}
     if task["protected_paths"]:
@@ -353,11 +417,12 @@ def _verify_and_finish_baseline(conn, task_id: str, cfg: config.Config) -> None:
         task_id=task_id,
         worktree=task["worktree"],
         base_sha=task["base_sha"],
-        repo=task["repo"],
         verify_cmd=task["verify_cmd"] or "true",
         hidden_cmd=task["hidden_cmd"],
         setup_cmd=task["setup_cmd"],
         timeout_s=cfg.verify_timeout_s,
+        repo=task["repo"],
+        artifact_root=str(artifact_root / task_id),
         **req_kwargs,
     )
     append_event(conn, source="verifier", type="verify.started", task_id=task_id)

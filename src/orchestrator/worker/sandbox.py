@@ -30,6 +30,11 @@ class WorkerSandboxUnavailable(RuntimeError):
 # sdk.py -> worker -> orchestrator -> src
 _ORCHESTRATOR_SRC = Path(__file__).resolve().parents[2]
 _PRIVATE_DIRS: dict[int, Path] = {}
+_ENV_EXACT = {
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "TERM_PROGRAM", "COLORTERM",
+    "LANG", "VIRTUAL_ENV", "SYSTEM_VERSION_COMPAT", "__CF_USER_TEXT_ENCODING",
+}
+_ENV_PREFIXES = ("LC_", "ANTHROPIC_", "CLAUDE_")
 
 
 def _resolve_existing(path: str | Path) -> Path:
@@ -181,7 +186,16 @@ class WorkerSandbox:
         return [str(self.sandbox_exec), "-p", self.profile, *args]
 
     def environment(self, base: dict[str, str]) -> dict[str, str]:
-        env = dict(base)
+        # Do not inherit arbitrary operator/benchmark variables.  The worker
+        # does not run setup or verification, so it needs only normal process
+        # runtime settings plus Claude authentication/configuration variables.
+        # In particular, ORCH_DATA_DIR and ad-hoc hidden/verifier variables
+        # must not become a worker-side discovery channel.
+        env = {
+            key: value for key, value in base.items()
+            if key in _ENV_EXACT or any(key.startswith(prefix) for prefix in _ENV_PREFIXES)
+        }
+        env["PYTHONPATH"] = str(_ORCHESTRATOR_SRC)
         # Claude and Python must not use a shared /tmp.  CLAUDE_CONFIG_DIR is
         # also private so a worker cannot read or alter the operator's CLI
         # state.  Git identity is supplied without consulting ~/.gitconfig.
@@ -217,6 +231,10 @@ def _profile(allowlist: tuple[Path, ...], private_dir: Path) -> str:
         '(import "system.sb")',
         "(allow process-fork)",
         "(allow process-exec)",
+        # Keep every descendant in the worker's process group.  Without these
+        # syscall denials, setsid()/setpgrp() lets a child escape killpg()
+        # while retaining the worker's filesystem sandbox.
+        "(deny syscall-unix (syscall-number SYS_setsid SYS_setpgid))",
         "(allow signal (target self))",
         "(allow sysctl-read)",
         "(allow file-read-metadata (subpath \"/\"))",

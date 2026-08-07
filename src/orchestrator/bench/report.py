@@ -209,10 +209,64 @@ def format_summary_table(rows: list[GroupSummary]) -> str:
 
 
 def find_run_dbs(path: str | Path) -> list[Path]:
+    """Select only manifest-backed runs in the requested collection.
+
+    A benchmark root contains suite directories, and a suite directory
+    contains run directories.  Deliberately do not recurse beyond those two
+    levels: archived/nested historical databases are not part of a report
+    unless the operator names that run directory explicitly.
+    """
     path = Path(path)
     if path.is_file():
-        return [path]
-    return sorted(path.glob("**/run.db"))
+        dbs = [path]
+    elif not path.is_dir():
+        dbs = []
+    elif (path / "run.db").is_file() and (path / "manifest.json").is_file():
+        dbs = [path / "run.db"]
+    else:
+        direct = _manifest_dbs(path)
+        if direct:
+            dbs = direct
+        else:
+            dbs = [db for suite_dir in sorted(p for p in path.iterdir() if p.is_dir())
+                   for db in _manifest_dbs(suite_dir)
+                   if _manifest_suite(db) == suite_dir.name]
+
+    dbs = sorted(dict.fromkeys(db.resolve() for db in dbs))
+    run_ids = {}
+    for db in dbs:
+        run_id = _read_metadata(db).get("run_id")
+        if run_id in run_ids:
+            raise ValueError(
+                f"duplicate benchmark run_id {run_id!r} in {run_ids[run_id]} and {db}"
+            )
+        run_ids[run_id] = db
+    return dbs
+
+
+def _manifest_dbs(directory: Path) -> list[Path]:
+    dbs = []
+    for run_dir in sorted(p for p in directory.iterdir() if p.is_dir()):
+        db = run_dir / "run.db"
+        manifest = run_dir / "manifest.json"
+        if db.is_file() and manifest.is_file():
+            dbs.append(db)
+    return dbs
+
+
+def _manifest_suite(db: Path) -> str | None:
+    try:
+        return _read_metadata(db).get("suite")
+    except (OSError, sqlite3.Error, ValueError, TypeError):
+        return None
+
+
+def _read_metadata(db: Path) -> dict:
+    conn = connect(str(db))
+    try:
+        return _metadata(conn, db)
+    finally:
+        conn.close()
 
 
 def _group_key(row: RunSummary, group_by: str) -> str:

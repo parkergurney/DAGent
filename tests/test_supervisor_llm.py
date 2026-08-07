@@ -61,3 +61,15 @@ def test_dump_writes_packet_and_action(tmp_path, monkeypatch):
     assert saved["action"]["action"] == "escalate"
     assert saved["ok"] is True
     assert saved["cost_usd"] == 0.01
+
+
+def test_dump_can_use_a_run_scoped_artifact_root(tmp_path):
+    packet = _packet()
+    action = ACTION_MODELS["escalate"](summary="s", question="q", options=["a"], reason="r")
+    result = SupervisorResult(action=action, ok=True, tokens_in=1, tokens_out=1,
+                              cost_usd=0.01, raw_text="{}")
+
+    _dump(packet, result, tmp_path / "run-a" / "supervisor")
+
+    assert (tmp_path / "run-a" / "supervisor" / "packets" / "1.json").exists()
+    assert not (tmp_path / "t1").exists()

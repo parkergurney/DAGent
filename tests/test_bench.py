@@ -1,10 +1,14 @@
 import json
+import shutil
+import subprocess
+from pathlib import Path
 
 import pytest
 
 from orchestrator.bench.cli import main as bench_main
 from orchestrator.bench.report import summarize_db
-from orchestrator.bench.runner import run_benchmark
+from orchestrator.bench.report import find_run_dbs
+from orchestrator.bench.runner import _materialize_worker_repo, run_benchmark
 from orchestrator.bench.suite import load_suite
 from orchestrator.store import connect
 from tests.helpers import git, init_repo
@@ -122,6 +126,36 @@ def test_benchmark_rejects_non_hidden_protected_material_in_history(tmp_path):
 
     with pytest.raises(ValueError, match="protected hidden-test material"):
         run_benchmark(suite_path, condition="sequential", out_dir=tmp_path / "bench")
+
+
+def test_worker_repo_snapshot_has_no_source_history_objects(tmp_path):
+    repo = init_repo(tmp_path)
+    marker = "UNIQUE_HIDDEN_GIT_MARKER_7f2c"
+    (repo / "historical_hidden.py").write_text(marker + "\n")
+    git("add", "historical_hidden.py", cwd=repo)
+    git("commit", "-qm", "temporary evaluator material", cwd=repo)
+    (repo / "historical_hidden.py").unlink()
+    git("add", "-A", cwd=repo)
+    git("commit", "-qm", "remove evaluator material", cwd=repo)
+
+    worker_repo = _materialize_worker_repo(repo, "main", tmp_path / "worker-repo")
+    for command in (
+        ["log", "--all", "-p"], ["rev-list", "--all", "--objects"],
+        ["fsck", "--full", "--no-reflogs", "--unreachable"],
+        ["show-ref"], ["tag", "-l"], ["remote", "-v"], ["reflog", "--all"],
+    ):
+        result = subprocess.run(["git", *command], cwd=worker_repo,
+                                capture_output=True, text=True, check=False)
+        assert marker not in result.stdout + result.stderr
+    assert not (worker_repo / ".git" / "objects" / "info" / "alternates").exists()
+    assert not (worker_repo / ".git" / "refs" / "remotes").exists()
+
+    worktree = tmp_path / "worker-slots" / "slot-0"
+    git("worktree", "add", "-q", str(worktree), "HEAD", cwd=worker_repo)
+    (worktree / "public-change.txt").write_text("public\n")
+    git("add", "public-change.txt", cwd=worktree)
+    git("commit", "-qm", "public worker change", cwd=worktree)
+    assert git("status", "--porcelain", cwd=worktree).stdout == ""
 
 
 def test_benchmark_resolves_symlinked_worker_slot_before_allowlist_check(tmp_path):
@@ -275,3 +309,94 @@ def test_bench_cli_report_recurses_and_summarizes_across_suites(tmp_path, capsys
     assert rc == 0
     assert "group\truns\ttasks" in out
     assert "sequential\t2\t2\t2\t100.0%" in out
+
+
+def test_benchmark_artifacts_are_scoped_to_each_run(tmp_path):
+    repo = init_repo(tmp_path)
+    suite_path = _suite_file(tmp_path, repo)
+    out_dir = tmp_path / "bench"
+
+    first = run_benchmark(suite_path, condition="sequential", out_dir=out_dir,
+                          seed=1, fake_worker=True, overwrite=True)
+    second = run_benchmark(suite_path, condition="sequential", out_dir=out_dir,
+                           seed=2, fake_worker=True, overwrite=True)
+
+    first_payload = json.loads(connect(first.db).execute(
+        "SELECT payload FROM events WHERE type='verify.passed'"
+    ).fetchone()["payload"])
+    second_payload = json.loads(connect(second.db).execute(
+        "SELECT payload FROM events WHERE type='verify.passed'"
+    ).fetchone()["payload"])
+    assert Path(first_payload["output_path"]).is_relative_to(Path(first.run_dir) / "artifacts")
+    assert Path(second_payload["output_path"]).is_relative_to(Path(second.run_dir) / "artifacts")
+    assert Path(first_payload["patch_path"]).is_relative_to(Path(first.run_dir) / "artifacts")
+    assert Path(second_payload["patch_path"]).is_relative_to(Path(second.run_dir) / "artifacts")
+    assert first.run_dir != second.run_dir
+    assert first_payload["output_path"] != second_payload["output_path"]
+    assert first_payload["patch_path"] != second_payload["patch_path"]
+
+
+def test_report_selection_excludes_nested_history_and_rejects_duplicate_ids(tmp_path):
+    repo = init_repo(tmp_path)
+    suite_path = _suite_file(tmp_path, repo)
+    out_dir = tmp_path / "bench"
+    first = run_benchmark(suite_path, condition="sequential", out_dir=out_dir,
+                          seed=1, fake_worker=True, overwrite=True)
+    second = run_benchmark(suite_path, condition="sequential", out_dir=out_dir,
+                           seed=2, fake_worker=True, overwrite=True)
+
+    nested = out_dir / "archive" / "old"
+    nested.mkdir(parents=True)
+    shutil.copy2(first.db, nested / "run.db")
+    assert find_run_dbs(out_dir) == sorted([Path(first.db).resolve(), Path(second.db).resolve()])
+
+    duplicate = out_dir / "toy" / "duplicate"
+    duplicate.mkdir()
+    shutil.copy2(first.db, duplicate / "run.db")
+    (duplicate / "manifest.json").write_text(
+        (Path(first.run_dir) / "manifest.json").read_text()
+    )
+    with pytest.raises(ValueError, match="duplicate benchmark run_id"):
+        find_run_dbs(out_dir)
+
+
+def test_report_selection_returns_exactly_nine_runs(tmp_path):
+    repo = init_repo(tmp_path)
+    suite_path = _suite_file(tmp_path, repo)
+    out_dir = tmp_path / "bench"
+    for seed in range(1, 10):
+        run_benchmark(suite_path, condition="sequential", out_dir=out_dir,
+                      seed=seed, fake_worker=True, overwrite=True)
+
+    assert len(find_run_dbs(out_dir)) == 9
+
+
+@pytest.mark.parametrize("condition", ["sequential", "naive-parallel", "orchestrator"])
+def test_all_conditions_use_the_same_detached_hidden_verifier(tmp_path, condition):
+    condition_root = tmp_path / condition
+    condition_root.mkdir()
+    repo = init_repo(condition_root)
+    suite_path = condition_root / "suite.toml"
+    suite_path.write_text(f'''[bench]
+name = "{condition}"
+repo = "{repo}"
+verify_cmd = "true"
+setup_cmd = "mkdir -p hidden_tests && printf hidden > hidden_tests/secret.txt"
+protected_paths = ["hidden_tests/**"]
+delivery_mode = "scout"
+
+[[tasks]]
+id = "a"
+title = "A"
+brief = "clean"
+hidden_cmd = "test -f hidden_tests/secret.txt && test -f output.txt"
+''')
+
+    manifest = run_benchmark(
+        suite_path, condition=condition, out_dir=tmp_path / "bench", fake_worker=True,
+        fake_supervisor=True, overwrite=True,
+    )
+
+    conn = connect(manifest.db)
+    assert conn.execute("SELECT state FROM tasks WHERE id='bench-a'").fetchone()["state"] == "delivered"
+    assert not list((Path(manifest.run_dir) / "worktrees").rglob("hidden_tests"))

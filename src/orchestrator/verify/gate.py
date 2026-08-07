@@ -36,6 +36,7 @@ class VerifyRequest:
     protected_paths: tuple = DEFAULT_PROTECTED
     rerun_on_fail: bool = True
     repo: str | None = None  # baseline scratch checkout; defaults to worktree's repo
+    artifact_root: str | None = None  # per-run task artifact directory
 
 
 @dataclass
@@ -80,16 +81,20 @@ def _tail(s: str, n: int = 2000) -> str:
     return s[-n:]
 
 
-def _save_output(task_id: str, label: str, output: str) -> str:
-    out_dir = DATA_DIR / task_id
+def _artifact_dir(req: VerifyRequest) -> Path:
+    return Path(req.artifact_root) if req.artifact_root else DATA_DIR / req.task_id
+
+
+def _save_output(req: VerifyRequest, label: str, output: str) -> str:
+    out_dir = _artifact_dir(req)
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"verify_{label}_{int(time.time() * 1000)}.log"
     path.write_text(output)
     return str(path)
 
 
-def _save_patch(task_id: str, text: str) -> str:
-    out_dir = DATA_DIR / task_id
+def _save_patch(req: VerifyRequest, text: str) -> str:
+    out_dir = _artifact_dir(req)
     out_dir.mkdir(parents=True, exist_ok=True)
     latest = out_dir / "review.patch"
     latest.write_text(text)
@@ -129,12 +134,12 @@ def run_verify(req: VerifyRequest) -> VerifyResult:
     wt = req.worktree
 
     def done(passed, cause, exit_code, output, diff_stat="", tests_modified=None, flaky=False,
-             patch_path=None):
+             patch_path=None, feedback=None):
         return VerifyResult(
             passed=passed, cause=cause, exit_code=exit_code,
             duration_s=round(time.monotonic() - t0, 3), flaky=flaky,
-            output_tail=_tail(output), diff_stat=diff_stat,
-            tests_modified=tests_modified or [], output_path=_save_output(req.task_id, cause, output),
+            output_tail=_tail(feedback if feedback is not None else output), diff_stat=diff_stat,
+            tests_modified=tests_modified or [], output_path=_save_output(req, cause, output),
             patch_path=patch_path,
         )
 
@@ -152,7 +157,7 @@ def run_verify(req: VerifyRequest) -> VerifyResult:
         return done(False, "empty_diff", None, "", diff_stat)
 
     tests_modified = [f for f in diff_names if "test" in Path(f).name.lower()]
-    patch_path = _save_patch(req.task_id,
+    patch_path = _save_patch(req,
                              _git("diff", "--binary", req.base_sha, "HEAD", cwd=wt).stdout)
     # New files under protected_paths are exempt -- only edits/deletes/renames
     # of a file that already existed at base_sha count as gaming the gate.
@@ -187,7 +192,7 @@ def run_verify(req: VerifyRequest) -> VerifyResult:
             code, out, timed_out = _run(req.setup_cmd, verifier, req.timeout_s)
             if timed_out or code != 0:
                 return done(False, "setup_failed", code, out, diff_stat, tests_modified,
-                            patch_path=patch_path)
+                            patch_path=patch_path, feedback="verifier setup failed")
 
         code, out, timed_out = _run(req.verify_cmd, verifier, req.timeout_s)
         if timed_out:

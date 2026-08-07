@@ -74,6 +74,40 @@ def test_hidden_setup_runs_only_in_detached_verifier_worktree(tmp_path):
     assert result.passed
     assert not (wt / "hidden_tests").exists()
     assert not git("status", "--porcelain", cwd=wt).stdout.strip()
+    assert (wt / "feature.txt").read_text() == "committed worker change\n"
+
+
+def test_hidden_failure_does_not_return_hidden_output(tmp_path):
+    repo = init_repo(tmp_path)
+    wt, base_sha = _child_worktree(
+        repo, "hidden-output", lambda wt: (wt / "feature.txt").write_text("change\n"),
+    )
+
+    result = run_verify(VerifyRequest(
+        task_id="hidden-output", worktree=str(wt), base_sha=base_sha,
+        verify_cmd="true", hidden_cmd="printf SECRET_HIDDEN_OUTPUT >&2; exit 1",
+        repo=str(repo), timeout_s=10,
+    ))
+
+    assert result.cause == "hidden_tests_failed"
+    assert "SECRET_HIDDEN_OUTPUT" not in result.output_tail
+
+
+def test_setup_failure_does_not_return_verifier_source_output(tmp_path):
+    repo = init_repo(tmp_path)
+    wt, base_sha = _child_worktree(
+        repo, "setup-output", lambda wt: (wt / "feature.txt").write_text("change\n"),
+    )
+
+    result = run_verify(VerifyRequest(
+        task_id="setup-output", worktree=str(wt), base_sha=base_sha,
+        setup_cmd="test ! -f feature.txt || (printf SECRET_VERIFIER_SOURCE >&2; exit 1)",
+        verify_cmd="true",
+        repo=str(repo), timeout_s=10,
+    ))
+
+    assert result.cause == "setup_failed"
+    assert result.output_tail == "verifier setup failed"
 
 
 def test_verify_saves_review_patch_for_committed_diff(tmp_path):

@@ -37,7 +37,11 @@ def cmd_run(args) -> int:
 
 
 def cmd_report(args) -> int:
-    dbs = find_run_dbs(args.path)
+    try:
+        dbs = find_run_dbs(args.path)
+    except ValueError as exc:
+        print(f"invalid benchmark report selection: {exc}", file=sys.stderr)
+        return 2
     if not dbs:
         print(f"no benchmark run DBs found under {args.path}", file=sys.stderr)
         return 1

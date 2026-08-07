@@ -14,7 +14,7 @@ class DeliveryError(Exception):
     pass
 
 
-def deliver(task: dict, *, open_pr=None) -> tuple:
+def deliver(task: dict, *, open_pr=None, artifact_root=None) -> tuple:
     """Returns (event_type, payload) for the delivery.* event. Raises
     DeliveryError on failure -- caller routes that to delivery.failed -> triage.
 
@@ -24,7 +24,7 @@ def deliver(task: dict, *, open_pr=None) -> tuple:
     """
     mode = task["delivery_mode"]
     if mode == "scout":
-        return _scout(task)
+        return _scout(task, artifact_root=artifact_root)
     if mode == "local":
         return _local(task)
     if mode == "pr":
@@ -32,8 +32,8 @@ def deliver(task: dict, *, open_pr=None) -> tuple:
     raise DeliveryError(f"unknown delivery_mode {mode!r}")
 
 
-def _scout(task: dict) -> tuple:
-    out_dir = DATA_DIR / task["id"]
+def _scout(task: dict, *, artifact_root=None) -> tuple:
+    out_dir = Path(artifact_root) if artifact_root else DATA_DIR / task["id"]
     out_dir.mkdir(parents=True, exist_ok=True)
     report = out_dir / "report.md"
     report.write_text(f"# {task['title']}\n\nscout task, no changes pushed.\n")

@@ -25,6 +25,7 @@ import json
 import os
 import signal
 import time
+from pathlib import Path
 
 from orchestrator import delivery
 from orchestrator.scheduler.reconcile import reconcile
@@ -69,7 +70,7 @@ class Scheduler:
                 verify_timeout_s=600, spawn_worker=spawn_fake_worker, worker_model=None,
                 supervisor=always_escalate,
                 max_nudges=2, wait_ceiling_s=1800, transcript_tail_tokens=3000, yolo=False,
-                base_branch="main"):
+                base_branch="main", artifact_root=None):
         self.conn = conn
         self.repo_root = repo_root
         self.worktree_root = worktree_root
@@ -85,6 +86,7 @@ class Scheduler:
         self.transcript_tail_tokens = transcript_tail_tokens
         self.yolo = yolo
         self.base_branch = base_branch
+        self.artifact_root = Path(artifact_root).resolve() if artifact_root else None
 
         # Pool size == max_concurrency: never a reason for more slots than
         # tasks that can be running at once (design.md section 8 / M5).
@@ -357,6 +359,8 @@ class Scheduler:
                             verify_cmd=task["verify_cmd"] or "true", setup_cmd=task["setup_cmd"],
                             hidden_cmd=task["hidden_cmd"], timeout_s=self.verify_timeout_s,
                             repo=task["repo"],
+                            artifact_root=(str(self.artifact_root / task_id)
+                                           if self.artifact_root else None),
                             **req_kwargs)
         append_event(self.conn, source="verifier", type="verify.started", task_id=task_id)
         result = run_verify(req)
@@ -380,7 +384,11 @@ class Scheduler:
     async def _deliver(self, task_id: str) -> None:
         task = dict(self.conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone())
         try:
-            etype, payload = delivery.deliver(task)
+            etype, payload = delivery.deliver(
+                task,
+                artifact_root=(str(self.artifact_root / task_id)
+                               if self.artifact_root else None),
+            )
         except delivery.DeliveryError as e:
             s = append_event(self.conn, source="delivery", type="delivery.failed",
                              task_id=task_id, payload={"error": str(e)})

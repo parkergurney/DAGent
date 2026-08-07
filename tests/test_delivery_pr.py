@@ -7,6 +7,7 @@ tests/integration instead, wherever gh auth actually lives.
 import asyncio
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -102,6 +103,19 @@ def test_head_arg_qualifies_fork_branch_with_origin_owner(tmp_path):
     git("remote", "add", "origin", "https://github.com/parkergurney/sqlite-utils.git", cwd=repo)
 
     assert delivery._head_arg(repo, "task/t1") == "parkergurney:task/t1"
+
+
+def test_scout_report_can_use_a_run_scoped_artifact_root(tmp_path):
+    artifact_root = tmp_path / "run-a" / "artifacts" / "task-a"
+    etype, payload = delivery.deliver(
+        {"id": "task-a", "title": "scout", "delivery_mode": "scout"},
+        artifact_root=artifact_root,
+    )
+
+    assert etype == "delivery.report_written"
+    assert Path(payload["path"]) == artifact_root / "report.md"
+    assert (artifact_root / "report.md").exists()
+    assert not (tmp_path / "task-a").exists()
 
 
 def test_pr_mode_end_to_end_through_the_scheduler(tmp_path, monkeypatch):

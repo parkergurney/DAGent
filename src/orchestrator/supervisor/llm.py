@@ -82,8 +82,8 @@ async def _one_shot(prompt: str, model: str | None) -> tuple:
     return "".join(text_parts), usage
 
 
-def _dump(packet: TriagePacket, result: SupervisorResult) -> None:
-    out_dir = DATA_DIR / packet.task_id / "packets"
+def _dump(packet: TriagePacket, result: SupervisorResult, artifact_root=None) -> None:
+    out_dir = (Path(artifact_root) if artifact_root else DATA_DIR / packet.task_id) / "packets"
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{packet.trigger.seq}.json"
     path.write_text(json.dumps({
@@ -105,7 +105,8 @@ def _fallback_escalate(packet: TriagePacket, error: str, raw_text: str | None) -
                             cost_usd=None, raw_text=raw_text)
 
 
-async def invoke_supervisor(packet: TriagePacket, *, model: str | None = None) -> SupervisorResult:
+async def invoke_supervisor(packet: TriagePacket, *, model: str | None = None,
+                            artifact_root=None) -> SupervisorResult:
     prompt = f"{_schema_block(packet.allowed_actions)}\n\nPacket:\n{packet.model_dump_json(indent=2)}"
     text = None
 
@@ -123,11 +124,11 @@ async def invoke_supervisor(packet: TriagePacket, *, model: str | None = None) -
                 prompt += f"\n\nYour previous response was invalid ({e}). Respond with ONLY the corrected JSON object."
                 continue
             result = _fallback_escalate(packet, str(e), text)
-            _dump(packet, result)
+            _dump(packet, result, artifact_root)
             return result
         else:
             result = SupervisorResult(action=action, ok=True, raw_text=text, **usage)
-            _dump(packet, result)
+            _dump(packet, result, artifact_root)
             return result
 
     # unreachable, but keeps type checkers happy about the loop always returning
