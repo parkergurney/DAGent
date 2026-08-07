@@ -38,7 +38,7 @@ def test_adversarial_worker_cannot_read_or_copy_hidden_material(tmp_path):
     sink.unlink(missing_ok=True)
 
     script = f'''\
-import json, os, shutil, subprocess, sys
+import json, os, shutil, subprocess, sys, tempfile
 from pathlib import Path
 
 wt = Path({str(wt)!r})
@@ -59,8 +59,15 @@ def require_denied(value):
         raise RuntimeError("hidden path was traversable")
     raise PermissionError("hidden path denied")
 
+def grep_hidden():
+    result = subprocess.run(["grep", "-R", "SECRET_HIDDEN_CONTENT", str(hidden)],
+                            capture_output=True, text=True)
+    if result.returncode:
+        raise PermissionError(result.stderr)
+    return result.stdout
+
 attempt("find", lambda: subprocess.run(["find", str(hidden)], capture_output=True, text=True, check=True).stdout)
-attempt("grep", lambda: subprocess.run(["grep", "-R", "SECRET_HIDDEN_CONTENT", str(hidden)], capture_output=True, text=True, check=True).stdout)
+attempt("grep", grep_hidden)
 attempt("os_walk", lambda: require_denied(list(os.walk(hidden))))
 attempt("rglob", lambda: require_denied(list(hidden.rglob("*"))))
 attempt("absolute_read", lambda: (hidden / "known_hidden.py").read_text())

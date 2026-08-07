@@ -63,6 +63,14 @@ def _runtime_paths() -> set[Path]:
         if value:
             paths.add(_resolve_existing(value))
 
+    framework_prefix = sysconfig.get_config_var("PYTHONFRAMEWORKINSTALLNAMEPREFIX")
+    framework_name = sysconfig.get_config_var("PYTHONFRAMEWORK")
+    if framework_prefix and framework_name:
+        # On macOS, the interpreter is dynamically linked against this
+        # framework binary, which is not covered by sys.path or sysconfig
+        # install directories.
+        paths.add(_resolve_existing(Path(framework_prefix) / framework_name))
+
     try:
         import claude_agent_sdk
 
@@ -81,7 +89,39 @@ def _runtime_paths() -> set[Path]:
     claude = shutil.which("claude")
     if claude:
         paths.update((Path(claude), _resolve_existing(claude)))
+    _add_linked_runtime_paths(paths)
     return paths
+
+
+def _add_linked_runtime_paths(paths: set[Path]) -> None:
+    """Include non-system dynamic libraries needed by runtime executables."""
+    if platform.system() != "Darwin":
+        return
+    otool = shutil.which("otool")
+    if not otool:
+        return
+
+    pending = [path for path in paths if path.is_file()]
+    inspected: set[Path] = set()
+    while pending:
+        path = _resolve_existing(pending.pop())
+        if path in inspected:
+            continue
+        inspected.add(path)
+        result = subprocess.run(
+            [otool, "-L", str(path)], check=False, capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            continue
+        for line in result.stdout.splitlines()[1:]:
+            dependency = line.strip().split(" (", 1)[0]
+            if not dependency.startswith("/"):
+                continue
+            library = _resolve_existing(dependency)
+            if not library.is_file() or library in paths:
+                continue
+            paths.add(library)
+            pending.append(library)
 
 
 def _sb_string(path: Path) -> str:
@@ -149,11 +189,14 @@ class WorkerSandbox:
         env["TMP"] = str(self.private_dir)
         env["TEMP"] = str(self.private_dir)
         env["CLAUDE_CONFIG_DIR"] = str(self.private_dir / "claude-config")
+        env["XDG_CONFIG_HOME"] = str(self.private_dir / "xdg-config")
         env["GIT_CONFIG_COUNT"] = "2"
         env["GIT_CONFIG_KEY_0"] = "user.name"
         env["GIT_CONFIG_VALUE_0"] = "orchestrator worker"
         env["GIT_CONFIG_KEY_1"] = "user.email"
         env["GIT_CONFIG_VALUE_1"] = "worker@localhost"
+        env["GIT_CONFIG_NOSYSTEM"] = "1"
+        env["GIT_CONFIG_GLOBAL"] = "/dev/null"
         return env
 
     def cleanup(self) -> None:
