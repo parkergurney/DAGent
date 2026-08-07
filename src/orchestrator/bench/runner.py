@@ -201,9 +201,17 @@ async def _run_baseline(
         while True:
             _advance_baseline_deps(conn)
             while len(running) < concurrency:
-                row = conn.execute(
-                    "SELECT * FROM tasks WHERE state = 'queued' ORDER BY created_at LIMIT 1"
-                ).fetchone()
+                # create_task() does not run the coroutine until this loop
+                # yields, so a plain SELECT here can select the same queued
+                # row once per available slot.  Reserve by task id in the
+                # local running map before creating the coroutine; otherwise
+                # parallel baseline sessions compete for one task/<id> branch.
+                active_ids = set(running.values())
+                rows = conn.execute(
+                    "SELECT * FROM tasks WHERE state = 'queued' ORDER BY created_at"
+                ).fetchall()
+                row = next((candidate for candidate in rows
+                            if candidate["id"] not in active_ids), None)
                 if row is None:
                     break
                 task = asyncio.create_task(_run_baseline_task(

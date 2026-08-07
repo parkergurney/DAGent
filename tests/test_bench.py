@@ -98,6 +98,25 @@ def test_sequential_baseline_run_records_metrics(tmp_path):
     assert summary.delivered == 1
 
 
+def test_naive_parallel_reserves_distinct_queued_tasks(tmp_path):
+    repo = init_repo(tmp_path)
+    suite_path = _suite_file(tmp_path, repo, tasks=[
+        '[[tasks]]\nid = "a"\ntitle = "A"\nbrief = "clean"',
+        '[[tasks]]\nid = "b"\ntitle = "B"\nbrief = "clean"',
+        '[[tasks]]\nid = "c"\ntitle = "C"\nbrief = "clean"',
+        '[[tasks]]\nid = "d"\ntitle = "D"\nbrief = "clean"',
+    ])
+
+    manifest = run_benchmark(
+        suite_path, condition="naive-parallel", out_dir=tmp_path / "bench",
+        max_concurrency=4, fake_worker=True, overwrite=True,
+    )
+
+    summary = summarize_db(manifest.db)
+    assert summary.tasks == 4
+    assert summary.delivered == 4
+
+
 def test_hidden_check_failure_counts_as_verify_failure(tmp_path):
     repo = init_repo(tmp_path)
     suite_path = _suite_file(tmp_path, repo, hidden_cmd="test -f missing.marker")

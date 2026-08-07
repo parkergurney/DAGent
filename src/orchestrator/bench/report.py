@@ -21,6 +21,8 @@ class RunSummary:
     needs_human: int
     wall_s: float
     tasks_per_hour: float
+    tokens_in: int
+    tokens_out: int
     cost_usd: float
     worker_cost_usd: float
     supervisor_cost_usd: float
@@ -41,6 +43,10 @@ class GroupSummary:
     max_rate: float
     mean_wall_min: float
     mean_tasks_per_hour: float
+    total_tokens_in: int
+    total_tokens_out: int
+    mean_tokens_in: float
+    mean_tokens_out: float
     mean_cost_usd: float
     total_cost_usd: float
     interventions: int
@@ -59,6 +65,10 @@ def summarize_db(db_path: str | Path) -> RunSummary:
     tasks = sum(counts.values())
     wall_s = _wall_s(conn)
     cost = _cost(conn)
+    token_row = conn.execute(
+        "SELECT COALESCE(SUM(tokens_in), 0) tokens_in, "
+        "COALESCE(SUM(tokens_out), 0) tokens_out FROM events"
+    ).fetchone()
     source_cost = {
         row["source"]: row["cost"] or 0.0
         for row in conn.execute("SELECT source, SUM(cost_usd) cost FROM events GROUP BY source")
@@ -90,6 +100,8 @@ def summarize_db(db_path: str | Path) -> RunSummary:
         needs_human=counts.get("needs_human", 0),
         wall_s=wall_s,
         tasks_per_hour=(delivered / wall_s * 3600) if wall_s else 0.0,
+        tokens_in=token_row["tokens_in"],
+        tokens_out=token_row["tokens_out"],
         cost_usd=cost,
         worker_cost_usd=source_cost.get("worker", 0.0),
         supervisor_cost_usd=source_cost.get("supervisor", 0.0),
@@ -119,6 +131,10 @@ def summarize_groups(rows: list[RunSummary], group_by: str = "condition") -> lis
             max_rate=max(rates) if rates else 0.0,
             mean_wall_min=mean(r.wall_s / 60 for r in items) if items else 0.0,
             mean_tasks_per_hour=mean(r.tasks_per_hour for r in items) if items else 0.0,
+            total_tokens_in=sum(r.tokens_in for r in items),
+            total_tokens_out=sum(r.tokens_out for r in items),
+            mean_tokens_in=mean(r.tokens_in for r in items) if items else 0.0,
+            mean_tokens_out=mean(r.tokens_out for r in items) if items else 0.0,
             mean_cost_usd=mean(r.cost_usd for r in items) if items else 0.0,
             total_cost_usd=sum(r.cost_usd for r in items),
             interventions=sum(r.interventions for r in items),
@@ -132,7 +148,7 @@ def summarize_groups(rows: list[RunSummary], group_by: str = "condition") -> lis
 def format_table(rows: list[RunSummary]) -> str:
     headers = [
         "run_id", "condition", "seed", "tasks", "delivered", "rate", "wall_min",
-        "tasks/hr", "cost", "worker", "supervisor", "human", "recovered",
+        "tasks/hr", "tokens_in", "tokens_out", "cost", "worker", "supervisor", "human", "recovered",
         "verify_failed", "protected",
     ]
     rendered = ["\t".join(headers)]
@@ -147,6 +163,8 @@ def format_table(rows: list[RunSummary]) -> str:
             rate,
             f"{r.wall_s / 60:.1f}",
             f"{r.tasks_per_hour:.1f}",
+            str(r.tokens_in),
+            str(r.tokens_out),
             f"{r.cost_usd:.4f}",
             f"{r.worker_cost_usd:.4f}",
             f"{r.supervisor_cost_usd:.4f}",
@@ -161,7 +179,8 @@ def format_table(rows: list[RunSummary]) -> str:
 def format_summary_table(rows: list[GroupSummary]) -> str:
     headers = [
         "group", "runs", "tasks", "delivered", "mean_rate", "rate_range",
-        "mean_wall_min", "mean_tasks/hr", "mean_cost", "total_cost", "human",
+        "mean_wall_min", "mean_tasks/hr", "total_tokens_in", "total_tokens_out",
+        "mean_tokens_in", "mean_tokens_out", "mean_cost", "total_cost", "human",
         "recovered", "verify_failed", "protected",
     ]
     rendered = ["\t".join(headers)]
@@ -175,6 +194,10 @@ def format_summary_table(rows: list[GroupSummary]) -> str:
             f"{r.min_rate * 100:.1f}-{r.max_rate * 100:.1f}%",
             f"{r.mean_wall_min:.1f}",
             f"{r.mean_tasks_per_hour:.1f}",
+            str(r.total_tokens_in),
+            str(r.total_tokens_out),
+            f"{r.mean_tokens_in:.1f}",
+            f"{r.mean_tokens_out:.1f}",
             f"{r.mean_cost_usd:.4f}",
             f"{r.total_cost_usd:.4f}",
             str(r.interventions),
