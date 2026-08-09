@@ -57,6 +57,21 @@ def test_runtime_allowlist_ignores_caller_import_roots(tmp_path, monkeypatch):
     assert (tmp_path / "other-import-root").resolve() not in runtime_paths
 
 
+def test_runtime_allowlist_includes_python_extension_dependencies():
+    extension_dir = sandbox.sysconfig.get_config_var("DESTSHARED")
+    if not extension_dir:
+        pytest.skip("Python does not expose a standard-library extension directory")
+    extension_root = sandbox._resolve_existing(extension_dir)
+    if not extension_root.is_dir():
+        pytest.skip("Python standard-library extension directory is unavailable")
+
+    runtime_paths = sandbox._runtime_paths()
+    assert extension_root in runtime_paths
+    ssl_extensions = [path for path in extension_root.glob("_ssl*.so") if path.is_file()]
+    if ssl_extensions:
+        assert sandbox._resolve_existing(ssl_extensions[0]) in runtime_paths
+
+
 def test_stages_only_minimal_claude_auth_inputs(tmp_path, monkeypatch):
     """Worker config must not inherit the operator's full Claude state."""
     host_home = tmp_path / "host-home"
@@ -100,3 +115,22 @@ def test_staging_does_not_follow_auth_symlinks(tmp_path, monkeypatch):
     sandbox._stage_claude_auth(private)
 
     assert not (private / "claude-config" / ".credentials.json").exists()
+
+
+def test_worker_environment_uses_private_home(tmp_path):
+    private = tmp_path / "private"
+    private.mkdir()
+    worker = sandbox.WorkerSandbox(
+        worktree=tmp_path,
+        private_dir=private,
+        sandbox_exec=tmp_path / "sandbox-exec",
+        allowlist=(tmp_path,),
+        profile="",
+    )
+
+    env = worker.environment({"HOME": "/host-home", "PATH": "/bin",
+                              "ANTHROPIC_API_KEY": "must-not-pass"})
+
+    assert env["HOME"] == str(private)
+    assert env["PATH"] == "/bin"
+    assert "ANTHROPIC_API_KEY" not in env

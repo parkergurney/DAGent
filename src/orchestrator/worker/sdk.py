@@ -4,22 +4,130 @@ care which backend it's driving; swap Scheduler(spawn_worker=...) to switch
 from FakeWorker to real Agent SDK sessions.
 """
 import asyncio
+import json
 import os
+import signal
 import string
+import subprocess
 import sys
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 from orchestrator.worker.sandbox import (
     WorkerSandboxUnavailable,
+    cleanup_worker_sandbox,
     prepare_worker_sandbox,
     register_worker_sandbox,
 )
 from orchestrator.worker.contract import build_execution_contract
+from orchestrator.worker.sdk_worker import _AUTH_FAILURE_MARKERS
 
 # src/orchestrator/worker/sdk.py -> src/. Not launched through an installed
 # console entry point, so it needs this on PYTHONPATH to import `orchestrator`
 # at all (see the identical note in fake.py).
 _SRC = str(Path(__file__).resolve().parents[2])
+
+
+@dataclass(frozen=True)
+class WorkerAuthSmokeResult:
+    returncode: int
+    event_types: tuple[str, ...]
+    model_response: bool
+    result_success: bool = False
+    session_id: str | None = None
+    startup_failure_category: str | None = None
+    tokens_in: int | None = None
+    tokens_out: int | None = None
+    cost_usd: float | None = None
+
+
+def _auth_failure_in_record(record: dict) -> bool:
+    payload = record.get("payload") or {}
+    text = " ".join(str(payload.get(key) or "") for key in ("text", "result", "reason", "error"))
+    lowered = text.lower()
+    return any(marker in lowered for marker in _AUTH_FAILURE_MARKERS)
+
+
+async def _run_worker_auth_smoke(model: str, worktree: Path) -> WorkerAuthSmokeResult:
+    task = {
+        "id": "benchmark-auth-smoke",
+        "title": "Benchmark worker authentication smoke test",
+        "brief": (
+            "Do not use tools or modify files. Reply with one short confirmation that "
+            "the session is alive."
+        ),
+        "delivery_mode": "scout",
+        "verify_cmd": "true",
+    }
+    proc = None
+    try:
+        proc = await spawn_sdk_worker(task, worktree, model=model)
+        event_types = []
+        records = []
+        while True:
+            line = await asyncio.wait_for(proc.stdout.readline(), timeout=120)
+            if not line:
+                break
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            records.append(record)
+            event_types.append(str(record.get("type")))
+        returncode = await proc.wait()
+        result_record = next((r for r in reversed(records) if r.get("type") == "result"), None)
+        result_payload = (result_record or {}).get("payload") or {}
+        startup = next((r for r in records if r.get("type") == "startup_failed"), None)
+        startup_payload = (startup or {}).get("payload") or {}
+        auth_failure = any(_auth_failure_in_record(record) for record in records)
+        result_success = bool(
+            result_record
+            and not result_payload.get("is_error")
+            and result_payload.get("subtype") in ("success", "completion")
+            and result_payload.get("session_id")
+            and not auth_failure
+            and "execution_started" in event_types
+        )
+        return WorkerAuthSmokeResult(
+            returncode=returncode,
+            event_types=tuple(event_types),
+            model_response=result_success and bool(result_payload.get("result")),
+            result_success=result_success,
+            session_id=result_payload.get("session_id"),
+            startup_failure_category=startup_payload.get("category"),
+            tokens_in=result_payload.get("tokens_in"),
+            tokens_out=result_payload.get("tokens_out"),
+            cost_usd=result_payload.get("cost_usd"),
+        )
+    finally:
+        if proc is not None:
+            if proc.returncode is None:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                await proc.wait()
+            cleanup_worker_sandbox(proc)
+
+
+def run_worker_auth_smoke_test(model: str) -> WorkerAuthSmokeResult:
+    """Run one disposable model turn through the production worker launcher."""
+    with tempfile.TemporaryDirectory(prefix="orchestrator-auth-smoke-") as raw_root:
+        root = Path(raw_root)
+        subprocess.run(["git", "init", "-q", "-b", "main", str(root)], check=True,
+                       capture_output=True, text=True)
+        (root / "README.md").write_text("benchmark authentication smoke worktree\n")
+        subprocess.run(
+            ["git", "-C", str(root), "add", "README.md"], check=True,
+            capture_output=True, text=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(root), "-c", "user.name=orchestrator smoke",
+             "-c", "user.email=smoke@localhost", "commit", "-qm", "smoke"],
+            check=True, capture_output=True, text=True,
+        )
+        return asyncio.run(_run_worker_auth_smoke(model, root))
 
 
 async def spawn_sdk_worker(task: dict, worktree, *, model: str | None = None

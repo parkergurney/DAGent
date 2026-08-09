@@ -12,8 +12,8 @@ not an untrusted execution boundary.
 
 from __future__ import annotations
 
-import platform
 import json
+import platform
 import shutil
 import string
 import subprocess
@@ -35,7 +35,7 @@ _ENV_EXACT = {
     "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "TERM_PROGRAM", "COLORTERM",
     "LANG", "VIRTUAL_ENV", "SYSTEM_VERSION_COMPAT", "__CF_USER_TEXT_ENCODING",
 }
-_ENV_PREFIXES = ("LC_", "ANTHROPIC_", "CLAUDE_")
+_ENV_PREFIXES = ("LC_", "CLAUDE_")
 
 
 def _resolve_existing(path: str | Path) -> Path:
@@ -65,7 +65,10 @@ def _stage_claude_auth(private_dir: Path) -> None:
     safely copy; Claude Code can consult the Keychain directly.  ``~/.claude``
     is deliberately never copied.  On all platforms, retain only the
     account metadata Claude Code uses to associate OAuth credentials with the
-    logged-in account; do not copy the host's project history or settings.
+    logged-in account; do not copy the host's project history or settings. On
+    macOS, account metadata alone cannot make a private HOME see the host
+    Keychain; the worker therefore fails closed until that OS boundary has a
+    safe, non-secret solution.
     """
     config_dir = private_dir / "claude-config"
     config_dir.mkdir(mode=0o700)
@@ -118,6 +121,21 @@ def _runtime_paths() -> set[Path]:
     for value in sysconfig.get_paths().values():
         if value:
             paths.add(_resolve_existing(value))
+
+    # Python's dynamically loaded standard-library extensions are not under
+    # a sysconfig install path.  The SDK imports TLS support through ``_ssl``;
+    # allowlist the trusted extension modules and let the dependency walk
+    # below add their linked runtime libraries (for example libssl/libcrypto).
+    extension_dir = sysconfig.get_config_var("DESTSHARED")
+    if extension_dir:
+        extension_root = _resolve_existing(extension_dir)
+        if extension_root.is_dir():
+            paths.add(extension_root)
+            paths.update(
+                _resolve_existing(path)
+                for path in extension_root.iterdir()
+                if path.is_file() and path.suffix in {".so", ".dylib"}
+            )
 
     framework_prefix = sysconfig.get_config_var("PYTHONFRAMEWORKINSTALLNAMEPREFIX")
     framework_name = sysconfig.get_config_var("PYTHONFRAMEWORK")

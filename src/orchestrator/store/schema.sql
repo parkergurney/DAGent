@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   protected_paths TEXT,        -- JSON array of opt-in globs; NULL = no protected paths
   state         TEXT NOT NULL DEFAULT 'blocked' CHECK (state IN
     ('blocked','queued','running','verifying','triage','needs_human',
-     'delivering','delivered','failed','cancelled')),
+     'delivering','delivered','failed','cancelled','dependency_blocked')),
   retries       INTEGER NOT NULL DEFAULT 0,
   max_retries   INTEGER NOT NULL DEFAULT 2,
   worktree      TEXT,

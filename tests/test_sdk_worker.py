@@ -7,8 +7,10 @@ import asyncio
 import io
 import json
 
-import pytest
-from claude_agent_sdk import ClaudeSDKError, PermissionResultAllow, PermissionResultDeny, ResultMessage
+from claude_agent_sdk import (
+    AssistantMessage, ClaudeSDKError, PermissionResultAllow, PermissionResultDeny,
+    ResultMessage, TextBlock,
+)
 
 from orchestrator.worker import sdk_worker
 from orchestrator.worker.sdk_worker import (
@@ -159,8 +161,11 @@ def test_run_resumes_the_same_session_after_a_stdin_reply(tmp_path, capsys, monk
     assert fake.queries == [_prompt_with_protocol("set up a server"), "use port 8080"]
 
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert [e["type"] for e in events] == ["asked", "done_claimed"]
-    assert events[1]["payload"]["result"] == "used port 8080"
+    assert [e["type"] for e in events] == [
+        "result", "execution_started", "asked",
+        "result", "done_claimed",
+    ]
+    assert events[-1]["payload"]["result"] == "used port 8080"
 
 
 def test_run_exits_without_resuming_when_stdin_closes(tmp_path, capsys, monkeypatch):
@@ -174,7 +179,7 @@ def test_run_exits_without_resuming_when_stdin_closes(tmp_path, capsys, monkeypa
 
     assert fake.queries == [_prompt_with_protocol("set up a server")]
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert [e["type"] for e in events] == ["asked"]
+    assert [e["type"] for e in events] == ["result", "execution_started", "asked"]
 
 
 class _ConnectFailsClient:
@@ -194,10 +199,79 @@ class _ConnectFailsClient:
 def test_run_exits_loudly_when_sandbox_fails_to_start(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(sdk_worker, "ClaudeSDKClient", lambda options=None: _ConnectFailsClient())
 
-    with pytest.raises(SystemExit) as exc_info:
-        asyncio.run(sdk_worker.run(tmp_path, "set up a server", None))
-    assert exc_info.value.code == 1
+    assert asyncio.run(sdk_worker.run(tmp_path, "set up a server", None)) == 1
 
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert [e["type"] for e in events] == ["startup_failed"]
+    assert events[0]["payload"]["category"] == "sdk_initialization_failure"
     assert "sandbox unavailable" in events[0]["payload"]["error"]
+
+
+class _ResultClient:
+    def __init__(self, result, assistant_text=None, options=None):
+        self.result = result
+        self.assistant_text = assistant_text
+
+    async def connect(self, prompt=None):
+        pass
+
+    async def disconnect(self):
+        pass
+
+    async def query(self, prompt, session_id="default"):
+        pass
+
+    async def receive_response(self):
+        if self.assistant_text is not None:
+            yield AssistantMessage(
+                content=[TextBlock(self.assistant_text)], model="claude-sonnet-5",
+                usage={"input_tokens": 3, "output_tokens": 4}, session_id="s1",
+            )
+        yield self.result
+
+
+def test_result_message_persists_safe_aggregate_usage_and_starts_execution(
+    tmp_path, capsys, monkeypatch,
+):
+    result = ResultMessage(
+        subtype="success", duration_ms=10, duration_api_ms=8, is_error=False,
+        num_turns=1, session_id="s1", total_cost_usd=0.12,
+        usage={"input_tokens": 30, "output_tokens": 40},
+        model_usage={"claude-sonnet-5": {"inputTokens": 30, "outputTokens": 40}},
+        result="short model response",
+    )
+    monkeypatch.setattr(
+        sdk_worker, "ClaudeSDKClient", lambda options=None: _ResultClient(result, "hello")
+    )
+
+    assert asyncio.run(sdk_worker.run(tmp_path, "reply", None)) == 0
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    result_event = next(event for event in events if event["type"] == "result")
+    assert result_event["payload"]["usage"] == {"input_tokens": 30, "output_tokens": 40}
+    assert result_event["payload"]["model_usage"]["claude-sonnet-5"]["inputTokens"] == 30
+    assert result_event["payload"]["tokens_in"] == 30
+    assert result_event["payload"]["tokens_out"] == 40
+    assert result_event["payload"]["cost_usd"] == 0.12
+    assert [event["type"] for event in events].count("execution_started") == 1
+    # Per-message usage remains diagnostic, while the result aggregate is the
+    # only accounting record with canonical token/cost fields.
+    message_event = next(event for event in events if event["type"] == "messaged")
+    assert message_event["payload"]["tokens_in"] == 3
+    assert message_event["payload"]["tokens_out"] == 4
+
+
+def test_authentication_result_fails_even_with_success_exit_code(tmp_path, capsys, monkeypatch):
+    result = ResultMessage(
+        subtype="success", duration_ms=1, duration_api_ms=0, is_error=False,
+        num_turns=0, session_id="auth-session", result="Not logged in · Please run /login",
+    )
+    monkeypatch.setattr(
+        sdk_worker, "ClaudeSDKClient",
+        lambda options=None: _ResultClient(result, "Not logged in · Please run /login"),
+    )
+
+    assert asyncio.run(sdk_worker.run(tmp_path, "reply", None)) == 1
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [event["type"] for event in events] == ["messaged", "result", "startup_failed"]
+    assert events[-1]["payload"]["category"] == "authentication_failure"
+    assert "execution_started" not in [event["type"] for event in events]

@@ -3,11 +3,68 @@
 from __future__ import annotations
 
 import fnmatch
+import os
 import shlex
 import subprocess
 from pathlib import Path
 
-from orchestrator.worker.sandbox import path_is_worker_visible
+from orchestrator.worker.sandbox import WorkerSandboxUnavailable, path_is_worker_visible
+from orchestrator.worker.sdk import WorkerAuthSmokeResult, run_worker_auth_smoke_test
+
+
+class BenchmarkPreflightError(ValueError):
+    """A benchmark cannot safely start under the current worker environment."""
+
+
+class BenchmarkInfrastructureError(BenchmarkPreflightError):
+    """A benchmark became invalid because worker infrastructure failed."""
+
+
+_DISALLOWED_BENCHMARK_AUTH_ENV = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_CUSTOM_HEADERS",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+)
+
+
+def _present_auth_env(env: dict[str, str] | None = None) -> tuple[str, ...]:
+    values = os.environ if env is None else env
+    return tuple(name for name in _DISALLOWED_BENCHMARK_AUTH_ENV if values.get(name))
+
+
+def validate_benchmark_auth(model: str, *, env: dict[str, str] | None = None) -> None:
+    """Require the logged-in Claude Code account path before any task starts."""
+    present = _present_auth_env(env)
+    if present:
+        names = ", ".join(present)
+        raise BenchmarkPreflightError(
+            "explicit Anthropic/API credential environment variables are not allowed "
+            f"for subscription-authenticated benchmarks: {names}"
+        )
+
+    try:
+        result: WorkerAuthSmokeResult = run_worker_auth_smoke_test(model)
+    except WorkerSandboxUnavailable as exc:
+        raise BenchmarkPreflightError(f"worker sandbox startup failed: {exc}") from exc
+    except (OSError, RuntimeError, TimeoutError) as exc:
+        raise BenchmarkPreflightError(
+            f"worker authentication smoke test could not run: {type(exc).__name__}"
+        ) from exc
+
+    if result.returncode != 0:
+        raise BenchmarkPreflightError(
+            "worker authentication smoke test exited before producing a model response "
+            f"(exit_code={result.returncode}, events={','.join(result.event_types) or 'none'})"
+        )
+    if not result.result_success or not result.model_response or not result.session_id:
+        raise BenchmarkPreflightError(
+            "worker authentication smoke test did not produce a genuine authenticated "
+            "ResultMessage model turn "
+            f"(events={','.join(result.event_types) or 'none'}, "
+            f"startup_category={result.startup_failure_category or 'none'})"
+        )
 
 
 def _hidden_source_paths(suite) -> tuple[Path, ...]:

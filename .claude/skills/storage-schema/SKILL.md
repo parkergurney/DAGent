@@ -51,7 +51,7 @@ CREATE INDEX idx_events_task ON events(task_id, seq);
 ## Event taxonomy
 
 ```
-task.created          task.state_changed      dep.satisfied
+task.created          task.state_changed      dep.satisfied       dep.blocked
 worker.spawned        worker.tool_used        worker.messaged
 worker.asked          worker.done_claimed     worker.exited
 worker.stalled        (watchdog only)      worker.startup_failed

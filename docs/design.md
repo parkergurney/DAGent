@@ -97,12 +97,14 @@ itself an event, written in the same SQLite transaction.
 
 <!-- sync:task-states -->
 States: `blocked, queued, running, verifying, triage, needs_human, delivering,
-delivered, failed, cancelled`. Terminal: delivered, failed, cancelled.
+delivered, failed, cancelled, dependency_blocked`. Terminal: delivered, failed,
+cancelled, dependency_blocked. `needs_human` is a settled resting state for a
+finite batch, but remains recoverable in daemon mode.
 
 | From | To | Trigger |
 |---|---|---|
 | blocked | queued | all deps reached `delivered` |
-| blocked | cancelled | a dep failed (default policy; `+yolo` may auto-fail) |
+| blocked | dependency_blocked | a required dep is terminal and cannot succeed in this run |
 | queued | running | scheduler acquired slot + worktree, spawned session |
 | running | verifying | `worker.done_claimed` |
 | running | triage | `worker.stalled` \| `worker.asked` \| `worker.exited` without done-claim |
@@ -192,7 +194,7 @@ CREATE INDEX idx_events_task ON events(task_id, seq);
 ### Event taxonomy
 
 ```
-task.created          task.state_changed      dep.satisfied
+task.created          task.state_changed      dep.satisfied       dep.blocked
 worker.spawned        worker.tool_used        worker.messaged
 worker.asked          worker.done_claimed     worker.exited
 worker.stalled        (watchdog only)      worker.startup_failed

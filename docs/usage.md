@@ -68,7 +68,9 @@ to change with the implementation.
 Prints the new task's id (a ULID). Defaults to `data/orchestrator.db`; pass
 `--db` to use a different file. Chain tasks into a DAG with repeatable
 `--depends-on <task_id>` — a task sits in `blocked` until every dependency
-reaches `delivered`, and cascades to `cancelled` if any dependency fails.
+reaches `delivered`; if a prerequisite is terminally unsuccessful, it settles
+as `dependency_blocked` without launching a worker. Dependency cycles and
+missing prerequisites fail closed before workers launch.
 
 `--repo` also accepts a short name registered in `repos.toml` (repo root)
 instead of a full path -- see that file for the format. It's a flat,
@@ -85,7 +87,7 @@ orchestrator run --repo-root /path/to/target/repo --db data/orchestrator.db
 ```
 
 Drives every pending task (any task not already in a resting state) to
-`delivered` / `failed` / `cancelled` / `needs_human`, then exits and prints a
+`delivered` / `failed` / `cancelled` / `dependency_blocked` / `needs_human`, then exits and prints a
 status table. This is the whole of a batch run: real Claude Code worker
 sessions in pooled git worktrees, real triage decisions from a live LLM
 supervisor, real verify-gate grading, real delivery.
@@ -326,6 +328,12 @@ commit; hidden setup and tests run only there, and the worker checkout remains
 free of hidden files for delivery. Keep those commands offline/reproducible
 yourself. Benchmark preflight rejects existing protected hidden material in a
 target repo or worker slot and never deletes contaminated historical state.
+For real workers it also rejects explicit Anthropic/API credential environment
+variables and runs one disposable authentication smoke turn through the real
+worker sandbox before creating the benchmark task DB. A failed smoke turn
+aborts with zero task attempts, retries, and supervisor calls; the smoke turn
+uses the logged-in Claude Code account path and does not export Keychain
+secrets.
 
 ## 12. What's not here yet
 

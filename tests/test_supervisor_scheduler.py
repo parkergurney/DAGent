@@ -10,7 +10,9 @@ any particular LLM's behavior.
 import asyncio
 import json
 
-from orchestrator.scheduler import Scheduler
+import pytest
+
+from orchestrator.scheduler import Scheduler, WorkerStartupFailure
 from orchestrator.store import connect, create_task
 from orchestrator.supervisor.schema import Abandon, Escalate, Nudge, Restart, Wait
 from tests.helpers import ScriptedSupervisor, init_repo
@@ -86,6 +88,73 @@ def test_restart_relaunches_and_bumps_retries(tmp_path):
 class _EmptyStream:
     async def readline(self):
         return b""
+
+
+class _StartupFailureStream:
+    def __init__(self):
+        self.lines = [
+            json.dumps({"type": "messaged", "payload": {
+                "text": "Not logged in · Please run /login",
+                "tokens_in": 0, "tokens_out": 0,
+            }}).encode() + b"\n",
+            json.dumps({"type": "result", "payload": {
+                "subtype": "success", "is_error": False,
+                "session_id": "startup-session", "result": "Not logged in",
+                "tokens_in": 0, "tokens_out": 0, "cost_usd": 0,
+            }}).encode() + b"\n",
+            json.dumps({"type": "startup_failed", "payload": {
+                "category": "authentication_failure",
+                "reason": "Claude Code reported an authentication failure",
+            }}).encode() + b"\n",
+            b"",
+        ]
+
+    async def readline(self):
+        return self.lines.pop(0)
+
+
+class _StartupFailureProc:
+    pid = 7788
+    returncode = 1
+    stdin = None
+
+    def __init__(self):
+        self.stdout = _StartupFailureStream()
+
+    async def wait(self):
+        return self.returncode
+
+
+def test_startup_auth_failure_aborts_without_supervisor_or_retry(tmp_path):
+    repo = init_repo(tmp_path)
+    conn = connect()
+    task_id = _create(conn, repo, "startup auth")
+    calls = []
+
+    async def spawn(_task, _worktree, *, model=None):
+        return _StartupFailureProc()
+
+    async def supervisor(_packet):
+        calls.append(True)
+        raise AssertionError("startup failure must not enter supervisor triage")
+
+    scheduler = Scheduler(
+        conn, repo, tmp_path / "worktrees", max_concurrency=1,
+        spawn_worker=spawn, supervisor=supervisor,
+    )
+    with pytest.raises(WorkerStartupFailure, match="authentication_failure"):
+        asyncio.run(asyncio.wait_for(scheduler.run_until_settled(), timeout=10))
+
+    assert calls == []
+    assert conn.execute("SELECT retries FROM tasks WHERE id = ?", (task_id,)).fetchone()["retries"] == 0
+    types = [row["type"] for row in _events(conn, task_id)]
+    assert "worker.startup_failed" in types
+    assert "worker.exited" not in types
+    assert "supervisor.acted" not in types
+    attempt = conn.execute("SELECT disposition, failure_cause FROM attempts WHERE task_id = ?",
+                           (task_id,)).fetchone()
+    assert attempt["disposition"] == "startup_failed"
+    assert attempt["failure_cause"] == "authentication_failure"
 
 
 class _SpyProc:

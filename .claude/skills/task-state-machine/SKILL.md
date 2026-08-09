@@ -1,18 +1,20 @@
 ---
 name: task-state-machine
-description: Full task state machine reference for this orchestrator - states, transition table, and design notes on triage funneling, delivered semantics, and crash recovery. Use when touching scheduler or state-machine code, working with task states (blocked/queued/running/verifying/triage/needs_human/delivering/delivered/failed/cancelled), or asked about task transitions or crash recovery behavior.
+description: Full task state machine reference for this orchestrator - states, transition table, and design notes on triage funneling, delivered semantics, dependency blocking, and crash recovery. Use when touching scheduler or state-machine code, working with task states (blocked/queued/running/verifying/triage/needs_human/delivering/delivered/failed/cancelled/dependency_blocked), or asked about task transitions or crash recovery behavior.
 ---
 
 # Task state machine
 
 <!-- sync:task-states -->
 States: `blocked, queued, running, verifying, triage, needs_human, delivering,
-delivered, failed, cancelled`. Terminal: delivered, failed, cancelled.
+delivered, failed, cancelled, dependency_blocked`. Terminal: delivered, failed,
+cancelled, dependency_blocked. `needs_human` is a settled resting state for a
+finite batch, but remains recoverable in daemon mode.
 
 | From | To | Trigger |
 |---|---|---|
 | blocked | queued | all deps reached `delivered` |
-| blocked | cancelled | a dep failed (default policy; `+yolo` may auto-fail) |
+| blocked | dependency_blocked | a required dep is terminal and cannot succeed in this run |
 | queued | running | scheduler acquired slot + worktree, spawned session |
 | running | verifying | `worker.done_claimed` |
 | running | triage | `worker.stalled` \| `worker.asked` \| `worker.exited` without done-claim |

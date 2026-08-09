@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"fixture-session-1","model":"claude-sonnet-5"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Execution contract..."}]},"session_id":"fixture-session-1"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I inspected the worktree."},{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"README.md"}}]},"session_id":"fixture-session-1"}
+{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"The change is ready."}},"session_id":"fixture-session-1"}
+{"type":"result","subtype":"success","is_error":false,"result":"The change is ready.\nDONE_CLAIM: implemented the change","session_id":"fixture-session-1","usage":{"input_tokens":123,"output_tokens":45},"total_cost_usd":0.0123,"num_turns":1}

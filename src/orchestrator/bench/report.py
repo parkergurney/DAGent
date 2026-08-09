@@ -15,10 +15,13 @@ class RunSummary:
     suite: str
     seed: int
     tasks: int
+    executed: int
     delivered: int
     failed: int
     cancelled: int
     needs_human: int
+    dependency_blocked: int
+    infrastructure_aborted: int
     wall_s: float
     tasks_per_hour: float
     tokens_in: int
@@ -49,7 +52,13 @@ class GroupSummary:
     group: str
     runs: int
     tasks: int
+    executed: int
     delivered: int
+    failed: int
+    needs_human: int
+    dependency_blocked: int
+    cancelled: int
+    infrastructure_aborted: int
     mean_rate: float
     min_rate: float
     max_rate: float
@@ -76,6 +85,15 @@ def summarize_db(db_path: str | Path) -> RunSummary:
         for row in conn.execute("SELECT state, COUNT(*) c FROM tasks GROUP BY state")
     }
     tasks = sum(counts.values())
+    executed = conn.execute(
+        "SELECT COUNT(DISTINCT task_id) c FROM events WHERE type = 'worker.spawned'"
+    ).fetchone()["c"]
+    started = conn.execute(
+        "SELECT 1 FROM events WHERE type = 'bench.run_started' LIMIT 1"
+    ).fetchone()
+    finished = conn.execute(
+        "SELECT 1 FROM events WHERE type = 'bench.run_finished' LIMIT 1"
+    ).fetchone()
     wall_s = _wall_s(conn)
     cost = _cost(conn)
     token_row = conn.execute(
@@ -120,10 +138,13 @@ def summarize_db(db_path: str | Path) -> RunSummary:
         suite=meta.get("suite", "unknown"),
         seed=int(meta.get("seed", 0)),
         tasks=tasks,
+        executed=executed,
         delivered=delivered,
         failed=counts.get("failed", 0),
         cancelled=counts.get("cancelled", 0),
         needs_human=counts.get("needs_human", 0),
+        dependency_blocked=counts.get("dependency_blocked", 0),
+        infrastructure_aborted=int(bool(started and not finished)),
         wall_s=wall_s,
         tasks_per_hour=(delivered / wall_s * 3600) if wall_s else 0.0,
         tokens_in=token_row["tokens_in"],
@@ -153,7 +174,13 @@ def summarize_groups(rows: list[RunSummary], group_by: str = "condition") -> lis
             group=key,
             runs=len(items),
             tasks=sum(r.tasks for r in items),
+            executed=sum(r.executed for r in items),
             delivered=sum(r.delivered for r in items),
+            failed=sum(r.failed for r in items),
+            needs_human=sum(r.needs_human for r in items),
+            dependency_blocked=sum(r.dependency_blocked for r in items),
+            cancelled=sum(r.cancelled for r in items),
+            infrastructure_aborted=sum(r.infrastructure_aborted for r in items),
             mean_rate=mean(rates) if rates else 0.0,
             min_rate=min(rates) if rates else 0.0,
             max_rate=max(rates) if rates else 0.0,
@@ -176,7 +203,8 @@ def summarize_groups(rows: list[RunSummary], group_by: str = "condition") -> lis
 
 def format_table(rows: list[RunSummary]) -> str:
     headers = [
-        "run_id", "condition", "seed", "tasks", "delivered", "rate", "wall_min",
+        "run_id", "condition", "seed", "tasks", "executed", "delivered", "failed",
+        "needs_human", "dependency_blocked", "cancelled", "infra_aborted", "rate", "wall_min",
         "tasks/hr", "tokens_in", "tokens_out", "cost", "worker", "supervisor", "human", "recovered",
         "verify_failed", "verification_recoveries", "protected", "queue_wait_s",
         "slot_occupancy_s", "worker_execution_s", "verification_s", "supervisor_s",
@@ -191,7 +219,13 @@ def format_table(rows: list[RunSummary]) -> str:
             r.condition,
             str(r.seed),
             str(r.tasks),
+            str(r.executed),
             str(r.delivered),
+            str(r.failed),
+            str(r.needs_human),
+            str(r.dependency_blocked),
+            str(r.cancelled),
+            str(r.infrastructure_aborted),
             rate,
             f"{r.wall_s / 60:.1f}",
             f"{r.tasks_per_hour:.1f}",
@@ -222,7 +256,8 @@ def format_table(rows: list[RunSummary]) -> str:
 
 def format_summary_table(rows: list[GroupSummary]) -> str:
     headers = [
-        "group", "runs", "tasks", "delivered", "mean_rate", "rate_range",
+        "group", "runs", "tasks", "executed", "delivered", "failed", "needs_human",
+        "dependency_blocked", "cancelled", "infra_aborted", "mean_rate", "rate_range",
         "mean_wall_min", "mean_tasks/hr", "total_tokens_in", "total_tokens_out",
         "mean_tokens_in", "mean_tokens_out", "mean_cost", "total_cost", "human",
         "recovered", "verify_failed", "verification_recoveries", "protected",
@@ -233,7 +268,13 @@ def format_summary_table(rows: list[GroupSummary]) -> str:
             r.group,
             str(r.runs),
             str(r.tasks),
+            str(r.executed),
             str(r.delivered),
+            str(r.failed),
+            str(r.needs_human),
+            str(r.dependency_blocked),
+            str(r.cancelled),
+            str(r.infrastructure_aborted),
             f"{r.mean_rate * 100:.1f}%",
             f"{r.min_rate * 100:.1f}-{r.max_rate * 100:.1f}%",
             f"{r.mean_wall_min:.1f}",

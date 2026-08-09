@@ -27,8 +27,9 @@ Built on the four M1 spike findings (spike/m1_spike.py, docs/devlog.md):
     Bash -- neither alone was sufficient.
   - PostToolUseFailure is a distinct hook event from PostToolUse and must be
     wired separately or failed tool calls vanish from the log.
-  - Cost lands once per completed turn (ResultMessage.total_cost_usd); token
-    counts ride per AssistantMessage (usage dict).
+- ResultMessage usage and total_cost_usd are the session aggregate used for
+  accounting. AssistantMessage usage is emitted for diagnostics only; the
+  scheduler does not add it to aggregate accounting columns.
 
 A mid-session ASK blocks on stdin; a supervisor `nudge` (scheduler/core.py's
 _handle_triage) writes its message there, which this resumes the SDK
@@ -40,6 +41,7 @@ with it, same as any other torn-down attempt.
 import argparse
 import asyncio
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -83,6 +85,21 @@ exactly one line instead, and stop there:
 ASK: <your question>
 """
 
+_AUTH_FAILURE_MARKERS = (
+    "not logged in",
+    "please run /login",
+    "authentication required",
+    "authentication failed",
+    "unauthorized",
+    "invalid oauth",
+)
+_SECRET_PATTERNS = (
+    (re.compile(r"(?i)\bsk-ant-[a-z0-9_-]+"), "[REDACTED_ANTHROPIC_CREDENTIAL]"),
+    (re.compile(r"(?i)\bbearer\s+[a-z0-9._-]+"), "Bearer [REDACTED]"),
+    (re.compile(r"(?i)(oauth[_ -]?token|access[_ -]?token|refresh[_ -]?token)\s*[:=]\s*\S+"),
+     r"\1=[REDACTED]"),
+)
+
 
 def _prompt_with_protocol(brief: str) -> str:
     return f"{brief.rstrip()}\n\n{_PROTOCOL.strip()}\n"
@@ -103,6 +120,79 @@ def _parse_terminal(result_text: str | None) -> tuple:
         if line.startswith("ASK:"):
             return "asked", {"question": line[len("ASK:"):].strip()}
     return None, {}
+
+
+def _redact_text(value: object, *, limit: int = 2000) -> str:
+    text = str(value or "")
+    for pattern, replacement in _SECRET_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text[:limit]
+
+
+def _normalize_json(value, *, depth: int = 0):
+    """Convert SDK metadata to bounded, JSON-safe diagnostic data.
+
+    SDK message objects are intentionally not serialized.  The recursive
+    normalizer also redacts credential-shaped strings in error/result fields.
+    """
+    if value is None or isinstance(value, bool | int | float):
+        return value
+    if isinstance(value, str):
+        return _redact_text(value)
+    if depth >= 3:
+        return _redact_text(value, limit=500)
+    if isinstance(value, dict):
+        return {
+            _redact_text(key, limit=100): _normalize_json(item, depth=depth + 1)
+            for key, item in list(value.items())[:64]
+        }
+    if isinstance(value, (list, tuple)):
+        return [_normalize_json(item, depth=depth + 1) for item in value[:64]]
+    return _redact_text(f"<{type(value).__name__}>", limit=100)
+
+
+def _result_snapshot(message: ResultMessage) -> dict:
+    """Persist the useful ResultMessage contract without serializing the SDK object."""
+    usage = _normalize_json(message.usage or {})
+    model_usage = _normalize_json(message.model_usage or {})
+    return {
+        "subtype": _redact_text(getattr(message, "subtype", None), limit=100),
+        "is_error": bool(message.is_error),
+        "errors": _normalize_json(message.errors or []),
+        "api_error_status": message.api_error_status,
+        "result": _redact_text(message.result),
+        "session_id": _redact_text(message.session_id, limit=200),
+        "usage": usage,
+        "model_usage": model_usage,
+        "total_cost_usd": message.total_cost_usd,
+        "stop_reason": _redact_text(message.stop_reason, limit=100),
+        "num_turns": message.num_turns,
+        "duration_ms": message.duration_ms,
+        "duration_api_ms": message.duration_api_ms,
+        # These are duplicated at event top level so SQLite's existing usage
+        # columns can use the complete session aggregate as their sole source.
+        "tokens_in": usage.get("input_tokens") if isinstance(usage, dict) else None,
+        "tokens_out": usage.get("output_tokens") if isinstance(usage, dict) else None,
+        "cost_usd": message.total_cost_usd,
+    }
+
+
+def _startup_failure_category(snapshot: dict | None, transcript: list[str]) -> tuple[str, str] | None:
+    result = snapshot or {}
+    text = "\n".join([*transcript, str(result.get("result") or ""),
+                       *[str(item) for item in result.get("errors") or []]])
+    lowered = text.lower()
+    if any(marker in lowered for marker in _AUTH_FAILURE_MARKERS):
+        return "authentication_failure", "Claude Code reported an authentication failure"
+    if result.get("is_error"):
+        if any(marker in lowered for marker in ("sandbox", "seatbelt", "bubblewrap")):
+            return "sandbox_runtime_failure", "Claude Code sandbox initialization failed"
+        if result.get("api_error_status"):
+            return "backend_initialization_failure", "Claude backend initialization failed"
+        return "backend_initialization_failure", "Claude Code returned an error ResultMessage"
+    if not result.get("session_id") or result.get("subtype") not in ("success", "completion"):
+        return "sdk_initialization_failure", "Claude SDK did not produce a successful session result"
+    return None
 
 
 def _path_escapes_worktree(path_str: str, worktree: Path) -> bool:
@@ -184,7 +274,7 @@ async def _post_tool_use_failure(input_data, tool_use_id, context):
     return {}
 
 
-async def run(worktree: Path, brief: str, model: str | None) -> None:
+async def run(worktree: Path, brief: str, model: str | None) -> int:
     options = ClaudeAgentOptions(
         cwd=str(worktree),
         model=model,
@@ -214,36 +304,60 @@ async def run(worktree: Path, brief: str, model: str | None) -> None:
         # spawning process (orchestrator/worker/sdk.py), so emit() is the
         # only way this reaches the operator -- a bare exit code looks like
         # any other worker.exited crash.
-        emit("startup_failed", error=str(e))
-        sys.exit(1)
+        category = "authentication_failure" if any(
+            marker in _redact_text(e).lower() for marker in _AUTH_FAILURE_MARKERS
+        ) else "sdk_initialization_failure"
+        emit("startup_failed", category=category, error=_redact_text(e))
+        return 1
 
     try:
         await client.query(prompt)
+        execution_started = False
         while True:
             kind, extra, cost_usd, session_id = None, {}, None, None
+            transcript = []
+            result_snapshot = None
             async for msg in client.receive_response():
                 if isinstance(msg, AssistantMessage):
                     text = "".join(getattr(b, "text", "") or "" for b in msg.content)
                     if text.strip():
+                        transcript.append(text)
                         usage = msg.usage or {}
                         emit("messaged", text=text[:500],
                             tokens_in=usage.get("input_tokens"),
                             tokens_out=usage.get("output_tokens"))
                 elif isinstance(msg, ResultMessage):
+                    result_snapshot = _result_snapshot(msg)
                     kind, extra = _parse_terminal(msg.result)
                     cost_usd, session_id = msg.total_cost_usd, msg.session_id
+                    emit("result", **result_snapshot)
+                    startup_failure = _startup_failure_category(result_snapshot, transcript)
+                    if startup_failure:
+                        category, reason = startup_failure
+                        emit("startup_failed", category=category, reason=reason,
+                             result=result_snapshot)
+                        return 1
+                    if not execution_started:
+                        emit("execution_started", session_id=session_id,
+                             subtype=result_snapshot.get("subtype"))
+                        execution_started = True
+
+            if result_snapshot is None:
+                emit("startup_failed", category="sdk_initialization_failure",
+                     reason="Claude SDK stream ended without a ResultMessage")
+                return 1
 
             if kind == "asked":
                 emit("asked", cost_usd=cost_usd, session_id=session_id, **extra)
                 reply = sys.stdin.readline()
                 if not reply:
-                    return  # stdin closed -- torn down (escalate/abandon), nothing to resume
+                    return 0  # stdin closed -- torn down (escalate/abandon), nothing to resume
                 await client.query(reply.rstrip("\n"))
                 continue  # a nudge landed on stdin -- resume this same conversation
 
             if kind == "done_claimed":
                 emit("done_claimed", cost_usd=cost_usd, session_id=session_id, **extra)
-            return  # done_claimed, or no sentinel -- exit without a claim, on purpose
+            return 0  # done_claimed, or no sentinel -- exit without a claim, on purpose
     finally:
         await client.disconnect()
 
@@ -260,7 +374,7 @@ def main() -> None:
     brief = brief_path.read_text()
     brief_path.unlink(missing_ok=True)  # never let the brief file taint git status
 
-    asyncio.run(run(Path(args.worktree), brief, args.model))
+    raise SystemExit(asyncio.run(run(Path(args.worktree), brief, args.model)))
 
 
 if __name__ == "__main__":

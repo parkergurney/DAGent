@@ -3,6 +3,16 @@
 A few lines per working session. What was decided, what surprised you, what
 the agent nailed or fumbled. This file writes the Substack post.
 
+## 2026-08-08 - deterministic dependency settlement
+
+Added the terminal `dependency_blocked` disposition. The scheduler now
+validates dependency graphs before opening workers, propagates terminal
+unsuccessful prerequisites to a fixpoint, and records blocking prerequisite
+IDs/states, run ID, and reason in `dep.blocked`. Finite benchmark runs treat
+unanswered `needs_human` prerequisites as nonrecoverable; daemon mode leaves
+them recoverable for `answer`. Reports now expose executed, failed, escalated,
+dependency-blocked, cancelled, and infrastructure-aborted counts separately.
+
 ## 2026-08-07 - isolate benchmark workers from hidden verification
 - Added a fail-closed macOS Seatbelt launcher around every real SDK worker.
   The outer allowlist contains only public worktree/Git metadata,

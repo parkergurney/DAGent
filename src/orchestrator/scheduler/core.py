@@ -21,6 +21,7 @@ before acting sees the answer atomically and backs off on its own -- no
 separate lock needed.
 """
 import asyncio
+from collections import defaultdict, deque
 import json
 import os
 import signal
@@ -45,7 +46,129 @@ from orchestrator.worker import (
 
 # Team states in which nothing is left for the scheduler to drive; the team
 # is "settled" once every task sits in one of these.
-_SETTLED_STATES = ("needs_human", "delivered", "failed", "cancelled")
+_SETTLED_STATES = ("needs_human", "delivered", "failed", "cancelled", "dependency_blocked")
+_DEPENDENCY_BLOCKING_STATES = frozenset({"failed", "cancelled", "dependency_blocked"})
+
+
+class WorkerStartupFailure(RuntimeError):
+    """A worker failed before entering genuine model-backed task execution."""
+
+    def __init__(self, task_id: str, category: str, reason: str):
+        self.task_id = task_id
+        self.category = category
+        self.reason = reason
+        super().__init__(f"worker startup failed for {task_id}: {category}: {reason}")
+
+
+def validate_dependency_graph(conn) -> None:
+    """Fail closed for missing prerequisites and cyclic task graphs.
+
+    Task creation normally enforces missing references through SQLite foreign
+    keys and benchmark suites require dependencies to point backward. This
+    check also protects resumed/manual databases and makes the scheduler's
+    startup behavior deterministic before any worker is launched.
+    """
+    task_ids = {
+        row["id"] for row in conn.execute("SELECT id FROM tasks")
+    }
+    edges = conn.execute(
+        "SELECT task_id, depends_on FROM task_deps ORDER BY task_id, depends_on"
+    ).fetchall()
+    missing = sorted({edge["depends_on"] for edge in edges} - task_ids)
+    if missing:
+        raise ValueError(
+            "dependency graph references missing prerequisite(s): " + ", ".join(missing)
+        )
+
+    indegree = {task_id: 0 for task_id in task_ids}
+    dependents = defaultdict(list)
+    for edge in edges:
+        indegree[edge["task_id"]] += 1
+        dependents[edge["depends_on"]].append(edge["task_id"])
+    ready = deque(sorted(task_id for task_id, degree in indegree.items() if degree == 0))
+    visited = 0
+    while ready:
+        task_id = ready.popleft()
+        visited += 1
+        for dependent in sorted(dependents[task_id]):
+            indegree[dependent] -= 1
+            if indegree[dependent] == 0:
+                ready.append(dependent)
+    if visited != len(task_ids):
+        cycle_nodes = sorted(task_id for task_id, degree in indegree.items() if degree)
+        raise ValueError(
+            "dependency graph contains a cycle involving: " + ", ".join(cycle_nodes)
+        )
+
+
+def advance_dependency_states(conn, *, run_id: str, block_needs_human: bool = True) -> bool:
+    """Settle blocked tasks to queued or dependency_blocked to a fixpoint.
+
+    A fixpoint pass makes transitive propagation deterministic even when task
+    insertion order does not happen to be topological. Only the scheduler
+    state transition path is used; blocked tasks never create attempts or
+    invoke workers/supervisors.
+    """
+    changed = False
+    while True:
+        pass_changed = False
+        blocked = conn.execute(
+            "SELECT id FROM tasks WHERE state = 'blocked' ORDER BY created_at, id"
+        ).fetchall()
+        for row in blocked:
+            task_id = row["id"]
+            deps = [r["depends_on"] for r in conn.execute(
+                "SELECT depends_on FROM task_deps WHERE task_id = ? ORDER BY depends_on",
+                (task_id,),
+            )]
+            if not deps:
+                cause = append_event(
+                    conn, source="scheduler", type="dep.satisfied", task_id=task_id,
+                    payload={"run_id": run_id},
+                )
+                transition(conn, task_id, "queued", cause_seq=cause)
+                pass_changed = changed = True
+                continue
+
+            dep_rows = []
+            for dep in deps:
+                dep_row = conn.execute(
+                    "SELECT state FROM tasks WHERE id = ?", (dep,)
+                ).fetchone()
+                if dep_row is None:
+                    # Graph validation should catch this before startup, but
+                    # fail closed if a database is modified while a run lives.
+                    raise ValueError(f"missing prerequisite {dep!r} for task {task_id!r}")
+                dep_rows.append((dep, dep_row["state"]))
+
+            blocking = [
+                {"task_id": dep, "state": state}
+                for dep, state in dep_rows
+                if state in _DEPENDENCY_BLOCKING_STATES
+                or (block_needs_human and state == "needs_human")
+            ]
+            if blocking:
+                reason = "required prerequisite cannot succeed in this run"
+                cause = append_event(
+                    conn, source="scheduler", type="dep.blocked", task_id=task_id,
+                    payload={
+                        "run_id": run_id,
+                        "blocked_task_id": task_id,
+                        "blocking_prerequisites": blocking,
+                        "reason": reason,
+                    },
+                )
+                transition(conn, task_id, "dependency_blocked", cause_seq=cause)
+                pass_changed = changed = True
+            elif all(state == "delivered" for _, state in dep_rows):
+                cause = append_event(
+                    conn, source="scheduler", type="dep.satisfied", task_id=task_id,
+                    payload={"run_id": run_id},
+                )
+                transition(conn, task_id, "queued", cause_seq=cause)
+                pass_changed = changed = True
+        if not pass_changed:
+            return changed
 
 
 async def _terminate_and_reap(proc, *, terminate: bool = True) -> None:
@@ -116,6 +239,7 @@ class Scheduler:
         self._worktrees: dict[str, object] = {}
         self._last_event_ts: dict[str, float] = {}
         self._wait_grace: dict[str, float] = {}  # task_id -> seconds, set by a "wait" decision
+        self._infrastructure_failure: WorkerStartupFailure | None = None
 
     # -- public entry point -------------------------------------------------
 
@@ -133,6 +257,7 @@ class Scheduler:
         still runs, tearing down any live worker cleanly.
         """
         reconcile(self.conn)
+        validate_dependency_graph(self.conn)
         self._pool.open()
         for row in self.conn.execute("SELECT id FROM tasks WHERE state = 'triage'").fetchall():
             sc = self.conn.execute(
@@ -150,8 +275,12 @@ class Scheduler:
         watchdog = asyncio.create_task(self._watchdog_loop())
         try:
             while forever or not self._team_settled():
-                self._advance_deps()
+                if self._infrastructure_failure:
+                    raise self._infrastructure_failure
+                self._advance_deps(block_needs_human=not forever)
                 await self._launch_ready()
+                if self._infrastructure_failure:
+                    raise self._infrastructure_failure
                 await asyncio.sleep(poll_interval_s if (forever and self._team_settled()) else 0.05)
         finally:
             watchdog.cancel()
@@ -170,23 +299,10 @@ class Scheduler:
 
     # -- blocked -> queued ----------------------------------------------------
 
-    def _advance_deps(self) -> None:
-        blocked = self.conn.execute("SELECT id FROM tasks WHERE state = 'blocked'").fetchall()
-        for row in blocked:
-            deps = [r["depends_on"] for r in self.conn.execute(
-                "SELECT depends_on FROM task_deps WHERE task_id = ?", (row["id"],))]
-            if not deps:
-                s = append_event(self.conn, source="scheduler", type="dep.satisfied", task_id=row["id"])
-                transition(self.conn, row["id"], "queued", cause_seq=s)
-                continue
-            states = [self.conn.execute("SELECT state FROM tasks WHERE id = ?", (d,)).fetchone()["state"]
-                     for d in deps]
-            if any(s in ("failed", "cancelled") for s in states):
-                s = append_event(self.conn, source="scheduler", type="dep.failed", task_id=row["id"])
-                transition(self.conn, row["id"], "cancelled", cause_seq=s)
-            elif all(s == "delivered" for s in states):
-                s = append_event(self.conn, source="scheduler", type="dep.satisfied", task_id=row["id"])
-                transition(self.conn, row["id"], "queued", cause_seq=s)
+    def _advance_deps(self, *, block_needs_human: bool = True) -> bool:
+        return advance_dependency_states(
+            self.conn, run_id=self.run_id, block_needs_human=block_needs_human,
+        )
 
     # -- queued -> running ----------------------------------------------------
 
@@ -371,13 +487,15 @@ class Scheduler:
                 except json.JSONDecodeError:
                     continue
                 etype, payload = rec.get("type"), rec.get("payload", {})
-                # tokens/cost ride on the payload (design.md section 5) but also
-                # get their own event columns -- FakeWorker payloads simply
-                # lack these keys, a no-op for the fault-injection suite, and
-                # only light up for real Agent SDK workers (M3).
-                usage_kwargs = dict(tokens_in=payload.get("tokens_in"),
-                                    tokens_out=payload.get("tokens_out"),
-                                    cost_usd=payload.get("cost_usd"))
+                # ResultMessage is the canonical aggregate for a worker
+                # session. AssistantMessage usage is retained in its payload
+                # for diagnostics, but is not put in event accounting columns;
+                # otherwise a session is double-counted.
+                usage_kwargs = {}
+                if etype == "result":
+                    usage_kwargs = dict(tokens_in=payload.get("tokens_in"),
+                                        tokens_out=payload.get("tokens_out"),
+                                        cost_usd=payload.get("cost_usd"))
                 attempt = latest_attempt(self.conn, task_id)
                 event_payload = {**payload, "attempt_id": attempt["id"] if attempt else None}
 
@@ -407,6 +525,21 @@ class Scheduler:
                         self._last_event_ts[task_id] = time.monotonic()
                         continue  # a nudge landed on proc.stdin; keep reading this same session
                     claimed_or_triaged = True
+                    break
+                elif etype == "startup_failed":
+                    category = str(payload.get("category") or "other_infrastructure_startup_failure")
+                    reason = str(payload.get("reason") or payload.get("error") or category)[:500]
+                    s = append_event(self.conn, source="worker", type="worker.startup_failed",
+                                     task_id=task_id, session_id=str(proc.pid),
+                                     payload={**event_payload, "category": category,
+                                              "reason": reason})
+                    claimed_or_triaged = True
+                    self._capture_candidate(task_id, disposition="startup_failed",
+                                            failure_cause=category)
+                    self._infrastructure_failure = WorkerStartupFailure(task_id, category, reason)
+                    # This is an infrastructure abort, not a worker/task
+                    # failure. It must never enter the supervisor policy.
+                    await self._teardown(task_id, expect_proc=proc)
                     break
                 else:
                     append_event(self.conn, source="worker", type=f"worker.{etype}",

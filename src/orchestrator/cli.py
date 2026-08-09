@@ -25,7 +25,7 @@ from orchestrator import config
 from orchestrator.scheduler import Scheduler
 from orchestrator.store import append_event, connect, create_task, transition
 from orchestrator.supervisor import always_escalate, invoke_supervisor
-from orchestrator.worker import spawn_fake_worker, spawn_sdk_worker
+from orchestrator.worker import spawn_cli_worker, spawn_fake_worker, spawn_sdk_worker
 
 # States worth a stdout line the moment a task lands there: the "your crew
 # needs you" and "here's your PR" moments. A backgrounded `run`/`daemon`
@@ -33,7 +33,7 @@ from orchestrator.worker import spawn_fake_worker, spawn_sdk_worker
 # (e.g. the Monitor tool) instead of polling `status` -- the event-driven
 # wake firstmate's watcher gives its user, built on the events table
 # that's already this system's source of truth (design.md section 3).
-_NOTIFY_STATES = ("needs_human", "delivered", "failed")
+_NOTIFY_STATES = ("needs_human", "delivered", "failed", "dependency_blocked")
 
 
 def _load_repo_registry(path: str = "repos.toml") -> dict:
@@ -62,7 +62,12 @@ def cmd_add_task(args) -> int:
 
 def _build_scheduler(conn, args) -> Scheduler:
     cfg = config.load(args.config)
-    spawn_worker = spawn_fake_worker if args.fake_worker else spawn_sdk_worker
+    if args.fake_worker:
+        spawn_worker = spawn_fake_worker
+    elif getattr(args, "direct_cli", False):
+        spawn_worker = spawn_cli_worker
+    else:
+        spawn_worker = spawn_sdk_worker
     supervisor = always_escalate if args.fake_supervisor else partial(
         invoke_supervisor, model=args.supervisor_model or cfg.model_supervisor)
     return Scheduler(
@@ -280,6 +285,8 @@ def _add_scheduler_args(p) -> None:
     p.add_argument("--fake-worker", action="store_true",
                    help="scripted FakeWorker instead of a real Claude Code session "
                         "(free, deterministic -- for dry runs)")
+    p.add_argument("--direct-cli", action="store_true",
+                   help="launch the installed claude CLI directly instead of the Agent SDK")
     p.add_argument("--fake-supervisor", action="store_true",
                    help="always escalate instead of calling a live LLM supervisor")
     p.add_argument("--yolo", action="store_true")

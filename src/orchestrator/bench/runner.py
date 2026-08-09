@@ -17,11 +17,15 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from orchestrator import config, delivery
-from orchestrator.scheduler import Scheduler
+from orchestrator.scheduler import (
+    Scheduler, WorkerStartupFailure, advance_dependency_states, validate_dependency_graph,
+)
 from orchestrator.store import append_event, connect, create_task, transition
 from orchestrator.supervisor import invoke_supervisor
 from orchestrator.verify.gate import VerifyRequest, run_verify
-from orchestrator.bench.preflight import validate_benchmark_isolation
+from orchestrator.bench.preflight import (
+    BenchmarkInfrastructureError, validate_benchmark_auth, validate_benchmark_isolation,
+)
 from orchestrator.worker import (
     WorktreePool,
     build_execution_contract,
@@ -70,6 +74,7 @@ def run_benchmark(
         raise ValueError("suite must define [bench].repo or --repo-root must be passed")
     repo = Path(repo_value)
     cfg = config.load(config_path)
+    worker_model = worker_model or cfg.model_worker
 
     worktrees = Path(worktree_root) if worktree_root else (
         Path(out_dir) / suite.name / f"{condition}-seed{seed}" / "worktrees"
@@ -80,6 +85,11 @@ def run_benchmark(
         suite, repo, worktrees,
         worker_slots=1 if condition == "sequential" else max_concurrency,
     )
+    if not fake_worker:
+        # This happens before run materialization, task creation, and any
+        # supervisor can be invoked. A failed auth smoke test cannot consume
+        # task retries or create an infrastructure-shaped task failure.
+        validate_benchmark_auth(worker_model)
 
     run_id = f"{suite.name}-{condition}-seed{seed}"
     run_dir = Path(out_dir) / suite.name / f"{condition}-seed{seed}"
@@ -104,7 +114,6 @@ def run_benchmark(
 
     db_path = run_dir / "run.db"
     worktrees = Path(worktree_root) if worktree_root else run_dir / "worktrees"
-    worker_model = worker_model or cfg.model_worker
     supervisor_model = supervisor_model or cfg.model_supervisor
 
     conn = connect(str(db_path))
@@ -127,18 +136,28 @@ def run_benchmark(
 
     started = time.monotonic()
     random.seed(seed)
-    if condition == "orchestrator":
-        asyncio.run(_run_orchestrator(
-            conn, worker_repo, worktrees, cfg, max_concurrency, worker_model, supervisor_model,
-            fake_worker, fake_supervisor, kill_one_after_s, suite.base_branch,
-            run_dir / "artifacts", run_id,
-        ))
-    else:
-        concurrency = 1 if condition == "sequential" else max_concurrency
-        asyncio.run(_run_baseline(
-            conn, worker_repo, worktrees, cfg, concurrency, worker_model, fake_worker, kill_one_after_s,
-            suite.base_branch, run_dir / "artifacts",
-        ))
+    try:
+        if condition == "orchestrator":
+            asyncio.run(_run_orchestrator(
+                conn, worker_repo, worktrees, cfg, max_concurrency, worker_model, supervisor_model,
+                fake_worker, fake_supervisor, kill_one_after_s, suite.base_branch,
+                run_dir / "artifacts", run_id,
+            ))
+        else:
+            concurrency = 1 if condition == "sequential" else max_concurrency
+            asyncio.run(_run_baseline(
+                conn, worker_repo, worktrees, cfg, concurrency, worker_model, fake_worker, kill_one_after_s,
+                suite.base_branch, run_dir / "artifacts", run_id,
+            ))
+    except WorkerStartupFailure as exc:
+        append_event(conn, source="system", type="bench.run_aborted", payload={
+            "run_id": run_id,
+            "category": exc.category,
+            "task_id": exc.task_id,
+            "reason": exc.reason,
+        })
+        conn.close()
+        raise BenchmarkInfrastructureError(str(exc)) from exc
 
     append_event(conn, source="system", type="bench.run_finished", payload={
         "duration_s": round(time.monotonic() - started, 3),
@@ -271,8 +290,9 @@ async def _kill_one_scheduler_worker(conn, scheduler: Scheduler, delay_s: float)
 async def _run_baseline(
     conn, repo: Path, worktrees: Path, cfg: config.Config, concurrency: int,
     worker_model: str, fake_worker: bool, kill_one_after_s: float | None,
-    base_branch: str, artifact_root: Path,
+    base_branch: str, artifact_root: Path, run_id: str,
 ) -> None:
+    validate_dependency_graph(conn)
     pool = WorktreePool(repo, worktrees, concurrency)
     pool.open()
     running: dict[asyncio.Task, str] = {}
@@ -280,7 +300,7 @@ async def _run_baseline(
     kill_at = time.monotonic() + kill_one_after_s if kill_one_after_s is not None else None
     try:
         while True:
-            _advance_baseline_deps(conn)
+            advance_dependency_states(conn, run_id=run_id, block_needs_human=True)
             while len(running) < concurrency:
                 # create_task() does not run the coroutine until this loop
                 # yields, so a plain SELECT here can select the same queued
@@ -353,6 +373,13 @@ async def _run_baseline_task(
                 continue
             etype = rec.get("type")
             payload = rec.get("payload", {})
+            usage_kwargs = {}
+            if etype == "result":
+                # ResultMessage is the complete session aggregate. Do not
+                # count per-AssistantMessage usage a second time.
+                usage_kwargs = dict(tokens_in=payload.get("tokens_in"),
+                                    tokens_out=payload.get("tokens_out"),
+                                    cost_usd=payload.get("cost_usd"))
             if etype == "done_claimed":
                 s = append_event(conn, source="worker", type="worker.done_claimed",
                                  task_id=task_id, session_id=str(proc.pid), payload=payload,
@@ -368,6 +395,14 @@ async def _run_baseline_task(
                 _verify_and_finish_baseline(conn, task_id, cfg, artifact_root)
                 done = True
                 return
+            if etype == "startup_failed":
+                category = str(payload.get("category") or "other_infrastructure_startup_failure")
+                reason = str(payload.get("reason") or payload.get("error") or category)[:500]
+                append_event(conn, source="worker", type="worker.startup_failed",
+                             task_id=task_id, session_id=str(proc.pid),
+                             payload={**payload, "category": category, "reason": reason},
+                             **usage_kwargs)
+                raise WorkerStartupFailure(task_id, category, reason)
             if etype == "asked":
                 s = append_event(conn, source="worker", type="worker.asked",
                                  task_id=task_id, session_id=str(proc.pid), payload=payload)
@@ -375,9 +410,7 @@ async def _run_baseline_task(
                 return
             append_event(conn, source="worker", type=f"worker.{etype}", task_id=task_id,
                          session_id=str(proc.pid), payload=payload,
-                         tokens_in=payload.get("tokens_in"),
-                         tokens_out=payload.get("tokens_out"),
-                         cost_usd=payload.get("cost_usd"))
+                         **usage_kwargs)
 
         if not done:
             code = await proc.wait()
@@ -489,29 +522,15 @@ def _fail_running_or_triage(conn, task_id: str, cause_seq: int, reason: str) -> 
 
 
 def _advance_baseline_deps(conn) -> None:
-    blocked = conn.execute("SELECT id FROM tasks WHERE state = 'blocked' ORDER BY created_at").fetchall()
-    for row in blocked:
-        deps = [r["depends_on"] for r in conn.execute(
-            "SELECT depends_on FROM task_deps WHERE task_id = ?", (row["id"],))]
-        if not deps:
-            s = append_event(conn, source="scheduler", type="dep.satisfied", task_id=row["id"])
-            transition(conn, row["id"], "queued", cause_seq=s)
-            continue
-        states = [
-            conn.execute("SELECT state FROM tasks WHERE id = ?", (dep,)).fetchone()["state"]
-            for dep in deps
-        ]
-        if any(state in ("failed", "cancelled") for state in states):
-            s = append_event(conn, source="scheduler", type="dep.failed", task_id=row["id"])
-            transition(conn, row["id"], "cancelled", cause_seq=s)
-        elif all(state == "delivered" for state in states):
-            s = append_event(conn, source="scheduler", type="dep.satisfied", task_id=row["id"])
-            transition(conn, row["id"], "queued", cause_seq=s)
+    """Compatibility wrapper for callers/tests of the old baseline helper."""
+    validate_dependency_graph(conn)
+    advance_dependency_states(conn, run_id="baseline", block_needs_human=True)
 
 
 def _baseline_settled(conn) -> bool:
     row = conn.execute(
-        "SELECT COUNT(*) c FROM tasks WHERE state NOT IN ('delivered', 'failed', 'cancelled')"
+        "SELECT COUNT(*) c FROM tasks WHERE state NOT IN "
+        "('needs_human', 'delivered', 'failed', 'cancelled', 'dependency_blocked')"
     ).fetchone()
     return row["c"] == 0
 

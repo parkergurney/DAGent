@@ -10,26 +10,31 @@ from orchestrator.bench.report import (
     summarize_db,
     summarize_groups,
 )
+from orchestrator.bench.preflight import BenchmarkPreflightError
 from orchestrator.bench.runner import CONDITIONS, run_benchmark
 
 
 def cmd_run(args) -> int:
-    manifest = run_benchmark(
-        args.suite,
-        condition=args.condition,
-        out_dir=args.out_dir,
-        seed=args.seed,
-        repo_root=args.repo_root,
-        worktree_root=args.worktree_root,
-        max_concurrency=args.max_concurrency,
-        worker_model=args.worker_model,
-        supervisor_model=args.supervisor_model,
-        config_path=args.config,
-        fake_worker=args.fake_worker,
-        fake_supervisor=args.fake_supervisor,
-        kill_one_after_s=args.kill_one_after,
-        overwrite=args.overwrite,
-    )
+    try:
+        manifest = run_benchmark(
+            args.suite,
+            condition=args.condition,
+            out_dir=args.out_dir,
+            seed=args.seed,
+            repo_root=args.repo_root,
+            worktree_root=args.worktree_root,
+            max_concurrency=args.max_concurrency,
+            worker_model=args.worker_model,
+            supervisor_model=args.supervisor_model,
+            config_path=args.config,
+            fake_worker=args.fake_worker,
+            fake_supervisor=args.fake_supervisor,
+            kill_one_after_s=args.kill_one_after,
+            overwrite=args.overwrite,
+        )
+    except BenchmarkPreflightError as exc:
+        print(f"benchmark preflight failed: {exc}", file=sys.stderr)
+        return 2
     print(f"run_id: {manifest.run_id}")
     print(f"db:     {manifest.db}")
     print(f"dir:    {manifest.run_dir}")

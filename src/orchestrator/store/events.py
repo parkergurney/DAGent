@@ -32,9 +32,9 @@ def ulid() -> str:
 # --- state machine (design.md section 4) ------------------------------------
 STATES = {
     "blocked", "queued", "running", "verifying", "triage", "needs_human",
-    "delivering", "delivered", "failed", "cancelled",
+    "delivering", "delivered", "failed", "cancelled", "dependency_blocked",
 }
-TERMINAL = {"delivered", "failed", "cancelled"}
+TERMINAL = {"delivered", "failed", "cancelled", "dependency_blocked"}
 
 # Legal (from -> to) edges, excluding the universal "any -> cancelled" which is
 # handled in _legal() (manager may kill any non-terminal task).
@@ -53,6 +53,7 @@ _TRANSITIONS = {
     ("needs_human", "delivering"),
     ("delivering", "delivered"),
     ("delivering", "triage"),
+    ("blocked", "dependency_blocked"),
 }
 
 # Columns transition() may update alongside the state change. `brief` joined

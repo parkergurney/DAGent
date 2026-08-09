@@ -6,11 +6,13 @@ from pathlib import Path
 import pytest
 
 from orchestrator.bench.cli import main as bench_main
+from orchestrator.bench.preflight import BenchmarkPreflightError, validate_benchmark_auth
 from orchestrator.bench.report import summarize_db
 from orchestrator.bench.report import find_run_dbs
 from orchestrator.bench.runner import _materialize_worker_repo, run_benchmark
 from orchestrator.bench.suite import load_suite
 from orchestrator.store import connect
+from orchestrator.worker.sdk import WorkerAuthSmokeResult
 from tests.helpers import git, init_repo
 
 
@@ -198,6 +200,94 @@ def test_benchmark_rejects_hidden_source_inside_worker_allowlist(tmp_path):
         )
 
 
+def test_benchmark_auth_guard_rejects_explicit_api_credentials(monkeypatch):
+    called = False
+
+    def smoke(_model):
+        nonlocal called
+        called = True
+        return WorkerAuthSmokeResult(0, ("messaged",), True)
+
+    monkeypatch.setattr("orchestrator.bench.preflight.run_worker_auth_smoke_test", smoke)
+    with pytest.raises(BenchmarkPreflightError, match="ANTHROPIC_API_KEY"):
+        validate_benchmark_auth(
+            "claude-sonnet-5", env={"ANTHROPIC_API_KEY": "test-only-marker"}
+        )
+    assert not called
+
+
+def test_auth_preflight_failure_starts_no_tasks_or_supervisor(tmp_path, monkeypatch):
+    repo = init_repo(tmp_path)
+    suite_path = _suite_file(tmp_path, repo)
+    monkeypatch.setattr(
+        "orchestrator.bench.preflight.run_worker_auth_smoke_test",
+        lambda _model: WorkerAuthSmokeResult(1, (), False),
+    )
+    monkeypatch.setattr(
+        "orchestrator.bench.runner.invoke_supervisor",
+        lambda *_args, **_kwargs: pytest.fail("supervisor must not run"),
+    )
+
+    with pytest.raises(BenchmarkPreflightError, match="authentication smoke test"):
+        run_benchmark(suite_path, condition="orchestrator", out_dir=tmp_path / "bench")
+
+    assert not list((tmp_path / "bench").rglob("run.db"))
+
+
+def test_auth_message_with_zero_exit_is_not_a_smoke_success(monkeypatch):
+    monkeypatch.setattr(
+        "orchestrator.bench.preflight.run_worker_auth_smoke_test",
+        lambda _model: WorkerAuthSmokeResult(
+            0, ("messaged", "result"), False, result_success=False,
+            startup_failure_category="authentication_failure",
+        ),
+    )
+
+    with pytest.raises(BenchmarkPreflightError, match="genuine authenticated"):
+        validate_benchmark_auth("claude-sonnet-5")
+
+
+def test_bench_cli_reports_auth_preflight_failure(tmp_path, monkeypatch, capsys):
+    repo = init_repo(tmp_path)
+    suite_path = _suite_file(tmp_path, repo)
+    monkeypatch.setattr(
+        "orchestrator.bench.preflight.run_worker_auth_smoke_test",
+        lambda _model: WorkerAuthSmokeResult(1, (), False),
+    )
+
+    rc = bench_main([
+        "run", "--suite", str(suite_path), "--condition", "sequential",
+        "--out-dir", str(tmp_path / "bench"),
+    ])
+
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "benchmark preflight failed" in captured.err
+    assert "authentication smoke test" in captured.err
+
+
+def test_successful_auth_preflight_allows_benchmark_startup(tmp_path, monkeypatch):
+    repo = init_repo(tmp_path)
+    suite_path = _suite_file(tmp_path, repo)
+    monkeypatch.setattr(
+        "orchestrator.bench.preflight.run_worker_auth_smoke_test",
+        lambda _model: WorkerAuthSmokeResult(
+            0, ("result", "execution_started"), True,
+            result_success=True, session_id="smoke-session",
+        ),
+    )
+
+    async def no_tasks(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("orchestrator.bench.runner._run_baseline", no_tasks)
+    manifest = run_benchmark(
+        suite_path, condition="sequential", out_dir=tmp_path / "bench", overwrite=True
+    )
+
+    assert Path(manifest.db).exists()
+
+
 def test_sequential_baseline_run_records_metrics(tmp_path):
     repo = init_repo(tmp_path)
     suite_path = _suite_file(tmp_path, repo)
@@ -327,7 +417,7 @@ def test_bench_cli_report_recurses_and_summarizes_across_suites(tmp_path, capsys
     out = capsys.readouterr().out
     assert rc == 0
     assert "group\truns\ttasks" in out
-    assert "sequential\t2\t2\t2\t100.0%" in out
+    assert "sequential\t2\t2\t2\t2\t0\t0\t0\t0\t0\t100.0%" in out
 
 
 def test_benchmark_artifacts_are_scoped_to_each_run(tmp_path):

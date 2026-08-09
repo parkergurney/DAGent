@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"fixture-session-2"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I need one choice."}]},"session_id":"fixture-session-2"}
+{"type":"result","subtype":"success","is_error":false,"result":"I need one choice.\nASK: which port should I use?","session_id":"fixture-session-2","usage":{"input_tokens":40,"output_tokens":12},"total_cost_usd":0.004}

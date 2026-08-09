@@ -72,7 +72,7 @@ def test_fan_in_waits_for_every_dependency(tmp_path):
     assert _delivered_seq(conn, c) < _spawned_seq(conn, d)
 
 
-def test_dep_failure_cascades_to_cancelled(tmp_path):
+def test_dep_failure_cascades_to_dependency_blocked(tmp_path):
     repo = init_repo(tmp_path)
     conn = connect()
     a = _create(conn, repo, "clean")
@@ -85,7 +85,7 @@ def test_dep_failure_cascades_to_cancelled(tmp_path):
     _run(conn, repo, tmp_path, max_concurrency=2)
 
     assert _state(conn, a) == "cancelled"
-    assert _state(conn, b) == "cancelled"
+    assert _state(conn, b) == "dependency_blocked"
     assert _spawned_seq(conn, b) is None  # never ran at all
 
 
