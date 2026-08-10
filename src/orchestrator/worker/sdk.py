@@ -19,6 +19,7 @@ from orchestrator.worker.sandbox import (
     cleanup_worker_sandbox,
     prepare_worker_sandbox,
     register_worker_sandbox,
+    verify_subscription_auth,
 )
 from orchestrator.worker.contract import build_execution_contract
 from orchestrator.worker.sdk_worker import _AUTH_FAILURE_MARKERS
@@ -150,6 +151,11 @@ async def spawn_sdk_worker(task: dict, worktree, *, model: str | None = None
 
     env = {**os.environ, "PYTHONPATH": os.pathsep.join([_SRC, os.environ.get("PYTHONPATH", "")])}
     env = sandbox.environment(env)
+    try:
+        await verify_subscription_auth(sandbox, worktree, env)
+    except Exception:
+        sandbox.cleanup()
+        raise
     # Validate Seatbelt application before launching a real SDK session. A
     # nonzero probe is a hard startup failure, never a reason to retry the
     # command without the outer profile.

@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import os
 import sys
 
 import pytest
@@ -30,6 +29,10 @@ def test_profile_allows_public_worktree_but_not_its_parent_or_hidden_source(tmp_
         assert f'(allow file-write* (subpath "{wt.resolve()}"))' in worker.profile
         assert f'(allow file-read* (subpath "{parent}"))' not in worker.profile
         assert hidden_source not in worker.profile
+        assert "Keychains" not in worker.profile
+        assert "securityd" not in worker.profile
+        assert "SecurityServer" not in worker.profile
+        assert '(allow network' not in worker.profile
         assert str(worker.private_dir) in worker.profile
         assert sandbox.path_is_worker_visible(wt / "public.py", wt, allowlist=worker.allowlist)
         assert not sandbox.path_is_worker_visible(tmp_path / "bench" / "hidden.py", wt,
@@ -72,8 +75,8 @@ def test_runtime_allowlist_includes_python_extension_dependencies():
         assert sandbox._resolve_existing(ssl_extensions[0]) in runtime_paths
 
 
-def test_stages_only_minimal_claude_auth_inputs(tmp_path, monkeypatch):
-    """Worker config must not inherit the operator's full Claude state."""
+def test_worker_config_does_not_import_host_auth_state(tmp_path):
+    """Worker config must not inherit the operator's Claude state."""
     host_home = tmp_path / "host-home"
     (host_home / ".claude").mkdir(parents=True)
     credentials = host_home / ".claude" / ".credentials.json"
@@ -85,34 +88,24 @@ def test_stages_only_minimal_claude_auth_inputs(tmp_path, monkeypatch):
         "projects": {"/private/project": {"lastTotalInputTokens": 123}},
         "secretCache": "must-not-copy",
     }))
-    monkeypatch.setattr(sandbox, "_home_dir", lambda: host_home)
-
     private = tmp_path / "private"
     private.mkdir()
-    sandbox._stage_claude_auth(private)
+    sandbox._prepare_claude_config(private)
 
-    assert (private / "claude-config" / ".credentials.json").read_text() == credentials.read_text()
-    assert json.loads((private / ".claude.json").read_text()) == {
-        "oauthAccount": {"accountUuid": "account-1", "organizationUuid": "org-1"}
-    }
+    assert not (private / ".claude.json").exists()
+    assert not (private / "claude-config" / ".credentials.json").exists()
     assert not (private / "claude-config" / "settings.json").exists()
     assert not (private / "claude-config" / "history.jsonl").exists()
-    assert "must-not-copy" not in (private / ".claude.json").read_text()
-    assert os.stat(private / "claude-config" / ".credentials.json").st_mode & 0o777 == 0o600
-    assert os.stat(private / ".claude.json").st_mode & 0o777 == 0o600
 
 
-def test_staging_does_not_follow_auth_symlinks(tmp_path, monkeypatch):
+def test_staging_never_copies_auth_credentials(tmp_path):
     host_home = tmp_path / "host-home"
     (host_home / ".claude").mkdir(parents=True)
-    secret = tmp_path / "secret.json"
-    secret.write_text('{"refreshToken":"secret"}')
-    (host_home / ".claude" / ".credentials.json").symlink_to(secret)
-    monkeypatch.setattr(sandbox, "_home_dir", lambda: host_home)
+    (host_home / ".claude" / ".credentials.json").write_text('{"refreshToken":"secret"}')
 
     private = tmp_path / "private"
     private.mkdir()
-    sandbox._stage_claude_auth(private)
+    sandbox._prepare_claude_config(private)
 
     assert not (private / "claude-config" / ".credentials.json").exists()
 
@@ -129,8 +122,30 @@ def test_worker_environment_uses_private_home(tmp_path):
     )
 
     env = worker.environment({"HOME": "/host-home", "PATH": "/bin",
-                              "ANTHROPIC_API_KEY": "must-not-pass"})
+                              "ANTHROPIC_API_KEY": "must-not-pass",
+                              "ANTHROPIC_AUTH_TOKEN": "must-not-pass",
+                              "CLAUDE_CODE_OAUTH_TOKEN": "must-not-pass",
+                              "CLAUDE_CODE_OAUTH_REFRESH_TOKEN": "must-not-pass"})
 
     assert env["HOME"] == str(private)
     assert env["PATH"] == "/bin"
     assert "ANTHROPIC_API_KEY" not in env
+    assert "ANTHROPIC_AUTH_TOKEN" not in env
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
+    assert "CLAUDE_CODE_OAUTH_REFRESH_TOKEN" not in env
+
+
+def test_subscription_authentication_proof_requires_first_party_oauth():
+    assert sandbox.subscription_authentication_proven(json.dumps({
+        "loggedIn": True, "authMethod": "oauth", "apiProvider": "firstParty",
+    }))
+    assert sandbox.subscription_authentication_proven(json.dumps({
+        "loggedIn": True, "authMethod": "claude.ai", "apiProvider": "firstParty",
+    }))
+    assert not sandbox.subscription_authentication_proven(json.dumps({
+        "loggedIn": True, "authMethod": "apiKey", "apiProvider": "firstParty",
+    }))
+    assert not sandbox.subscription_authentication_proven(
+        '{"loggedIn":true,"authMethod":"oauth","apiProvider":"other"}'
+    )
+    assert not sandbox.subscription_authentication_proven("not JSON")

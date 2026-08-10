@@ -1,4 +1,4 @@
-"""Fail-closed macOS Seatbelt boundary for real SDK workers.
+"""Fail-closed macOS Seatbelt boundary for real workers.
 
 The Claude SDK sandbox protects commands launched by Claude Code.  This
 boundary protects the worker subprocess itself, including Python code and
@@ -12,8 +12,11 @@ not an untrusted execution boundary.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import platform
+import signal
 import shutil
 import string
 import subprocess
@@ -36,60 +39,77 @@ _ENV_EXACT = {
     "LANG", "VIRTUAL_ENV", "SYSTEM_VERSION_COMPAT", "__CF_USER_TEXT_ENCODING",
 }
 _ENV_PREFIXES = ("LC_", "CLAUDE_")
+_FORBIDDEN_AUTH_ENV = {
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+}
 
 
 def _resolve_existing(path: str | Path) -> Path:
     return Path(path).expanduser().resolve(strict=False)
 
 
-def _home_dir() -> Path:
-    return Path.home()
+def subscription_authentication_proven(status_output: str | bytes) -> bool:
+    """Accept only Claude Code's first-party OAuth subscription status."""
+    try:
+        payload = json.loads(status_output)
+    except (TypeError, ValueError):
+        return False
+    return (
+        isinstance(payload, dict)
+        and payload.get("loggedIn") is True
+        and payload.get("authMethod") in {"oauth", "claude.ai"}
+        and payload.get("apiProvider") == "firstParty"
+    )
 
 
-def _copy_private_file(source: Path, destination: Path) -> None:
-    """Copy one operator-owned auth file without following a symlink."""
-    if not source.is_file() or source.is_symlink():
-        return
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(source, destination)
-    # Auth material must not inherit a permissive mode from the operator's
-    # config tree.  The worker needs to read it, but no other user should.
-    destination.chmod(0o600)
+async def verify_subscription_auth(sandbox, worktree: Path, env: dict[str, str]) -> None:
+    """Prove Claude's host subscription login works inside this exact Seatbelt."""
+    claude = shutil.which("claude")
+    if not claude:
+        raise WorkerSandboxUnavailable(
+            "Claude CLI is unavailable; refusing to run without proven subscription auth"
+        )
+    proc = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *sandbox.command([claude, "auth", "status", "--json"]),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            cwd=str(worktree),
+            env=env,
+            start_new_session=True,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+    except asyncio.TimeoutError as exc:
+        if proc is not None and proc.returncode is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            await proc.wait()
+        raise WorkerSandboxUnavailable(
+            "Claude subscription authentication probe timed out inside Seatbelt"
+        ) from exc
+    except Exception as exc:
+        raise WorkerSandboxUnavailable(
+            "Claude subscription authentication probe could not start inside Seatbelt"
+        ) from exc
+    if proc.returncode != 0 or not subscription_authentication_proven(stdout):
+        # Never include CLI output: a future status format must not turn an
+        # authentication failure into a credential disclosure.
+        raise WorkerSandboxUnavailable(
+            "Claude subscription authentication was not proven inside Seatbelt"
+        )
 
 
-def _stage_claude_auth(private_dir: Path) -> None:
-    """Stage only the Claude authentication inputs needed by a worker.
-
-    Claude Code stores credentials in ``~/.claude/.credentials.json`` on
-    Linux/Windows and in the macOS Keychain.  The latter is not a file we can
-    safely copy; Claude Code can consult the Keychain directly.  ``~/.claude``
-    is deliberately never copied.  On all platforms, retain only the
-    account metadata Claude Code uses to associate OAuth credentials with the
-    logged-in account; do not copy the host's project history or settings. On
-    macOS, account metadata alone cannot make a private HOME see the host
-    Keychain; the worker therefore fails closed until that OS boundary has a
-    safe, non-secret solution.
-    """
+def _prepare_claude_config(private_dir: Path) -> None:
+    """Create private Claude state without importing host authentication data."""
     config_dir = private_dir / "claude-config"
     config_dir.mkdir(mode=0o700)
-
-    credentials = _home_dir() / ".claude" / ".credentials.json"
-    _copy_private_file(credentials, config_dir / ".credentials.json")
-
-    # Claude Code's global config lives beside ~/.claude.  Recreate only its
-    # OAuth account metadata under the isolated HOME; the original file also
-    # contains project history, cached usage, and other operator state.
-    global_config = _home_dir() / ".claude.json"
-    if global_config.is_file() and not global_config.is_symlink():
-        try:
-            payload = json.loads(global_config.read_text())
-        except (OSError, ValueError):
-            payload = {}
-        account = payload.get("oauthAccount")
-        if isinstance(account, dict):
-            isolated_config = private_dir / ".claude.json"
-            isolated_config.write_text(json.dumps({"oauthAccount": account}, separators=(",", ":")))
-            isolated_config.chmod(0o600)
 
 
 def _git_path(worktree: Path, *args: str) -> Path:
@@ -238,7 +258,7 @@ class WorkerSandbox:
             private_dir = Path(tempfile.mkdtemp(
                 prefix=f".orch-worker-{safe_task_id}-", dir=wt.parent,
             )).resolve()
-            _stage_claude_auth(private_dir)
+            _prepare_claude_config(private_dir)
             allowed = {wt, git_dir, git_common_dir, private_dir, *_runtime_paths()}
             allowlist = tuple(sorted(allowed, key=str))
             profile = _profile(allowlist, private_dir)
@@ -263,10 +283,11 @@ class WorkerSandbox:
         # must not become a worker-side discovery channel.
         env = {
             key: value for key, value in base.items()
-            if key in _ENV_EXACT or any(key.startswith(prefix) for prefix in _ENV_PREFIXES)
+            if key not in _FORBIDDEN_AUTH_ENV
+            and (key in _ENV_EXACT or any(key.startswith(prefix) for prefix in _ENV_PREFIXES))
         }
-        # Keep Claude Code's global config and any credential file inside the
-        # worker's private directory.  This prevents a child from reading the
+        # Keep Claude Code's global config and runtime state inside the
+        # worker's private directory. This prevents a child from reading the
         # operator's full ~/.claude tree through HOME-based lookups.
         env["HOME"] = str(self.private_dir)
         env["PYTHONPATH"] = str(_ORCHESTRATOR_SRC)
@@ -297,7 +318,8 @@ def _profile(allowlist: tuple[Path, ...], private_dir: Path) -> str:
     ``system.sb`` supplies the OS facilities needed to start a normal
     process; it does not grant access to arbitrary user directories.  All
     project/runtime file access is then explicitly scoped to the allowlist.
-    There is intentionally no network allow rule.
+    No host Keychain path or IPC service is allowlisted until a safe boundary
+    is proven. There is intentionally no network allow rule.
     """
     lines = [
         "(version 1)",
