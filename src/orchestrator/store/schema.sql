@@ -8,9 +8,6 @@ CREATE TABLE IF NOT EXISTS tasks (
   repo          TEXT NOT NULL,
   delivery_mode TEXT NOT NULL CHECK (delivery_mode IN ('pr','local','scout')),
   verify_cmd    TEXT,
-  hidden_cmd    TEXT,
-  setup_cmd     TEXT,
-  protected_paths TEXT,        -- JSON array of opt-in globs; NULL = no protected paths
   state         TEXT NOT NULL DEFAULT 'blocked' CHECK (state IN
     ('blocked','queued','running','verifying','triage','needs_human',
      'delivering','delivered','failed','cancelled','dependency_blocked')),

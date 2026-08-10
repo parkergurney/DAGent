@@ -1,11 +1,33 @@
 # agent-orchestrator (working name)
 
 Talk to one process; it runs a team of Claude Code sessions — spawned in
-isolated git worktrees, supervised by a deterministic state machine, verified
-by tests before anything is called done, and benchmarked against baselines.
+internal git worktrees, supervised by a deterministic state machine, and
+tracked with durable attempts, candidate lineage, and experiment metrics.
 
-Design: [docs/design.md](docs/design.md). Status: M5 complete (worktree pool, dep resolution, all three delivery modes), plus an `orchestrator` CLI on top.
+Design: [docs/design.md](docs/design.md). Status: M6 Harbor boundary complete
+(worktree pool, dependencies, delivery modes, durable metrics, and CLI).
 Usage: [docs/usage.md](docs/usage.md).
+
+## Current security model
+
+Harbor is the supported benchmark isolation boundary. Harbor or another
+explicitly trusted outer environment supplies OS-level isolation; the
+orchestrator does not sandbox a live Claude worker or protect the host
+filesystem from it. Workers in one Harbor trial share that trial's container
+resources. Internal Git worktrees isolate concurrent edits from one another,
+not workers from the host.
+
+Hidden tests and scoring belong in Harbor's separate verifier environment.
+Their results must never enter the agent environment. Visible verification is
+public worker feedback only, runs against agent-visible repository state, and
+inherits the worker environment; it must use the same trusted outer boundary.
+Caller-supplied worker environment variables may contain credentials and are
+used only for the child process, never persisted or logged. The orchestrator
+does not access the macOS Keychain.
+
+Real CLI runs require either `--external-isolation` (a caller declaration that
+Harbor/container isolation is present) or `--trusted-development` (explicit
+direct-host development mode). Fake workers remain available without either.
 
 Day-to-day operation is meant to be natural language through an agent session:
 ask it to queue tasks, start or watch a batch, check status, and answer
@@ -27,6 +49,8 @@ only need raw commands for setup, debugging, or automation.
       verify/             deterministic verify gate + standalone CLI
       supervisor/         TriagePacket -> single LLM call -> closed action enum
       delivery/           pr | local | scout
-    bench/                harness, conditions, task suites
+    src/orchestrator/harbor.py  small Harbor adapter boundary
+    src/orchestrator/metrics.py durable experiment metrics
+    src/orchestrator/policies.py policy selection for Harbor experiments
     tests/scenarios/      FakeWorker scenario suite = regression suite
     data/                 runtime state, gitignored

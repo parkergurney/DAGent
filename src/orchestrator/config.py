@@ -22,8 +22,8 @@ class Config:
     wait_ceiling_s: int = 1800
     verify_timeout_s: int = 600
     transcript_tail_tokens: int = 3000
-    # ponytail: placeholder model ids; pin exact versions in config day one of
-    # the benchmark (design.md section 10).
+    # Placeholder model ids; pin exact versions in the Harbor experiment
+    # configuration when running an evaluation.
     model_worker: str = "claude-sonnet-5"
     model_supervisor: str = "claude-sonnet-5"
 

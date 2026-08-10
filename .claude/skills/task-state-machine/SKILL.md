@@ -1,6 +1,6 @@
 ---
 name: task-state-machine
-description: Full task state machine reference for this orchestrator - states, transition table, and design notes on triage funneling, delivered semantics, dependency blocking, and crash recovery. Use when touching scheduler or state-machine code, working with task states (blocked/queued/running/verifying/triage/needs_human/delivering/delivered/failed/cancelled/dependency_blocked), or asked about task transitions or crash recovery behavior.
+description: Task states, transitions, dependency blocking, and crash recovery for the orchestrator.
 ---
 
 # Task state machine
@@ -32,20 +32,9 @@ finite batch, but remains recoverable in daemon mode.
 
 Design notes:
 
-- Every exception path funnels through `triage`: stall, crash, failed verify,
-  failed delivery become the same shape of problem. The supervisor is one
-  function with one prompt, not five special cases.
-- `delivered` means artifact handed off (PR open), not merged. Post-delivery
-  merge tracking is an event, not a state.
-- Crash recovery is a reconciliation pass at startup: for every task in
-  `running`, check whether `session_id` is a live session; dead ones get a
-  synthetic `worker.exited` event and route through triage like any other
-  crash. No special recovery code path.
-- Worker capacity is a live execution lease, not a task-lifetime lease. After
-  a worker's candidate SHA and any dirty-worktree status are durable, the
-  process is reaped and its pooled checkout/worker lease is released before
-  verification or supervisor triage. Verification reads the durable candidate
-  ref, allowing another task to reuse the checkout. A live ask/nudge/wait
-  session retains its lease because the process and checkout are still needed
-  for the intervention.
+- Every exception path funnels through `triage`.
+- `delivered` means artifact handed off, not merged.
+- Crash recovery reconciles dead running sessions through `worker.exited`.
+- Candidate SHA and dirty-worktree facts are durable before the worker lease is
+  released; verification reads the durable candidate ref.
 <!-- /sync:task-states -->

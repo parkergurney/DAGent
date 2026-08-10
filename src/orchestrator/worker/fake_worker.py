@@ -107,30 +107,6 @@ def _empty_diff(wt):
     emit("done_claimed", result="DONE_CLAIM: ok")
 
 
-@scenario("protected_edit")
-def _protected_edit(wt):
-    """Edits a test file that already existed at base_sha -- the anti-gaming
-    check. Requires the repo to be seeded with tests/test_fake.py before the
-    task's base_sha is captured (see tests/scenarios/test_fake_scenarios.py)."""
-    test_file = wt / "tests" / "test_fake.py"
-    test_file.write_text(test_file.read_text() + "\ndef test_y():\n    assert True\n")
-    emit("tool_used", tool="Edit", target="tests/test_fake.py")
-    _commit(wt)
-    emit("done_claimed", result="DONE_CLAIM: ok")
-
-
-@scenario("protected_new")
-def _protected_new(wt):
-    """Adds a brand-new file under tests/ -- exempt from the anti-gaming
-    check since it can't be replacing a test the worker couldn't pass."""
-    test_dir = wt / "tests"
-    test_dir.mkdir(exist_ok=True)
-    (test_dir / "test_new.py").write_text("def test_x():\n    assert True\n")
-    emit("tool_used", tool="Write", target="tests/test_new.py")
-    _commit(wt)
-    emit("done_claimed", result="DONE_CLAIM: ok")
-
-
 @scenario("escape_worktree")
 def _escape_worktree(wt):
     """Attempts a write to an absolute path outside the worktree -- the
@@ -138,8 +114,9 @@ def _escape_worktree(wt):
     checkout, dirtying it via Bash, a tool the PreToolUse hook never
     inspected). FakeWorker has no OS-level sandbox of its own, so this
     exercises the same escape-detection guard sdk_worker.py's hook applies,
-    proving the check itself is correct; the OS-level Bash sandbox that
-    closes the real gap is verified separately (docs/devlog.md probe)."""
+    proving the check itself is correct. The hook is not a host security
+    boundary; Harbor or another trusted outer environment must contain live
+    workers and their visible verification."""
     target = wt.parent / "escaped.txt"
     if _path_escapes_worktree(str(target), wt):
         emit("tool_used", tool="Bash", target=str(target),

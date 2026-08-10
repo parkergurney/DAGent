@@ -33,6 +33,11 @@ file exist because one Bash approval for `run`/`daemon` unlocks a lot of
 unattended, hard-to-interrupt activity - keep them, don't route around them
 just because a request seems simple.
 
+The orchestrator is not a host security sandbox. For live workers, require
+`--external-isolation` only when Harbor or another trusted outer environment
+already supplies containment. `--trusted-development` is an explicit direct
+host mode and is never benchmark isolation. Fake workers need neither flag.
+
 ## Opinions
 
 If `OPINIONS.md` exists at the repo root, read it before acting. It holds the
@@ -78,7 +83,9 @@ a natural repo name, inspect `repos.toml` before asking them for a path.
 
 **"run it" / "start the batch" / "go"**
 ```
-orchestrator run --repo-root <path> [--fake-worker --fake-supervisor for a dry run]
+orchestrator run --repo-root <path> [--external-isolation for Harbor/container
+isolation | --trusted-development for explicit host development]
+[--fake-worker --fake-supervisor for a dry run]
 ```
 Launch with Bash `run_in_background: true` - this drives every pending task
 to a resting state and can take anywhere from seconds to a long time, and
@@ -93,6 +100,7 @@ only when the whole batch finishes or the user asks for `status`.
 **"keep it running" / "start the daemon" / "watch for new tasks"**
 ```
 orchestrator daemon --repo-root <path> [--poll-interval <seconds>]
+  [--external-isolation for Harbor/container isolation]
 ```
 See Guardrails - this one needs an explicit separate confirmation before you
 launch it, every time, regardless of how the request is phrased. Same

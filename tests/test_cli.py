@@ -42,29 +42,6 @@ def test_add_task_with_deps(tmp_path, capsys):
     assert deps == [a]
 
 
-def test_add_task_with_protected_paths(tmp_path, capsys):
-    db = str(tmp_path / "orch.db")
-    main(["add-task", "--db", db, "--title", "t", "--brief", "b", "--repo", "r",
-         "--delivery-mode", "scout", "--protected-paths", "spec/**",
-         "--protected-paths", "*.test.ts"])
-    task_id = capsys.readouterr().out.strip()
-
-    conn = connect(db)
-    row = conn.execute("SELECT protected_paths FROM tasks WHERE id=?", (task_id,)).fetchone()
-    assert json.loads(row["protected_paths"]) == ["spec/**", "*.test.ts"]
-
-
-def test_add_task_with_hidden_cmd(tmp_path, capsys):
-    db = str(tmp_path / "orch.db")
-    main(["add-task", "--db", db, "--title", "t", "--brief", "b", "--repo", "r",
-         "--delivery-mode", "scout", "--hidden-cmd", "pytest hidden_tests"])
-    task_id = capsys.readouterr().out.strip()
-
-    conn = connect(db)
-    row = conn.execute("SELECT hidden_cmd FROM tasks WHERE id=?", (task_id,)).fetchone()
-    assert row["hidden_cmd"] == "pytest hidden_tests"
-
-
 def test_status_empty(tmp_path, capsys):
     db = str(tmp_path / "orch.db")
     rc = main(["status", "--db", db])
@@ -215,6 +192,20 @@ def test_run_command_drives_a_real_task_to_delivered(tmp_path, capsys):
     conn = connect(db)
     assert conn.execute(
         "SELECT state FROM tasks WHERE id=?", (task_id,)).fetchone()["state"] == "delivered"
+
+
+def test_live_cli_run_requires_an_explicit_boundary(tmp_path, capsys):
+    repo = init_repo(tmp_path)
+    db = str(tmp_path / "orch.db")
+    main(["add-task", "--db", db, "--title", "live task", "--brief", "clean",
+          "--repo", str(repo), "--delivery-mode", "scout"])
+    capsys.readouterr()
+
+    rc = main(["run", "--db", db, "--repo-root", str(repo),
+               "--worktree-root", str(tmp_path / "worktrees")])
+
+    assert rc == 2
+    assert "external isolation boundary" in capsys.readouterr().err
 
 
 def test_notify_loop_prints_only_states_a_human_should_hear_about(tmp_path, capsys):

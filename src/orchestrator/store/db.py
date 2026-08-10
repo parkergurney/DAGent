@@ -20,14 +20,12 @@ def connect(path: str = ":memory:") -> sqlite3.Connection:
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
-    """Tiny additive migrations for existing dogfood/benchmark DB files.
+    """Apply small additive migrations and remove retired task fields.
 
     schema.sql remains the fresh-database source of truth; this only covers
     columns added after early local DBs already existed.
     """
     task_cols = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
-    if "hidden_cmd" not in task_cols:
-        conn.execute("ALTER TABLE tasks ADD COLUMN hidden_cmd TEXT")
     for name, sql_type in (
         ("run_id", "TEXT"),
         ("current_attempt_id", "TEXT"),
@@ -40,14 +38,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "worker_dirty" not in attempt_cols:
         conn.execute("ALTER TABLE attempts ADD COLUMN worker_dirty TEXT")
 
-    # SQLite cannot alter a CHECK constraint in place. Older dogfood and
-    # benchmark databases predate dependency_blocked, so rebuild only the
-    # tasks table when needed. The event log remains authoritative and all
-    # task rows are copied verbatim; foreign-key tables retain their rows.
+    # SQLite cannot alter a CHECK constraint or drop columns in place. Older
+    # local databases may have either; rebuild the derived task cache while
+    # retaining all durable task state and the append-only event log.
     table_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'"
     ).fetchone()["sql"]
-    if table_sql and "dependency_blocked" not in table_sql:
+    legacy_columns = {"hidden_cmd", "setup_cmd", "protected_paths"} & task_cols
+    if table_sql and ("dependency_blocked" not in table_sql or legacy_columns):
         conn.commit()
         conn.execute("PRAGMA foreign_keys = OFF")
         conn.execute("""
@@ -58,9 +56,6 @@ def _migrate(conn: sqlite3.Connection) -> None:
               repo TEXT NOT NULL,
               delivery_mode TEXT NOT NULL CHECK (delivery_mode IN ('pr','local','scout')),
               verify_cmd TEXT,
-              hidden_cmd TEXT,
-              setup_cmd TEXT,
-              protected_paths TEXT,
               state TEXT NOT NULL DEFAULT 'blocked' CHECK (state IN
                 ('blocked','queued','running','verifying','triage','needs_human',
                  'delivering','delivered','failed','cancelled','dependency_blocked')),
@@ -79,8 +74,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         """)
         conn.execute("""
             INSERT INTO tasks_migrated
-            SELECT id, title, brief, repo, delivery_mode, verify_cmd, hidden_cmd,
-                   setup_cmd, protected_paths, state, retries, max_retries,
+            SELECT id, title, brief, repo, delivery_mode, verify_cmd, state, retries, max_retries,
                    worktree, session_id, base_sha, run_id, current_attempt_id,
                    candidate_sha, candidate_branch, created_at, updated_at
             FROM tasks

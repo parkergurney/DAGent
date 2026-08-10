@@ -44,10 +44,10 @@ def _run(conn, repo, tmp_path, supervisor, **kwargs):
     asyncio.run(asyncio.wait_for(scheduler.run_until_settled(), timeout=30))
 
 
-def _task(conn, repo, brief, *, verify_cmd="true", hidden_cmd=None, max_retries=2):
+def _task(conn, repo, brief, *, verify_cmd="true", max_retries=2):
     return create_task(
         conn, title=brief, brief=brief, repo=str(repo), delivery_mode="scout",
-        verify_cmd=verify_cmd, hidden_cmd=hidden_cmd, max_retries=max_retries,
+        verify_cmd=verify_cmd, max_retries=max_retries,
     )
 
 
@@ -246,21 +246,6 @@ def test_retry_budget_stops_changed_candidate_without_call(tmp_path):
     assert supervisor.calls == 1
     policy = json.loads(_events(conn, task_id, "recovery.policy_applied")[-1]["payload"])
     assert policy["diagnosis_code"] == "retry_budget_exhausted"
-
-
-def test_opaque_evaluator_mismatch_escalates_truthfully_without_model_call(tmp_path):
-    repo = init_repo(tmp_path)
-    conn = connect()
-    task_id = _task(conn, repo, "clean", hidden_cmd="test -f missing-hidden-file")
-    supervisor = CountingSupervisor()
-
-    _run(conn, repo, tmp_path, supervisor)
-
-    assert supervisor.calls == 0
-    policy = json.loads(_events(conn, task_id, "recovery.policy_applied")[-1]["payload"])
-    assert policy["diagnosis_code"] == "opaque_evaluator_mismatch"
-    assert "hidden" not in policy["reason"]
-    assert conn.execute("SELECT COUNT(*) c FROM supervisor_interventions").fetchone()["c"] == 0
 
 
 def test_worker_ask_is_tied_to_attempt_and_assistance_is_accounted(tmp_path):

@@ -52,19 +52,6 @@ orchestrator add-task \
   --verify-cmd "pytest tests/test_csv_utils.py"
 ```
 
-Pass `--setup-cmd` for any repo whose verify command needs an install step
-first (e.g. `--setup-cmd "npm install"`).
-It runs before `verify_cmd` in the verify gate's detached verifier checkout
-and throwaway baseline checkout; it never runs in the live worker process.
-Skipping it for a repo that needs one caches `baseline_broken` against the
-base branch forever, since the baseline checkout has no dependencies
-installed and nothing else ever retries it (design.md section 7).
-
-Pass `--protected-paths` (repeatable) only for benchmark, hidden, or
-instructor-owned checks the worker must not rewrite. The default is empty
-because visible project tests are normal feature-work surface and often need
-to change with the implementation.
-
 Prints the new task's id (a ULID). Defaults to `data/orchestrator.db`; pass
 `--db` to use a different file. Chain tasks into a DAG with repeatable
 `--depends-on <task_id>` — a task sits in `blocked` until every dependency
@@ -83,7 +70,9 @@ found in the table is used as a literal path, unchanged.
 ## 3. Run it
 
 ```bash
-orchestrator run --repo-root /path/to/target/repo --db data/orchestrator.db
+# Supported benchmark shape: Harbor/container isolation must already exist.
+orchestrator run --repo-root /path/to/target/repo --db data/orchestrator.db \
+  --external-isolation
 ```
 
 Drives every pending task (any task not already in a resting state) to
@@ -121,7 +110,8 @@ orchestrator run --repo-root /path/to/repo --fake-worker --fake-supervisor
 ## 4. Keep it running (daemon mode)
 
 ```bash
-orchestrator daemon --repo-root /path/to/target/repo
+# Use --external-isolation inside Harbor or another trusted outer environment.
+orchestrator daemon --repo-root /path/to/target/repo --external-isolation
 ```
 
 Same as `run`, except it never exits on its own: once every task settles it
@@ -241,6 +231,10 @@ asyncio.run(scheduler.run_until_settled())          # one batch, like `orchestra
 # asyncio.run(scheduler.run_until_settled(forever=True))   # like `orchestrator daemon`
 ```
 
+This low-level constructor is for code that already controls the outer
+execution environment. It does not enforce host isolation; use the Harbor or
+CLI boundary when you need the explicit isolation declaration.
+
 `spawn_worker=spawn_fake_worker` and `supervisor=always_escalate` (the
 `Scheduler` defaults) give the same free/deterministic dry run as
 `--fake-worker --fake-supervisor` above.
@@ -248,9 +242,7 @@ asyncio.run(scheduler.run_until_settled())          # one batch, like `orchestra
 ## 10. Standalone CLIs
 
 ```bash
-# Grade one task's worktree against its verify_cmd, independent of any
-# scheduler run — this is also the exact machinery the benchmark harness
-# uses to grade non-orchestrated baselines.
+# Run the public verification command for a durable task candidate.
 verify-gate --task <task_id> --db data/orchestrator.db --json --record
 
 # Re-run a saved triage packet (data/<task_id>/packets/<seq>.json, written by
@@ -259,87 +251,64 @@ verify-gate --task <task_id> --db data/orchestrator.db --json --record
 supervisor-replay data/<task_id>/packets/<seq>.json --model claude-sonnet-5
 ```
 
-## 11. Benchmark Harness
+## 11. Harbor integration boundary
 
-M6 starts with `bench-run`, a small harness over the same task/event DB and
-verify gate used by the orchestrator:
+Harbor creates the isolated task environment and owns hidden tests/scoring. Its
+adapter can call the library boundary directly:
 
-```bash
-bench-run example-suite bench/example-suite.toml
+```python
+from orchestrator.harbor import export_patch, run_instruction
+
+result = await run_instruction(
+    instruction="Fix the parser bug and commit the change.",
+    repo_root="/workspace/repo",
+    policy="orchestrator",  # sequential | naive-parallel | orchestrator
+    worker_env=harbor_worker_env,
+    external_isolation=True,
+)
+patch = export_patch("/workspace/repo", base_sha=base, candidate_sha=result.candidate_sha)
 ```
 
-Suite files are TOML. Put shared defaults under `[bench]`, then one `[[tasks]]`
-entry per issue:
+The adapter transfers only `patch` to Harbor's separate verifier. Worker
+environment variables are used for the child process and never written to
+SQLite, events, logs, or artifacts. Scheduler teardown reaps all worker
+process groups and releases internal worktree slots.
 
-```toml
-[bench]
-name = "fresh-suite"
-repo = "/absolute/path/to/fresh-target-repo"
-verify_cmd = "python -m pytest -q"
-setup_cmd = "python -m pip install -e ."
-protected_paths = ["hidden_tests/**"]
-# Optional when setup_cmd's hidden source is not an obvious absolute path.
-# hidden_source_paths = ["/absolute/path/to/instructor-tests"]
+`external_isolation=True` is a required caller declaration for real workers;
+it does not create a sandbox. The caller must actually place the process in
+Harbor or another trusted outer environment. Without it, `run_instruction`
+fails closed. `fake_worker=True` remains available for deterministic local
+tests without an outer boundary.
 
-[[tasks]]
-id = "feature-a"
-title = "Implement feature A"
-brief = "Natural-language worker brief. Do not mention hidden tests."
-hidden_cmd = "python -m pytest hidden_tests/test_feature_a.py -q"
-```
+The direct CLI has the same contract. Use `--external-isolation` only when the
+caller has supplied Harbor/container isolation. Use `--trusted-development`
+for an intentional live host run; that mode is not a benchmark path and does
+not protect the host filesystem.
 
-Run baselines first:
+The runnable Harbor canary is in
+[`harbor/tasks/orchestrator-canary/`](../harbor/tasks/orchestrator-canary/).
+It loads the installed agent by import path and uses Harbor's separate
+verifier mode. The wrapper publishes only `base_sha.txt`, `candidate.patch`,
+`result.json`, and `metrics.json`; scheduler packets and verification logs stay
+in the container's private runtime directory.
 
-```bash
-bench-run run --suite bench/fresh-suite.toml --condition sequential --seed 1
-bench-run run --suite bench/fresh-suite.toml --condition naive-parallel --seed 1 --max-concurrency 4
-bench-run run --suite bench/fresh-suite.toml --condition orchestrator --seed 1 --max-concurrency 4
-```
+## 12. Security model
 
-Each run writes `data/bench/<suite>/<condition>-seedN/run.db`,
-`manifest.json`, and a copy of the suite/config. Pass `--overwrite` only when
-replacing a prior exploratory run. Pass `--kill-one-after S` to inject the M6
-fault-recovery probe.
+1. Harbor is the supported benchmark isolation boundary.
+2. Workers inside one Harbor trial share that trial's container resources.
+3. Internal Git worktrees isolate concurrent edits, not the host from workers.
+4. Hidden tests use Harbor's separate verifier environment.
+5. Hidden verifier results are never passed back into the agent environment.
+6. Visible verification is public worker feedback only.
+7. Caller worker environment variables may contain authentication material and
+   are never persisted or logged.
+8. The orchestrator does not access the macOS Keychain.
+9. The orchestrator is not a general-purpose local security sandbox.
+10. Live workers directly on the host are trusted development mode only.
 
-Summarize one DB or an entire runs directory:
-
-```bash
-bench-run report data/bench
-bench-run report data/bench --summary --group-by condition
-bench-run report data/bench --summary --group-by suite,condition
-```
-
-The report includes verified resolution rate, wall-clock throughput, cost split
-by worker/supervisor, human escalations, recovered injected faults,
-`verify.failed` count, and protected-path hits. Plain `report` prints one row
-per run; `--summary` groups rows across every suite directory under the given
-parent and prints means plus rate ranges for publishable rollups. `firstmate`
-remains a reserved comparison slot; the implemented conditions are
-`sequential`, `naive-parallel`, and `orchestrator`.
-
-Benchmark worker sessions have no GitHub/web/search access. The same SDK
-worker backend is used for `sequential`, `naive-parallel`, and `orchestrator`;
-it denies sandbox network access, hosted web/search tools, GitHub hosts, and
-GitHub-looking `gh`/`git` commands so workers cannot inspect upstream PRs or
-solutions for the benchmark issues. `setup_cmd`, `verify_cmd`, and
-`hidden_cmd` run outside the worker session in the verify gate. After the
-worker exits, the gate creates a detached checkout from the worker's exact
-commit; hidden setup and tests run only there, and the worker checkout remains
-free of hidden files for delivery. Keep those commands offline/reproducible
-yourself. Benchmark preflight rejects existing protected hidden material in a
-target repo or worker slot and never deletes contaminated historical state.
-For real workers it also rejects explicit Anthropic/API credential environment
-variables and runs one disposable authentication smoke turn through the real
-worker sandbox before creating the benchmark task DB. A failed smoke turn
-aborts with zero task attempts, retries, and supervisor calls; the smoke turn
-uses the logged-in Claude Code account path and does not export Keychain
-secrets.
-
-## 12. What's not here yet
+## 13. What's not here yet
 
 - No `needs_human -> delivering` override (design.md's "manager overrides a
   failed verification" edge is specced but has no CLI path yet).
-- Firstmate benchmark condition is not wired yet; `bench-run` currently covers
-  sequential, naive-parallel, and orchestrator.
 - No auth/access control — this assumes a single trusted operator on one box,
   per design.md's stated non-goals.

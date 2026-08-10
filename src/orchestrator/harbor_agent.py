@@ -1,0 +1,203 @@
+"""Harbor installed-agent adapter for the orchestrator.
+
+The adapter is deliberately an installed agent rather than a Harbor external
+agent: the scheduler must be able to create several local Claude SDK workers
+inside the same Harbor task container.  Harbor remains responsible for the
+outer container and separate verifier boundary.
+"""
+
+import json
+import os
+import shlex
+import tarfile
+import tempfile
+import tomllib
+from pathlib import Path
+
+try:  # Keep the scheduler package importable in local development/tests.
+    from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_template
+except ImportError:  # pragma: no cover - Harbor supplies these in a trial image.
+    def with_prompt_template(function):
+        return function
+
+    class BaseInstalledAgent:  # type: ignore[no-redef]
+        SUPPORTS_CONFIG = True
+
+        def __init__(self, logs_dir: Path, *args, extra_env=None, config=None, **kwargs):
+            del args, kwargs
+            self.logs_dir = Path(logs_dir)
+            self._extra_env = dict(extra_env or {})
+            self._config = config
+
+        @staticmethod
+        def name() -> str:
+            return "orchestrator"
+
+        async def ensure_system_dependencies(self, environment, dependencies):
+            del environment, dependencies
+
+        async def exec_as_agent(self, environment, **kwargs):
+            return await environment.exec(**kwargs)
+
+
+class HarborOrchestratorAgent(BaseInstalledAgent):
+    """Run the existing orchestrator scheduler inside a Harbor trial."""
+
+    SUPPORTS_ATIF = False
+    SUPPORTS_CONFIG = True
+    VERSION = "0.0.1"
+
+    @staticmethod
+    def name() -> str:
+        return "orchestrator"
+
+    def version(self) -> str | None:
+        return self.VERSION
+
+    def _settings(self) -> dict:
+        source = getattr(self, "_config", None)
+        if isinstance(source, dict):
+            data = source
+        elif source:
+            try:
+                data = json.loads(Path(source).read_text())
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                try:
+                    with Path(source).open("rb") as config_file:
+                        data = tomllib.load(config_file)
+                except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+                    data = {}
+        else:
+            data = {}
+        if not isinstance(data, dict):
+            return {}
+        nested = data.get("orchestrator")
+        return dict(nested) if isinstance(nested, dict) else dict(data)
+
+    def _env(self, name: str, default=None):
+        getter = getattr(self, "_get_env", None)
+        if getter is not None:
+            value = getter(name)
+            return default if value is None else value
+        return os.environ.get(name, default)
+
+    def _source_root(self) -> Path:
+        current = Path(__file__).resolve()
+        for parent in [current.parent, *current.parents]:
+            if (parent / "pyproject.toml").is_file() and (parent / "src/orchestrator").is_dir():
+                return parent
+        raise RuntimeError("cannot locate the orchestrator source tree for Harbor install")
+
+    def _source_archive(self) -> Path:
+        root = self._source_root()
+        handle = tempfile.NamedTemporaryFile(prefix="orchestrator-", suffix=".tar.gz", delete=False)
+        handle.close()
+        archive = Path(handle.name)
+        with tarfile.open(archive, "w:gz") as bundle:
+            bundle.add(root / "pyproject.toml", arcname="orchestrator/pyproject.toml")
+            bundle.add(root / "src", arcname="orchestrator/src")
+        return archive
+
+    async def install(self, environment) -> None:
+        """Install system tools and this checkout's package in the agent image."""
+        await self.ensure_system_dependencies(
+            environment,
+            ("git", "python3", "python_pip", "python_venv", "procps", "coreutils",
+             "ca_certificates"),
+        )
+        archive = self._source_archive()
+        try:
+            await environment.upload_file(archive, "/tmp/orchestrator-source.tar.gz")
+            await self.exec_as_agent(
+                environment,
+                command=(
+                    "rm -rf /tmp/orchestrator-source && "
+                    "mkdir -p /tmp/orchestrator-source && "
+                    "tar -xzf /tmp/orchestrator-source.tar.gz "
+                    "-C /tmp/orchestrator-source --strip-components=1 && "
+                    "python3 -m pip install --no-cache-dir /tmp/orchestrator-source"
+                ),
+                timeout_sec=600,
+            )
+        finally:
+            archive.unlink(missing_ok=True)
+
+    @staticmethod
+    def _remote_file_name(prefix: str, suffix: str) -> str:
+        return f"/tmp/{prefix}-{os.getpid()}{suffix}"
+
+    async def _upload_text(self, environment, text: str, remote_path: str) -> None:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".txt") as source:
+            source.write(text)
+            source.flush()
+            await environment.upload_file(source.name, remote_path)
+
+    @with_prompt_template
+    async def run(self, instruction: str, environment, context) -> None:
+        """Invoke the scheduler in the task container and publish its artifacts."""
+        settings = self._settings()
+        instruction_path = self._remote_file_name("orchestrator-instruction", ".md")
+        config_path = self._remote_file_name("orchestrator-config", ".json")
+        await self._upload_text(environment, instruction, instruction_path)
+        await self._upload_text(environment, json.dumps(settings), config_path)
+
+        repo_root = str(settings.get("repo_root") or self._env("ORCH_REPO_ROOT", "/app"))
+        timeout = settings.get("agent_timeout_s") or self._env("ORCH_AGENT_TIMEOUT_S")
+        command = (
+            "python3 -m orchestrator.harbor_runtime "
+            f"--instruction-file {shlex.quote(instruction_path)} "
+            f"--config-file {shlex.quote(config_path)}"
+        )
+        await self.exec_as_agent(
+            environment,
+            command=command,
+            cwd=repo_root,
+            timeout_sec=int(timeout) if timeout is not None else None,
+        )
+
+    def populate_context_post_run(self, context) -> None:
+        """Expose final orchestrator state without exposing runtime secrets."""
+        artifact_dir = self.logs_dir / "artifacts"
+        result_path = artifact_dir / "result.json"
+        metrics_path = artifact_dir / "metrics.json"
+        result = {}
+        metrics = {}
+        if result_path.is_file():
+            try:
+                loaded = json.loads(result_path.read_text())
+                if isinstance(loaded, dict):
+                    result = loaded
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                result = {"failure": {"type": "invalid_result_metadata"}}
+        if metrics_path.is_file():
+            try:
+                loaded = json.loads(metrics_path.read_text())
+                if isinstance(loaded, dict):
+                    metrics = loaded
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                metrics = {}
+
+        metadata = dict(getattr(context, "metadata", None) or {})
+        metadata["orchestrator"] = {
+            "state": result.get("state"),
+            "task_id": result.get("task_id"),
+            "base_sha": result.get("base_sha"),
+            "candidate_sha": result.get("candidate_sha"),
+            "policy": result.get("policy"),
+            "metrics": metrics,
+            "failure": result.get("failure"),
+        }
+        context.metadata = metadata
+        if metrics.get("tokens_in") is not None:
+            context.n_input_tokens = metrics["tokens_in"]
+        if metrics.get("tokens_out") is not None:
+            context.n_output_tokens = metrics["tokens_out"]
+        if metrics.get("cost_usd") is not None:
+            context.cost_usd = metrics["cost_usd"]
+
+
+# Friendly import-path aliases for Harbor job definitions.
+OrchestratorAgent = HarborOrchestratorAgent
+HarborAgent = HarborOrchestratorAgent
+
+__all__ = ["HarborOrchestratorAgent", "OrchestratorAgent", "HarborAgent"]

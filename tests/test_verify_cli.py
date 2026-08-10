@@ -1,6 +1,7 @@
-"""Standalone `verify-gate` CLI (design.md section 7): "so the benchmark
-harness grades ALL conditions ... with identical machinery." Exercises the
-console entry point end to end against a real task row and a real worktree.
+"""Standalone `verify-gate` CLI for visible checks.
+
+Exercises the console entry point end to end against a real task row and a
+real worktree.
 """
 import json
 
@@ -55,54 +56,6 @@ def test_cli_record_transitions_task_state(tmp_path, capsys):
     conn = connect(str(db))
     row = conn.execute("SELECT state FROM tasks WHERE id=?", (task_id,)).fetchone()
     assert row["state"] == "delivering"
-
-
-def test_cli_falls_back_to_the_task_rows_setup_cmd(tmp_path, capsys):
-    """--setup-cmd is an override, not the only source (design.md section 7:
-    this CLI must use "the exact machinery the scheduler uses"). A task
-    created with its own setup_cmd must get it run even when the CLI
-    invocation doesn't pass --setup-cmd itself."""
-    repo = init_repo(tmp_path)
-    db = tmp_path / "orch.db"
-    conn = connect(str(db))
-    task_id = create_task(conn, title="t", brief="clean", repo=str(repo),
-                          delivery_mode="scout", setup_cmd="touch installed.marker",
-                          verify_cmd="test -f installed.marker")
-    wt, base_sha = create_worktree(repo, tmp_path / "worktrees", task_id)
-    (wt / "output.txt").write_text("done\n")
-    git("add", "-A", cwd=wt)
-    git("commit", "-qm", "work", cwd=wt)
-    conn.execute("UPDATE tasks SET worktree=?, base_sha=? WHERE id=?", (str(wt), base_sha, task_id))
-    conn.commit()
-    conn.close()
-
-    code = verify_gate_main(["--task", task_id, "--db", str(db), "--json"])
-
-    assert code == 0
-    out = json.loads(capsys.readouterr().out)
-    assert out["passed"] is True
-
-
-def test_cli_falls_back_to_the_task_rows_hidden_cmd(tmp_path, capsys):
-    repo = init_repo(tmp_path)
-    db = tmp_path / "orch.db"
-    conn = connect(str(db))
-    task_id = create_task(conn, title="t", brief="clean", repo=str(repo),
-                          delivery_mode="scout", verify_cmd="true",
-                          hidden_cmd="test -f hidden.marker")
-    wt, base_sha = create_worktree(repo, tmp_path / "worktrees", task_id)
-    (wt / "output.txt").write_text("done\n")
-    git("add", "-A", cwd=wt)
-    git("commit", "-qm", "work", cwd=wt)
-    conn.execute("UPDATE tasks SET worktree=?, base_sha=? WHERE id=?", (str(wt), base_sha, task_id))
-    conn.commit()
-    conn.close()
-
-    code = verify_gate_main(["--task", task_id, "--db", str(db), "--json"])
-
-    assert code == 1
-    out = json.loads(capsys.readouterr().out)
-    assert out["cause"] == "hidden_tests_failed"
 
 
 def test_cli_unknown_task_errors(tmp_path):

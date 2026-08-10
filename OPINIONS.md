@@ -45,18 +45,17 @@ decisions), never in the control loop itself. See `CLAUDE.md` section 1 and
 
 ## When the project is done
 
-"Done" means through M7 (eval runs + writeup) per the `milestones` skill.
-The system is built, benchmarked, and written up.
+"Done" means through M7 (Harbor eval runs + writeup) per the `milestones`
+skill. The system is integrated, evaluated through Harbor, and written up.
 No more architecture-level changes are expected after that - this section
 is forward-looking guidance for that future cleanup pass, not something to
 act on now.
-The seven skills below stay in place until M7 actually closes.
+The six skills below stay in place until M7 actually closes.
 
 Once "done", prune the dev-time-only "deep reference" topic skills under
 `.claude/skills/` - they only trigger on "touching X code", i.e. building or
 maintaining the orchestrator's own internals, not on using the finished tool:
 
-- `benchmark-plan`
 - `milestones`
 - `storage-schema`
 - `supervisor-contract`

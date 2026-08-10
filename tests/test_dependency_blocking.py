@@ -12,7 +12,7 @@ from orchestrator.scheduler import (
 from orchestrator.store import append_event, connect, create_task, transition
 from orchestrator.supervisor import always_escalate
 from orchestrator.worker import spawn_fake_worker
-from orchestrator.bench.report import format_table, summarize_db
+from orchestrator.metrics import export_metrics
 from tests.helpers import init_repo
 
 
@@ -156,19 +156,13 @@ def test_cycle_and_missing_prerequisite_fail_preflight(tmp_path):
         validate_dependency_graph(conn)
 
 
-def test_report_distinguishes_dependency_blocked_and_infrastructure_abort(tmp_path):
-    db = tmp_path / "run.db"
-    conn = connect(str(db))
+def test_metrics_distinguish_dependency_blocked_tasks(tmp_path):
+    conn = connect()
     a = _task(conn, tmp_path, "a")
     _task(conn, tmp_path, "b", depends_on=[a])
     _mark_terminal(conn, a, "failed")
-    append_event(conn, source="system", type="bench.run_started", payload={"run_id": "r"})
     advance_dependency_states(conn, run_id="r")
-    conn.close()
-
-    summary = summarize_db(db)
-    assert summary.failed == 1
-    assert summary.dependency_blocked == 1
-    assert summary.executed == 1
-    assert summary.infrastructure_aborted == 1
-    assert "dependency_blocked" in format_table([summary]).splitlines()[0]
+    metrics = export_metrics(conn)
+    assert metrics["failed"] == 1
+    assert metrics["dependency_blocked"] == 1
+    assert metrics["executed"] == 1

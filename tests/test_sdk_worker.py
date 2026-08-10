@@ -7,14 +7,10 @@ import asyncio
 import io
 import json
 
-from claude_agent_sdk import (
-    AssistantMessage, ClaudeSDKError, PermissionResultAllow, PermissionResultDeny,
-    ResultMessage, TextBlock,
-)
+from claude_agent_sdk import AssistantMessage, ClaudeSDKError, ResultMessage, TextBlock
 
 from orchestrator.worker import sdk_worker
 from orchestrator.worker.sdk_worker import (
-    _can_use_tool,
     _parse_terminal,
     _path_escapes_worktree,
     _prompt_with_protocol,
@@ -68,56 +64,6 @@ def test_path_traversal_out_of_worktree_is_denied(tmp_path):
     wt = tmp_path / "wt"
     wt.mkdir()
     assert _path_escapes_worktree("../escape.txt", wt) is True
-
-
-def test_can_use_tool_denies_sandbox_network_access():
-    """The regression test for the network-gate bug found live: permission_
-    mode="bypassPermissions" auto-granted the sandbox's own network-domain
-    approval (exposed to the SDK as a "SandboxNetworkAccess" tool call
-    routed through can_use_tool), silently defeating sandbox.network.
-    strictAllowlist -- a real curl went through with a live HTTP response
-    despite it. can_use_tool must own that one decision explicitly."""
-    result = asyncio.run(_can_use_tool("SandboxNetworkAccess", {"host": "example.com"}, None))
-    assert isinstance(result, PermissionResultDeny)
-
-
-def test_can_use_tool_denies_github_network_access():
-    for host in ("github.com", "api.github.com", "raw.githubusercontent.com"):
-        result = asyncio.run(_can_use_tool("SandboxNetworkAccess", {"host": host}, None))
-        assert isinstance(result, PermissionResultDeny)
-        assert "GitHub" in result.message
-
-
-def test_can_use_tool_denies_hosted_web_tools():
-    for tool_name in ("WebFetch", "WebSearch"):
-        result = asyncio.run(_can_use_tool(tool_name, {"url": "https://example.com"}, None))
-        assert isinstance(result, PermissionResultDeny)
-
-
-def test_can_use_tool_denies_github_mentions_in_other_tools():
-    inputs = [
-        ("Bash", {"command": "gh pr view 123"}),
-        ("Bash", {"command": "git ls-remote https://github.com/org/repo"}),
-        ("Read", {"file_path": "notes/github.com/solution.md"}),
-    ]
-    for tool_name, tool_input in inputs:
-        result = asyncio.run(_can_use_tool(tool_name, tool_input, None))
-        assert isinstance(result, PermissionResultDeny)
-
-
-def test_can_use_tool_allows_everything_else():
-    """Headless sessions have no human to answer a permission prompt, so
-    every other tool call must be auto-approved -- this callback replaces
-    permission_mode="bypassPermissions" for that purpose, minus the one
-    carve-out above."""
-    for tool_name, tool_input in (
-        ("Write", {}),
-        ("Edit", {}),
-        ("Read", {"file_path": "src/app.py"}),
-        ("Bash", {"command": "python -m pytest"}),
-    ):
-        result = asyncio.run(_can_use_tool(tool_name, tool_input, None))
-        assert isinstance(result, PermissionResultAllow)
 
 
 class _FakeClient:
@@ -183,20 +129,16 @@ def test_run_exits_without_resuming_when_stdin_closes(tmp_path, capsys, monkeypa
 
 
 class _ConnectFailsClient:
-    """Stands in for a ClaudeSDKClient whose connect() raises -- e.g.
-    failIfUnavailable's hard fail when the OS sandbox can't start. Proves
-    run() surfaces that as a typed event and refuses to proceed, instead of
-    silently continuing unsandboxed or crashing with a swallowed traceback
-    (spawn_sdk_worker pipes stderr to DEVNULL)."""
+    """Stands in for a ClaudeSDKClient whose connect() raises."""
 
     def __init__(self, options=None):
         pass
 
     async def connect(self, prompt=None):
-        raise ClaudeSDKError("sandbox unavailable: bubblewrap not found")
+        raise ClaudeSDKError("SDK initialization failed")
 
 
-def test_run_exits_loudly_when_sandbox_fails_to_start(tmp_path, capsys, monkeypatch):
+def test_run_exits_loudly_when_sdk_fails_to_start(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(sdk_worker, "ClaudeSDKClient", lambda options=None: _ConnectFailsClient())
 
     assert asyncio.run(sdk_worker.run(tmp_path, "set up a server", None)) == 1
@@ -204,9 +146,6 @@ def test_run_exits_loudly_when_sandbox_fails_to_start(tmp_path, capsys, monkeypa
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert [e["type"] for e in events] == ["startup_failed"]
     assert events[0]["payload"]["category"] == "sdk_initialization_failure"
-    assert "sandbox unavailable" in events[0]["payload"]["error"]
-
-
 class _ResultClient:
     def __init__(self, result, assistant_text=None, options=None):
         self.result = result

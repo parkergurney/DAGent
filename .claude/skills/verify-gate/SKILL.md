@@ -1,92 +1,62 @@
 ---
 name: verify-gate
-description: The verify-gate contract - VerifyRequest/VerifyResult, execution order (preflight, baseline, run, flake+hidden check), and the cause->supervisor heuristic table. Use when touching verify-gate code, debugging a verify failure cause, or asked how "done" claims get checked.
+description: The deterministic visible verification contract and failure-signature rules. Use when touching verify-gate code or debugging a verify failure.
 ---
 
 # Verify gate contract
 
 <!-- sync:verify-gate -->
-Boring, deterministic, paranoid. No LLM anywhere in it. Converts "done" claims
-into evidence; its failure taxonomy is what makes the supervisor smart.
-
-Also a standalone CLI (`verify-gate --task <id> --json`) so the benchmark
-harness grades ALL conditions — including non-orchestrated baselines — with
-identical machinery.
+The verify gate is deterministic and contains no LLM or evaluator-only logic.
+Harbor owns hidden tests and scoring. The gate turns a worker's committed
+candidate into public evidence, a normalized failure signature, and a patch.
+Visible verification inherits the agent environment and is not a host sandbox;
+benchmark use requires Harbor or another trusted outer isolation boundary.
 
 ```python
-class VerifyRequest(BaseModel):
+class VerifyRequest:
     task_id: str
     worktree: str
     base_sha: str
-    verify_cmd: str                 # visible to the worker
-    hidden_cmd: str | None          # NOT in the brief; benchmark/paranoia
-    setup_cmd: str | None           # cached per repo
+    verify_cmd: str
     timeout_s: int = 600
-    protected_paths: list[str]      # opt-in globs the worker may not modify (existing files only)
-    rerun_on_fail: bool = True      # flake detection
+    rerun_on_fail: bool = True
+    repo: str | None = None
+    candidate_sha: str | None = None
+    worker_dirty: str | None = None
+    artifact_root: str | None = None
 
-class VerifyResult(BaseModel):
+class VerifyResult:
     passed: bool
     cause: Literal[
-        "tests_passed",
-        "tests_failed", "hidden_tests_failed",
-        "timeout", "setup_failed",
+        "tests_passed", "tests_failed", "timeout", "candidate_checkout_failed",
         "uncommitted_changes", "empty_diff",
-        "protected_path_modified",
-        "baseline_broken",
     ]
     exit_code: int | None
     duration_s: float
-    flaky: bool                     # failed once, passed on rerun
-    output_tail: str                # ~2k chars, feeds the supervisor packet
+    flaky: bool
+    output_tail: str
     diff_stat: str
     tests_modified: list[str]
-    output_path: str                # full logs on disk
-    patch_path: str | None          # saved review patch for committed diffs
+    output_path: str
+    patch_path: str | None
+    failure_signature: str | None
 ```
 
-## Execution order (cheapest first)
+Execution is: dirty-worktree and empty-diff checks, patch export, materialize
+the durable candidate in an internal disposable checkout when needed, run the
+public command with a timeout, and rerun one failure to identify flakes.
+The candidate checkout is not given evaluator-only material and is removed
+afterward. Timeout cleanup kills the check's process group.
 
-1. **Preflight (git, ms):** dirty worktree → `uncommitted_changes` (supervisor
-   nudges "commit and re-claim"). Empty diff on a ship task → `empty_diff`
-   (hallucinated completion). Diff modifies (edits, deletes, or renames) a
-   file that already existed at base_sha and matches explicit
-   `protected_paths` → `protected_path_modified` — the anti-gaming check for
-   benchmark/hidden/instructor-owned checks an agent must not rewrite. New
-   files under protected_paths are exempt — a brand-new test is a
-   contribution, not gaming. Default protected_paths is empty: visible project
-   tests are normal feature-work surface and often need to change with the
-   implementation.
-2. **Baseline (cached on (repo, base_sha, verify_cmd, setup_cmd)):** run setup+verify on
-   base_sha itself. Baseline red → `baseline_broken` → escalate, never retry.
-   No number of retries fixes a repo whose tests were already failing; without
-   this check a flaky upstream test burns the whole retry budget for nothing.
-3. **The run:** after the worker has been terminated and reaped, create a
-   detached verifier worktree from its exact `HEAD`. Run setup_cmd (own cause
-   — env problem ≠ code problem), then verify_cmd under timeout, in that
-   verifier worktree only. Kill the process GROUP on timeout; test runners
-   orphan children. The worker checkout remains untouched for delivery.
-4. **Flake protocol + hidden check:** fail → rerun once. Fail-fail →
-   `tests_failed`. Fail-pass → PASSED with `flaky=true` (don't burn retries on
-   nondeterminism the worker didn't cause) — but log loudly; flake rate per
-   repo is a benchmark covariate and a finding. If visible passed, run
-   hidden_cmd in the detached verifier worktree. `hidden_tests_failed` restart feedback must NOT leak hidden
-   output — say the change didn't hold up under additional checks, without
-   revealing which. Otherwise hidden tests train the worker to overfit them.
-
-## Cause → supervisor heuristic
-
-| cause | heuristic |
+| cause | supervisor heuristic |
 |---|---|
-| tests_failed | restart w/ output_tail; same signature twice → escalate |
-| hidden_tests_failed | restart w/ non-revealing feedback; twice → escalate |
+| tests_failed | restart with output; equivalent signatures escalate |
 | uncommitted_changes | nudge |
-| empty_diff | restart, pointed "you changed nothing" |
-| protected_path_modified | restart/escalate "revert X or request an explicit protected-path exception"; also a benchmark metric (gaming attempts per condition) |
-| baseline_broken, setup_failed | escalate, never retry |
-| timeout | ambiguous — supervisor reads duration vs baseline + transcript |
+| empty_diff | restart with a pointed commit/change reminder |
+| timeout | inspect duration and transcript |
+| candidate_checkout_failed | escalate as infrastructure failure |
 
-Events: `verify.started`, then passed/failed with payload
-`{cause, exit_code, duration_s, flaky, diff_stat, tests_modified,
-output_path, patch_path}`.
+Events are `verify.started`, then `verify.passed` or `verify.failed` with the
+cause, duration, output/patch paths, and failure signature. Verification attempt
+counts remain available to generic experiment metrics.
 <!-- /sync:verify-gate -->

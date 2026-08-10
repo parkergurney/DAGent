@@ -6,24 +6,55 @@ description: Full milestone roadmap (M0-M7), the FakeWorker scenario suite, conf
 # Milestones
 
 <!-- sync:milestones -->
-- **M0 — skeleton:** scaffold, schema, event store, replay + invariant test in
-  CI. Exit: `replay(events) == tasks` asserted green.
-- **M1 — SDK spike (throwaway):** one script; spawn session in worktree,
-  PostToolUse hook, token capture, mid-session injection, end detection.
-  Exit: the four spike questions in §8 answered in devlog.
-- **M2 — core loop, fake workers only:** scheduler, state machine,
-  spawn/teardown vs FakeWorker, watchdog, verify gate CLI. Exit: all fake
-  scenarios drive correct transition sequences; `kill -9` the orchestrator at
-  arbitrary points → clean reconcile on restart.
-- **M3 — real workers:** SDK sessions on a toy repo with 3-4 seeded issues.
-- **M4 — supervisor:** packet builder, closed-enum validation, packet
-  dump/replay tooling BEFORE prompt tuning; iterate heuristics against saved
-  packets generated with the fake worker.
-- **M5 — parallelism, DAG, delivery:** worktree pool, concurrency limits, dep
-  resolution, three delivery modes. Test 10-task parallel batches with fakes.
-- **M6 — benchmark harness:** runner + grading via verify-gate CLI; conditions
-  (a),(b) first, then (d), then (c) last.
-- **M7 — eval runs + writeup.** Budget generously; days of wall-clock.
+- **M0 — durable state and replay:** scaffold the SQLite event store, task
+  graph, state machine, and invariant tests. Attempts are first-class durable
+  records with lineage, timestamps, candidate/base SHAs, failure data,
+  feedback, disposition, and execution contract. Exit: state is reconstructible
+  after a crash and `replay(events) == tasks` is asserted green.
+- **M1 — worker protocol:** establish the Claude Code session contract,
+  worktree execution, hooks, token capture, mid-session messages, done/ask
+  signals, and startup-failure classification. The public contract contains
+  the task, working directory, visible verification, commit expectations, and
+  delivery rules; it contains no hidden evaluator material.
+- **M2 — recoverable core loop with FakeWorker:** implement scheduler,
+  watchdog, process-group ownership, teardown/reaping, public verify gate, and
+  crash reconciliation. A worker that exits hands off a persisted candidate;
+  its slot and worktree are released before verification or triage. FakeWorker
+  scenarios remain the deterministic regression suite.
+- **M3 — real workers:** run SDK sessions on toy repositories while keeping
+  infrastructure failures (authentication, SDK initialization, and backend
+  failures) separate from task failures. Real workers require the caller to
+  provide the outer isolation boundary; the orchestrator does not claim to
+  sandbox the host.
+- **M4 — event-triggered supervision:** build a closed-action supervisor,
+  packet dump/replay tooling, durable interventions, and deterministic policy
+  checks. Successful first attempts make zero supervisor calls. Supervision is
+  entered only for stalls, asks, incomplete exits, public verification
+  failures, delivery failures, or other uncertain states. The canonical
+  implementation actions are `restart` (retry), `wait`, `escalate` (human),
+  `abandon` (terminate), and `nudge`; repeated equivalent failures can
+  deterministically escalate without another model call.
+- **M5 — v2 execution and coordination:** add stateful retries that inherit
+  the previous candidate SHA and preserved edits, record whether the candidate
+  materially changed, and fold feedback into the next attempt. Add explicit
+  dependency resolution with missing-reference and cycle validation,
+  multi-dependency propagation, and `dependency_blocked` tasks that consume no
+  workers, retries, verification attempts, or supervisor calls. Pool workers
+  independently from verification/triage, run slow verification off the async
+  event loop, and track teardown tasks through shutdown. Deliver through the
+  configured git modes and record queue wait, execution, slot occupancy,
+  verification, supervisor/triage time, retry gaps, peak/limit, attempts,
+  verification attempts, tokens, costs, and recovery events. Sequential,
+  naive-parallel, and orchestrator policies use this same scheduler and worker
+  machinery; only concurrency and supervisor policy differ.
+- **M6 — Harbor boundary integration:** expose policy selection, candidate patch
+  export, and durable metrics to a Harbor adapter. Harbor owns outer task
+  isolation, hidden evaluation, and scoring; the orchestrator returns the final
+  candidate SHA and exports the declared base-to-candidate patch. Package the
+  installed agent and a canary task with a separate verifier; keep scheduler
+  diagnostics outside Harbor's published artifact directory.
+- **M7 — eval runs + writeup.** Harbor owns task isolation, hidden evaluation,
+  and scoring.
 
 TUI: unscheduled. Tail of the events table suffices through M7. Timebox
 Textual to one weekend, after M3, whenever.
@@ -31,7 +62,7 @@ Textual to one weekend, after M3, whenever.
 ## FakeWorker (build first, in M2)
 
 A scripted subprocess impersonating a Claude Code session. Scenarios: complete
-cleanly, claim done without committing, empty diff, modify a protected test,
+cleanly, claim done without committing, empty diff,
 stall silently, ask a question, crash mid-task, declare an external wait. The
 scenario suite IS the regression suite; fault injection is a test case, not a
 prayer. Never debug the orchestrator through paid nondeterministic workers.
@@ -61,6 +92,6 @@ model_supervisor       = <pinned>
 - Done-claim protocol (M1 decides).
 - transcript_tail sizing (ship fixed, log packet sizes, watch escalate
   reasons).
-- SWE-bench subset selection + contamination framing for the post.
+- Harbor workload selection and contamination framing for the post.
 - Name.
 <!-- /sync:open-questions -->

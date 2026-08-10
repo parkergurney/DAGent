@@ -1,6 +1,6 @@
 """Deterministic control loop: state machine, watchdog, crash reconciliation."""
 from orchestrator.scheduler.core import (
-    Scheduler,
+    Scheduler, SchedulerCleanupFailure,
     WorkerStartupFailure,
     advance_dependency_states,
     validate_dependency_graph,
@@ -8,6 +8,7 @@ from orchestrator.scheduler.core import (
 from orchestrator.scheduler.reconcile import reconcile
 
 __all__ = [
-    "Scheduler", "WorkerStartupFailure", "reconcile", "advance_dependency_states",
+    "Scheduler", "SchedulerCleanupFailure", "WorkerStartupFailure",
+    "reconcile", "advance_dependency_states",
     "validate_dependency_graph",
 ]

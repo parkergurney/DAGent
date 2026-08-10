@@ -14,9 +14,6 @@ CREATE TABLE tasks (
   repo          TEXT NOT NULL,
   delivery_mode TEXT NOT NULL,           -- 'pr' | 'local' | 'scout'
   verify_cmd    TEXT,                    -- null for scout
-  hidden_cmd    TEXT,                    -- benchmark/instructor-owned check, never in brief
-  setup_cmd     TEXT,
-  protected_paths TEXT,                  -- JSON array, null = none
   state         TEXT NOT NULL DEFAULT 'blocked',
   retries       INTEGER NOT NULL DEFAULT 0,
   max_retries   INTEGER NOT NULL DEFAULT 2,
@@ -61,20 +58,14 @@ delivery.started      delivery.pr_opened      delivery.merged_local
 delivery.report_written                       delivery.failed
 human.messaged        human.approved          human.cancelled
 system.started        system.reconciled
-bench.run_started     bench.run_finished      bench.delivered
-bench.unsupervised_failed                    bench.fault_injected
-bench.fault_recovered
 ```
 
 - `worker.tool_used` comes from a PostToolUse hook; log EVERY call but keep the
   payload minimal (tool name, target, duration_ms). Highest-volume event by
-  ~100x; tool-call counts per task are a benchmark metric.
+  ~100x; tool-call counts per task are an experiment metric.
 - `worker.startup_failed` fires when the worker's own connect step raises
-  before any session starts — currently only `failIfUnavailable`'s hard fail
-  when the OS-level Bash sandbox can't start (docs/design.md section 8).
-  Distinct from `worker.exited` (a session that started and then crashed or
-  finished without a claim) so triage/operators can tell "never sandboxed"
-  from "sandboxed session died."
+  before any session starts. Distinct from `worker.exited` (a session that
+  started and then crashed or finished without a claim).
 - `verify.failed` payload includes a normalized failure signature (last
   assertion line, stripped of addresses/line numbers) so "same failure twice"
   is a cheap comparison, not vibes.

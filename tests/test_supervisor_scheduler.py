@@ -9,12 +9,16 @@ any particular LLM's behavior.
 """
 import asyncio
 import json
+import os
+import time
 
 import pytest
 
-from orchestrator.scheduler import Scheduler, WorkerStartupFailure
+from orchestrator.scheduler import Scheduler, SchedulerCleanupFailure, WorkerStartupFailure
 from orchestrator.store import connect, create_task
+from orchestrator.supervisor.llm import SupervisorResult
 from orchestrator.supervisor.schema import Abandon, Escalate, Nudge, Restart, Wait
+from orchestrator.worker.fake import spawn_fake_worker
 from tests.helpers import ScriptedSupervisor, init_repo
 
 
@@ -36,6 +40,70 @@ def _run(conn, repo, tmp_path, supervisor, **sched_kwargs):
                       stall_threshold_s=0.3, watchdog_interval_s=0.05, verify_timeout_s=10,
                       supervisor=supervisor, **sched_kwargs)
     asyncio.run(asyncio.wait_for(sched.run_until_settled(), timeout=30))
+    return sched
+
+
+def _process_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _wait_for_process_exit(pid, timeout=3):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _process_alive(pid):
+            return
+        time.sleep(0.02)
+    raise AssertionError(f"process {pid} remained alive")
+
+
+def _release_failure_scheduler(tmp_path, monkeypatch, *, fail_count, task_count=2):
+    repo = init_repo(tmp_path)
+    conn = connect()
+    task_ids = [
+        _create(conn, repo, f"clean-{index}")
+        for index in range(task_count)
+    ]
+    seen = []
+
+    async def spawn(task, worktree, *, model=None):
+        proc = await spawn_fake_worker(task, worktree, model=model)
+        seen.append(proc)
+        return proc
+
+    scheduler = Scheduler(
+        conn, repo, tmp_path / "worktrees", max_concurrency=task_count,
+        spawn_worker=spawn, artifact_root=tmp_path / "artifacts",
+        verify_timeout_s=10,
+    )
+    original_release = scheduler._pool.release
+    calls = 0
+
+    def release(wt, *, preserve_branch=False):
+        nonlocal calls
+        calls += 1
+        if calls <= fail_count:
+            raise RuntimeError(f"intentional cleanup failure {calls}")
+        return original_release(wt, preserve_branch=preserve_branch)
+
+    monkeypatch.setattr(scheduler._pool, "release", release)
+    return scheduler, conn, task_ids, seen, lambda: calls
+
+
+def _assert_scheduler_registries_empty(scheduler):
+    assert scheduler._teardown_tasks == {}
+    assert scheduler._procs == {}
+    assert scheduler._worker_slots == {}
+    assert scheduler._worktrees == {}
+    assert scheduler._watchers == {}
+    assert scheduler._exit_watchers == {}
+    assert scheduler._reap_locks == {}
+    assert scheduler._last_event_ts == {}
+    assert scheduler._wait_grace == {}
+    assert scheduler._reaped_tasks == set()
 
 
 def test_nudge_reaches_the_live_session_and_delivers(tmp_path):
@@ -204,19 +272,203 @@ def test_wait_extends_the_deadline_without_killing_the_session(tmp_path):
     repo = init_repo(tmp_path)
     conn = connect()
     task_id = _create(conn, repo, "stall")
-    supervisor = ScriptedSupervisor([
-        Wait(seconds=1, reason="might be doing something external"),
-        Escalate(summary="still silent", question="how to proceed?", options=["review"],
-                 reason="stalled again after the wait"),
-    ])
+    seen = {}
 
-    _run(conn, repo, tmp_path, supervisor)
+    async def spawn(task, worktree, *, model=None):
+        proc = await spawn_fake_worker(task, worktree, model=model)
+        seen["proc"] = proc
+        return proc
+
+    class WaitThenEscalate:
+        def __init__(self):
+            self.calls = 0
+
+        async def __call__(self, packet):
+            del packet
+            self.calls += 1
+            assert _process_alive(seen["proc"].pid)
+            assert scheduler._procs[task_id] is seen["proc"]
+            if self.calls == 1:
+                action = Wait(seconds=1, reason="might be doing something external")
+            else:
+                action = Escalate(summary="still silent", question="how to proceed?", options=["review"],
+                                  reason="stalled again after the wait")
+            return SupervisorResult(action=action, ok=True, tokens_in=0, tokens_out=0,
+                                    cost_usd=0, raw_text=None)
+
+    supervisor = WaitThenEscalate()
+    scheduler = Scheduler(
+        conn, repo, tmp_path / "worktrees", max_concurrency=1,
+        stall_threshold_s=0.3, watchdog_interval_s=0.05, verify_timeout_s=10,
+        supervisor=supervisor, spawn_worker=spawn,
+    )
+
+    asyncio.run(asyncio.wait_for(scheduler.run_until_settled(), timeout=30))
 
     state = conn.execute("SELECT state FROM tasks WHERE id=?", (task_id,)).fetchone()["state"]
     assert state == "needs_human"
     types = [e["type"] for e in _events(conn, task_id)]
     assert types.count("worker.spawned") == 1  # never restarted, same stalled session throughout
     assert types.count("worker.stalled") == 2  # detected, waited, detected again
+    _wait_for_process_exit(seen["proc"].pid)
+    assert scheduler._procs == {}
+    assert scheduler._worker_slots == {}
+    assert scheduler._teardown_tasks == {}
+    assert len([e for e in _events(conn, task_id) if e["type"] == "worker.slot_released"]) == 1
+    asyncio.run(scheduler._teardown(task_id))
+    asyncio.run(scheduler._teardown(task_id))
+
+
+def test_cleanup_failure_is_not_reported_as_clean_success(tmp_path, monkeypatch):
+    scheduler, _conn, _task_ids, seen, calls = _release_failure_scheduler(
+        tmp_path, monkeypatch, fail_count=1,
+    )
+
+    with pytest.raises(SchedulerCleanupFailure, match="intentional cleanup failure 1"):
+        asyncio.run(asyncio.wait_for(scheduler.run_until_settled(), timeout=30))
+
+    assert calls() == 2
+    for proc in seen:
+        _wait_for_process_exit(proc.pid)
+    _assert_scheduler_registries_empty(scheduler)
+    # The failed worker's durable candidate can still be verified on a
+    # repeated shutdown/run, and a second shutdown remains harmless.
+    asyncio.run(asyncio.wait_for(scheduler.run_until_settled(), timeout=30))
+    _assert_scheduler_registries_empty(scheduler)
+
+
+def test_cleanup_failure_does_not_block_other_worker_cleanup(tmp_path, monkeypatch):
+    scheduler, _conn, _task_ids, seen, calls = _release_failure_scheduler(
+        tmp_path, monkeypatch, fail_count=1,
+    )
+
+    with pytest.raises(SchedulerCleanupFailure):
+        asyncio.run(asyncio.wait_for(scheduler.run_until_settled(), timeout=30))
+
+    assert calls() == 2
+    for proc in seen:
+        _wait_for_process_exit(proc.pid)
+    _assert_scheduler_registries_empty(scheduler)
+
+
+def test_multiple_cleanup_failures_are_deterministic_and_preserved(tmp_path, monkeypatch):
+    scheduler, _conn, task_ids, seen, calls = _release_failure_scheduler(
+        tmp_path, monkeypatch, fail_count=2,
+    )
+
+    with pytest.raises(BaseExceptionGroup) as raised:
+        asyncio.run(asyncio.wait_for(scheduler.run_until_settled(), timeout=30))
+
+    assert calls() == 2
+    labels = [failure.label for failure in raised.value.exceptions]
+    assert labels == sorted(labels)
+    assert labels == [f"teardown task {task_id}" for task_id in sorted(task_ids)]
+    assert all("intentional cleanup failure" in str(failure)
+               for failure in raised.value.exceptions)
+    for proc in seen:
+        _wait_for_process_exit(proc.pid)
+    _assert_scheduler_registries_empty(scheduler)
+
+
+def test_cancellation_during_teardown_does_not_hide_cleanup_failure(tmp_path):
+    scheduler = Scheduler(
+        connect(), ".", tmp_path / "worktrees", max_concurrency=1,
+    )
+
+    async def scenario():
+        started = asyncio.Event()
+        finish = asyncio.Event()
+
+        async def failing_owned(task_id, **kwargs):
+            del task_id, kwargs
+            started.set()
+            await finish.wait()
+            raise RuntimeError("cleanup failed after cancellation")
+
+        scheduler._teardown_owned = failing_owned
+        runner = asyncio.create_task(scheduler._teardown("cancelled-cleanup"))
+        await started.wait()
+        runner.cancel()
+        finish.set()
+        with pytest.raises(RuntimeError, match="cleanup failed after cancellation"):
+            await runner
+
+    asyncio.run(scenario())
+    assert scheduler._teardown_tasks == {}
+
+
+def test_cancellation_during_wait_reaps_the_live_worker(tmp_path):
+    repo = init_repo(tmp_path)
+    conn = connect()
+    task_id = _create(conn, repo, "stall")
+    seen = {}
+    waited = asyncio.Event()
+
+    async def spawn(task, worktree, *, model=None):
+        proc = await spawn_fake_worker(task, worktree, model=model)
+        seen["proc"] = proc
+        return proc
+
+    class WaitSupervisor:
+        async def __call__(self, packet):
+            del packet
+            waited.set()
+            return SupervisorResult(
+                action=Wait(seconds=30, reason="keep the live session"), ok=True,
+                tokens_in=0, tokens_out=0, cost_usd=0, raw_text=None,
+            )
+
+    scheduler = Scheduler(
+        conn, repo, tmp_path / "worktrees", max_concurrency=1,
+        stall_threshold_s=0.2, watchdog_interval_s=0.05, verify_timeout_s=10,
+        supervisor=WaitSupervisor(), spawn_worker=spawn,
+    )
+
+    async def run_and_cancel():
+        runner = asyncio.create_task(scheduler.run_until_settled(forever=True))
+        await asyncio.wait_for(waited.wait(), timeout=10)
+        deadline = time.monotonic() + 2
+        while conn.execute("SELECT state FROM tasks WHERE id=?", (task_id,)).fetchone()["state"] != "running":
+            if time.monotonic() >= deadline:
+                raise AssertionError("WAIT action did not return the task to running")
+            await asyncio.sleep(0.01)
+        runner.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await runner
+
+    asyncio.run(run_and_cancel())
+    _wait_for_process_exit(seen["proc"].pid)
+    assert scheduler._procs == {}
+    assert scheduler._worker_slots == {}
+
+
+def test_exception_during_wait_supervision_reaps_the_live_worker(tmp_path):
+    repo = init_repo(tmp_path)
+    conn = connect()
+    task_id = _create(conn, repo, "stall")
+    seen = {}
+
+    async def spawn(task, worktree, *, model=None):
+        proc = await spawn_fake_worker(task, worktree, model=model)
+        seen["proc"] = proc
+        return proc
+
+    class RaisingSupervisor:
+        async def __call__(self, packet):
+            del packet
+            raise RuntimeError("supervisor transport failed")
+
+    scheduler = Scheduler(
+        conn, repo, tmp_path / "worktrees", max_concurrency=1,
+        stall_threshold_s=0.2, watchdog_interval_s=0.05, verify_timeout_s=10,
+        supervisor=RaisingSupervisor(), spawn_worker=spawn,
+    )
+    asyncio.run(asyncio.wait_for(scheduler.run_until_settled(), timeout=30))
+
+    _wait_for_process_exit(seen["proc"].pid)
+    assert scheduler._procs == {}
+    assert scheduler._worker_slots == {}
+    assert conn.execute("SELECT state FROM tasks WHERE id=?", (task_id,)).fetchone()["state"] == "needs_human"
 
 
 def test_abandon_only_reachable_in_yolo_mode(tmp_path):

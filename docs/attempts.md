@@ -7,7 +7,7 @@ final disposition. It also records worker dirty status captured before a
 disposable checkout is released. `attempt/<attempt-id>` is a persistent Git
 ref; pooled worktree directories are disposable checkouts of that ref.
 
-The first attempt starts at the benchmark base branch. When a restart is
+The first attempt starts at the task's configured base branch. When a restart is
 allowed, the next attempt records the previous attempt as `parent_attempt_id`
 and checks out its `candidate_sha`. Supervisor feedback is stored on the parent
 and copied into the child execution contract. A retry only returns to the
@@ -22,18 +22,16 @@ This closes the interruption window between triage and retry launch.
 
 The execution contract contains only the normal brief, working directory,
 visible verification command, commit requirement, delivery expectation, and
-recovery guidance. Hidden verifier commands, paths, output, and assertions are
-never included.
+recovery guidance. Evaluator commands, paths, output, and assertions are never
+included.
 
 Public verification failures receive a deterministic SHA-256 signature of the
 cause, exit code, and normalized failure line. ANSI escapes, absolute paths,
-addresses, line numbers, and whitespace are removed. Hidden-test failures do
-not receive a worker-visible signature.
+addresses, line numbers, and whitespace are removed.
 
 `verification.recovered` is a separate metric event. It is emitted once when a
 delivered attempt has an earlier failed verification ancestor. It is not
-derived from or combined with `bench.fault_recovered`, and a failed retry does
-not count.
+derived from an external evaluator, and a failed retry does not count.
 
 ## Event-triggered supervision (v2 phase two)
 
@@ -67,7 +65,6 @@ decision while retry budget remains. The maximum recovery retries is still
 the task's explicit `max_retries`; exhausted budget records a deterministic
 `retry_budget_exhausted` disposition.
 
-Hidden/evaluator-only failures never receive invented explanations. They are
-recorded as `opaque_evaluator_mismatch` and escalated to a person. Other
-human dispositions distinguish actionable public failure, missing information,
+Harbor evaluator failures never enter the worker retry loop. Other human
+dispositions distinguish actionable public failure, missing information,
 environment/tool limitation, worker terminal failure, and exhausted budget.

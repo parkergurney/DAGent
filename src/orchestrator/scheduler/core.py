@@ -26,6 +26,7 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -41,7 +42,7 @@ from orchestrator.supervisor import (
 from orchestrator.supervisor.llm import SupervisorResult
 from orchestrator.verify.gate import VerifyRequest, run_verify
 from orchestrator.worker import (
-    WorktreePool, build_execution_contract, cleanup_worker_sandbox, spawn_fake_worker,
+    WorktreePool, build_execution_contract, spawn_fake_worker,
 )
 
 # Team states in which nothing is left for the scheduler to drive; the team
@@ -60,11 +61,42 @@ class WorkerStartupFailure(RuntimeError):
         super().__init__(f"worker startup failed for {task_id}: {category}: {reason}")
 
 
+class SchedulerCleanupFailure(RuntimeError):
+    """A cleanup operation failed after the scheduler took ownership of it."""
+
+    def __init__(self, label: str, cause: BaseException):
+        self.label = label
+        self.cause = cause
+        super().__init__(f"{label}: {cause}")
+        self.__cause__ = cause
+
+
+def _combine_cleanup_failures(title: str, failures: list[tuple[str, BaseException]]):
+    """Return one deterministic exception while retaining every cause."""
+    ordered = sorted(failures, key=lambda item: item[0])
+    if len(ordered) == 1:
+        label, cause = ordered[0]
+        if isinstance(cause, SchedulerCleanupFailure) and cause.label != label:
+            return SchedulerCleanupFailure(label, cause)
+        return cause
+    return BaseExceptionGroup(
+        title,
+        [SchedulerCleanupFailure(label, cause) for label, cause in ordered],
+    )
+
+
+def _append_unique_failure(
+    failures: list[tuple[str, BaseException]], label: str, cause: BaseException,
+) -> None:
+    if not any(existing is cause for _label, existing in failures):
+        failures.append((label, cause))
+
+
 def validate_dependency_graph(conn) -> None:
     """Fail closed for missing prerequisites and cyclic task graphs.
 
     Task creation normally enforces missing references through SQLite foreign
-    keys and benchmark suites require dependencies to point backward. This
+    keys and task batches require dependencies to point backward. This
     check also protects resumed/manual databases and makes the scheduler's
     startup behavior deterministic before any worker is launched.
     """
@@ -236,6 +268,17 @@ class Scheduler:
         self._reap_locks: dict[str, asyncio.Lock] = {}
         self._exit_watchers: dict[str, asyncio.Task] = {}
         self._watchers: dict[str, asyncio.Task] = {}
+        # Teardown owns the process after it leaves _procs.  Keeping the
+        # in-flight cleanup task durable in memory prevents scheduler shutdown
+        # from cancelling a watchdog teardown after it has removed ownership
+        # but before it has killed/reaped the process group and released the
+        # slot.
+        self._teardown_tasks: dict[str, asyncio.Task] = {}
+        # A teardown can be initiated by a worker/watchdog task rather than
+        # by run_until_settled().  Keep its exception until the scheduler can
+        # surface it; otherwise a failed background task could leave a task
+        # stuck in verifying while the outer loop continues normally.
+        self._teardown_failures: dict[tuple[str, int], BaseException] = {}
         self._worktrees: dict[str, object] = {}
         self._last_event_ts: dict[str, float] = {}
         self._wait_grace: dict[str, float] = {}  # task_id -> seconds, set by a "wait" decision
@@ -275,19 +318,94 @@ class Scheduler:
         watchdog = asyncio.create_task(self._watchdog_loop())
         try:
             while forever or not self._team_settled():
+                self._raise_recorded_teardown_failures()
                 if self._infrastructure_failure:
                     raise self._infrastructure_failure
                 self._advance_deps(block_needs_human=not forever)
                 await self._launch_ready()
+                self._raise_recorded_teardown_failures()
                 if self._infrastructure_failure:
                     raise self._infrastructure_failure
                 await asyncio.sleep(poll_interval_s if (forever and self._team_settled()) else 0.05)
         finally:
+            pending_exception = sys.exc_info()[1]
+            shutdown_failures: list[tuple[str, BaseException]] = []
             watchdog.cancel()
-            await asyncio.gather(watchdog, return_exceptions=True)
-            await asyncio.gather(*(self._teardown(tid) for tid in list(self._worker_slots)),
-                                 return_exceptions=True)
-            self._pool.close()
+            watchdog_result = await asyncio.gather(watchdog, return_exceptions=True)
+            for result in watchdog_result:
+                if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
+                    _append_unique_failure(shutdown_failures, "watchdog", result)
+
+            teardown_failures, teardown_cancelled = await self._await_teardowns_shielded()
+            for label, failure in teardown_failures:
+                _append_unique_failure(shutdown_failures, label, failure)
+            for label, failure in self._pop_teardown_failures():
+                _append_unique_failure(shutdown_failures, label, failure)
+            try:
+                self._pool.close()
+            except BaseException as exc:
+                _append_unique_failure(shutdown_failures, "worktree pool close", exc)
+
+            if shutdown_failures:
+                if pending_exception is not None:
+                    pending_label = (
+                        pending_exception.label
+                        if isinstance(pending_exception, SchedulerCleanupFailure)
+                        else "scheduler operation"
+                    )
+                    if not any(existing is pending_exception
+                               for _label, existing in shutdown_failures):
+                        shutdown_failures.insert(0, (pending_label, pending_exception))
+                raise _combine_cleanup_failures(
+                    "scheduler operation and cleanup failed" if pending_exception is not None
+                    else "scheduler cleanup failed",
+                    shutdown_failures,
+                )
+            if teardown_cancelled and pending_exception is None:
+                raise asyncio.CancelledError
+
+    async def _drain_teardowns(self) -> list[tuple[str, BaseException]]:
+        """Await every cleanup owner currently known to the scheduler."""
+        task_ids = sorted(set(self._worker_slots) | set(self._teardown_tasks))
+        if not task_ids:
+            return []
+        results = await asyncio.gather(
+            *(self._teardown(task_id) for task_id in task_ids),
+            return_exceptions=True,
+        )
+        failures = []
+        for task_id, result in zip(task_ids, results):
+            if isinstance(result, BaseException):
+                failures.append((f"teardown task {task_id}", result))
+        return failures
+
+    async def _await_teardowns_shielded(self) -> tuple[list[tuple[str, BaseException]], bool]:
+        """Drain teardowns even when shutdown itself is being cancelled."""
+        drain = asyncio.create_task(self._drain_teardowns())
+        try:
+            return await asyncio.shield(drain), False
+        except asyncio.CancelledError:
+            try:
+                return await asyncio.shield(drain), True
+            except BaseException as exc:
+                return [("teardown drain", exc)], True
+
+    def _pop_teardown_failures(self) -> list[tuple[str, BaseException]]:
+        failures = [
+            (f"teardown task {task_id}", failure)
+            for (task_id, _cleanup_id), failure in self._teardown_failures.items()
+        ]
+        self._teardown_failures.clear()
+        return failures
+
+    def _record_teardown_failure(self, task_id: str, cleanup: asyncio.Task,
+                                 failure: BaseException) -> None:
+        self._teardown_failures.setdefault((task_id, id(cleanup)), failure)
+
+    def _raise_recorded_teardown_failures(self) -> None:
+        failures = self._pop_teardown_failures()
+        if failures:
+            raise _combine_cleanup_failures("scheduler teardown failed", failures)
 
     def _team_settled(self) -> bool:
         placeholders = ",".join("?" * len(_SETTLED_STATES))
@@ -370,7 +488,7 @@ class Scheduler:
 
         # The contract is generated before the worker starts and persisted with
         # the attempt, so a restart can reconstruct exactly what was public.
-        # It intentionally has no hidden verifier fields.
+        # It intentionally has no external evaluator fields.
         wt_hint = str(self.worktree_root / "pending")
         contract = build_execution_contract(task, wt_hint, recovery_feedback=recovery_feedback)
         if not resume:
@@ -506,7 +624,7 @@ class Scheduler:
                     claimed_or_triaged = True
                     # A done claim is a stream message, not proof that the
                     # SDK/Claude process has exited.  Reap it before the
-                    # verifier is allowed to materialize hidden files.
+                    # verification is allowed to inspect the committed candidate.
                     await self._reap_process(task_id, proc)
                     candidate = self._capture_candidate(task_id)
                     self._enter_verifying(task_id, s, candidate_sha=candidate)
@@ -558,8 +676,16 @@ class Scheduler:
                     await self._teardown(task_id, expect_proc=proc)
                     await self._handle_triage(task_id, s, live_proc=None,
                                               candidate_sha=candidate)
+        except (SchedulerCleanupFailure, BaseExceptionGroup):
+            # The authoritative teardown task has recorded the failure for
+            # the scheduler loop.  Do not leave an unobserved exception on
+            # this background watcher task.
+            pass
         finally:
-            await self._teardown(task_id, expect_proc=proc)
+            try:
+                await self._teardown(task_id, expect_proc=proc)
+            except (SchedulerCleanupFailure, BaseExceptionGroup):
+                pass
 
     def _mark_running_failure(self, task_id: str, *, source, event_type, payload=None,
                               session_id=None) -> int | None:
@@ -644,7 +770,7 @@ class Scheduler:
         non-empty Git diff between the previous failed candidate and the new
         candidate is material. Missing refs are treated as changed only when
         the candidate identity itself changed; this keeps the policy safe
-        during partial/crashed writes without consulting hidden verification.
+        during partial/crashed writes without consulting external evaluation.
         """
         if not previous or not current:
             return False
@@ -711,27 +837,6 @@ class Scheduler:
         creates no supervisor intervention row and no supervisor model event.
         """
         attempt = latest_attempt(self.conn, task_id)
-        trigger = self.conn.execute("SELECT payload FROM events WHERE seq = ?", (cause_seq,)).fetchone()
-        trigger_payload = json.loads(trigger["payload"]) if trigger else {}
-        cause = trigger_payload.get("cause")
-
-        # Hidden/evaluator-only failures have no public diagnosis by contract.
-        # Escalate with an honest category instead of asking a model to invent
-        # an explanation from material it is not allowed to see.
-        if cause == "hidden_tests_failed":
-            policy_seq = append_event(
-                self.conn, source="system", type="recovery.policy_applied", task_id=task_id,
-                payload={"action_type": "ESCALATE_HUMAN", "diagnosis_code": "opaque_evaluator_mismatch",
-                         "attempt_id": attempt["id"] if attempt else None,
-                         "reason": "external evaluator supplied no actionable public information"},
-            )
-            if attempt:
-                update_attempt(self.conn, attempt["id"], disposition="opaque_evaluator_mismatch")
-            self._finish_interventions(task_id, "needs_human", "cannot_yet_evaluate")
-            transition(self.conn, task_id, "needs_human", cause_seq=policy_seq)
-            await self._teardown(task_id)
-            return True
-
         evaluation = self._failure_evaluation(task_id, attempt)
         if evaluation is None:
             return False
@@ -996,20 +1101,15 @@ class Scheduler:
             (task_id,),
         ).fetchone()
         verification_base_sha = origin["base_sha"] if origin else task["base_sha"]
-        req_kwargs = {}
-        if task["protected_paths"]:
-            req_kwargs["protected_paths"] = tuple(json.loads(task["protected_paths"]))
         attempt = self.conn.execute("SELECT * FROM attempts WHERE id = ?", (task["current_attempt_id"],)).fetchone()
         candidate_sha = task["candidate_sha"] or (attempt["candidate_sha"] if attempt else None)
         req = VerifyRequest(task_id=task_id, worktree=task["worktree"], base_sha=verification_base_sha,
-                            verify_cmd=task["verify_cmd"] or "true", setup_cmd=task["setup_cmd"],
-                            hidden_cmd=task["hidden_cmd"], timeout_s=self.verify_timeout_s,
+                            verify_cmd=task["verify_cmd"] or "true", timeout_s=self.verify_timeout_s,
                             repo=task["repo"],
                             candidate_sha=candidate_sha,
                             worker_dirty=attempt["worker_dirty"] if attempt else None,
                             artifact_root=(str(self.artifact_root / task_id)
-                                           if self.artifact_root else None),
-                            **req_kwargs)
+                                           if self.artifact_root else None))
         attempt_id = task["current_attempt_id"]
         update_attempt(self.conn, attempt_id, verification_started_at=self._timestamp(),
                        disposition="verifying")
@@ -1069,9 +1169,7 @@ class Scheduler:
         self._record_verification_recovery(task_id)
 
     def _record_verification_recovery(self, task_id: str) -> None:
-        """Record only verification-driven descendant recovery.
-
-        This deliberately does not inspect ``bench.fault_injected``. A later
+        """Record only verification-driven descendant recovery. A later
         delivered descendant counts iff an ancestor has a recorded verify
         failure, and the event is idempotent per task.
         """
@@ -1134,51 +1232,126 @@ class Scheduler:
         """Idempotent, and safe to call speculatively: if `expect_proc` is
         given and no longer matches what's tracked for task_id, a restart
         already replaced this attempt with a fresh one -- do nothing rather
-        than tearing down the new attempt out from under it."""
+        than tearing down the new attempt out from under it.
+
+        The cleanup itself runs in a separate task and is shielded from
+        cancellation.  A watchdog can be the task performing teardown when
+        the scheduler begins shutdown; cancelling that watchdog must not
+        strand a live process after its registry entry has been removed.
+        """
         if expect_proc is not None and self._procs.get(task_id) is not expect_proc:
             return
 
+        cleanup = self._teardown_tasks.get(task_id)
+        if cleanup is None:
+            owner = asyncio.current_task()
+            cleanup = asyncio.create_task(
+                self._teardown_owned(task_id, expect_proc=expect_proc, owner=owner)
+            )
+            self._teardown_tasks[task_id] = cleanup
+        try:
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError:
+            # The caller may be the watchdog being cancelled by
+            # run_until_settled's finally block.  Finish the authoritative
+            # cleanup before propagating cancellation to that caller.
+            try:
+                await asyncio.shield(cleanup)
+            except BaseException as exc:
+                self._record_teardown_failure(task_id, cleanup, exc)
+                raise
+            raise
+        except BaseException as exc:
+            self._record_teardown_failure(task_id, cleanup, exc)
+            raise
+        finally:
+            if cleanup.done() and self._teardown_tasks.get(task_id) is cleanup:
+                self._teardown_tasks.pop(task_id, None)
+
+    async def _teardown_owned(self, task_id: str, *, expect_proc=None, owner=None) -> None:
+        """Perform the single process/slot/worktree teardown operation."""
+        if expect_proc is not None and self._procs.get(task_id) is not expect_proc:
+            return
+
+        failures: list[tuple[str, BaseException]] = []
         proc = self._procs.pop(task_id, None)
         exit_watcher = self._exit_watchers.pop(task_id, None)
         watcher = self._watchers.pop(task_id, None)
         self._last_event_ts.pop(task_id, None)
         self._wait_grace.pop(task_id, None)
 
-        if exit_watcher is not None and exit_watcher is not asyncio.current_task():
+        if exit_watcher is not None and exit_watcher not in (asyncio.current_task(), owner):
             exit_watcher.cancel()
-            await asyncio.gather(exit_watcher, return_exceptions=True)
+            results = await asyncio.gather(exit_watcher, return_exceptions=True)
+            failures.extend(
+                ("exit watcher", result) for result in results
+                if isinstance(result, BaseException)
+                and not isinstance(result, asyncio.CancelledError)
+            )
 
         if proc is not None:
-            await self._reap_process(task_id, proc)
-            self._reaped_tasks.discard(task_id)
-            self._reap_locks.pop(task_id, None)
+            try:
+                await self._reap_process(task_id, proc)
+            except Exception as exc:
+                failures.append(("process reap", exc))
+                if getattr(proc, "returncode", None) is None:
+                    try:
+                        await _terminate_and_reap(proc, terminate=True)
+                    except Exception as retry_exc:
+                        failures.append(("process reap retry", retry_exc))
+            finally:
+                self._reaped_tasks.discard(task_id)
+                self._reap_locks.pop(task_id, None)
             # asyncio doesn't close the subprocess transport just because the
             # process exited; leaving it for GC risks it firing after the
             # loop closes ("Exception ignored in: ...__del__ ... Event loop
             # is closed"). Harmless but noisy -- close it explicitly.
             transport = getattr(proc, "_transport", None)
             if transport is not None:
-                transport.close()
+                try:
+                    transport.close()
+                except Exception as exc:
+                    failures.append(("process transport close", exc))
 
-        if watcher is not None and watcher is not asyncio.current_task():
+        if watcher is not None and watcher not in (asyncio.current_task(), owner):
             watcher.cancel()
 
         wt = self._worktrees.pop(task_id, None)
+        slot = self._worker_slots.pop(task_id, None)
         if wt is not None:
             # Attempt refs are durable candidates; only the pooled checkout
             # is disposable.
-            self._pool.release(wt, preserve_branch=True)
-            slot = self._worker_slots.pop(task_id, None)
-            if slot is not None:
-                attempt = latest_attempt(self.conn, task_id)
-                self._append_timing_event(
-                    task_id, "worker.slot_released",
-                    attempt_id=attempt["id"] if attempt else None,
-                    payload={"slot": str(slot), "occupancy": len(self._worker_slots),
-                             "limit": self.max_concurrency},
-                )
-        elif task_id in self._worker_slots:
+            released = False
+            try:
+                self._pool.release(wt, preserve_branch=True)
+                released = True
+            except Exception as exc:
+                failures.append(("worktree release", exc))
+            if slot is not None and released:
+                try:
+                    attempt = latest_attempt(self.conn, task_id)
+                    self._append_timing_event(
+                        task_id, "worker.slot_released",
+                        attempt_id=attempt["id"] if attempt else None,
+                        payload={"slot": str(slot), "occupancy": len(self._worker_slots),
+                                 "limit": self.max_concurrency},
+                    )
+                except Exception as exc:
+                    failures.append(("slot release event", exc))
+        elif slot is not None:
             # A lease without a checkout is a scheduler bug. Refuse to hide a
-            # negative/double-release accounting error behind a counter update.
-            raise RuntimeError(f"worker slot {task_id} has no worktree to release")
-        cleanup_worker_sandbox(proc)
+            # negative/double-release accounting error behind a counter update,
+            # but continue cleaning the other resources before surfacing it.
+            failures.append((
+                "slot release",
+                RuntimeError(f"worker slot {task_id} has no worktree to release"),
+            ))
+
+        if failures:
+            causes = [
+                SchedulerCleanupFailure(f"teardown {task_id} / {resource}", cause)
+                for resource, cause in failures
+            ]
+            if len(causes) == 1:
+                raise causes[0]
+            raise BaseExceptionGroup(f"teardown for task {task_id} failed", causes)

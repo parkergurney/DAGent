@@ -1,15 +1,14 @@
 # Design: agent orchestration system for Claude Code
 
-Status: M5 complete (worktree pool, dep resolution, all three delivery modes),
-plus an `orchestrator` CLI (add-task/run/daemon/answer/status, docs/usage.md)
-and initial M6 benchmark harness (`orchestrator.bench`, `bench-run`) layered on
-top so the system is usable without hand-writing a Python script.
+Status: M6 Harbor boundary complete (worktree pool, dependency settlement, all
+three delivery modes, durable metrics, policy selection, and an `orchestrator`
+CLI). Harbor owns outer task isolation, hidden evaluation, and scoring.
 
 This file carries the always-relevant core: thesis, architecture, and the
 invariants that must never be violated. The full design doc lives in
 docs/design.md and is the source of truth for architecture decisions; the
 rest of it (task state machine, storage schema, supervisor contract, verify
-gate, worker lifecycle, delivery modes, benchmark plan, milestones, config,
+gate, worker lifecycle, delivery modes, milestones, config,
 open questions) is split into topic skills under `.claude/skills/` (see
 "Deep reference" below) so a session only loads what its task actually
 touches. Update docs/design.md when decisions change; log the change and
@@ -30,8 +29,7 @@ docs/usage.md. Neither changes anything under `src/orchestrator/`.
 A deterministic orchestration daemon — real code, real state machine,
 event-driven — that runs a team of Claude Code sessions in parallel, using LLM
 judgment only at the edges (triage decisions), built natively on the Claude
-Agent SDK. Benchmarked against baselines, which almost no system in this space
-does.
+Agent SDK. Harbor supplies evaluation and baseline comparisons.
 
 Prior art: kunchenguid/firstmate (AGENTS.md prompt + bash toolbelt + tmux
 scraping). Ideas kept from it: event-driven wake instead of polling, worktree
@@ -44,7 +42,9 @@ and take the SDK's structured integration).
 ### Non-goals (v1)
 
 - Multi-machine / multi-user. Single manager, single box.
-- Container isolation. Worktree + process-group + timeout. Documented limitation.
+- The orchestrator does not provide host security isolation. Harbor or another
+  explicitly trusted outer environment must isolate benchmark workers; direct
+  host execution is trusted development mode only.
 - Chat liaison front-end. A TUI tailing the events table is the operator UI.
 - Adversarial LLM reviewer in the verify gate. Slots in later as optional
   stage 5; the gate ships fully deterministic.
@@ -77,6 +77,19 @@ and take the SDK's structured integration).
 Control plane is deterministic. The only LLM calls in the control plane are
 single-shot supervisor invocations. Workers are full Claude Code sessions and
 are the only things that write project code.
+
+### Current security boundary
+
+Harbor supplies OS-level isolation, hidden evaluation, and scoring. Workers in
+one Harbor trial share that trial's container resources. The orchestrator adds
+scheduling, process ownership, retries, persistence, metrics, and internal Git
+worktrees; worktrees isolate concurrent edits, not the host from a worker.
+Visible verification uses only public worker-visible repository state and
+inherits the worker environment. Hidden verifier results never enter the
+agent environment. Caller-supplied worker environment variables are never
+persisted or logged, and the orchestrator never accesses the macOS Keychain.
+Direct live workers on the host require explicit trusted-development mode and
+are not benchmark isolation.
 
 ---
 
@@ -118,8 +131,6 @@ Claude Code skill so it loads only when relevant, instead of on every task:
   failure.
 - `worker-lifecycle-delivery` — Agent SDK session lifecycle, delivery modes.
   Relevant when touching worker spawning or delivery/git-push code.
-- `benchmark-plan` — conditions, workload, metrics, scope levers. Relevant
-  when touching the benchmark harness or eval design.
 - `milestones` — M0-M7 roadmap, FakeWorker suite, config defaults, open
   questions. Relevant when planning work or checking project scope/status.
 

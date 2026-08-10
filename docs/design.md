@@ -1,99 +1,39 @@
-# Design: agent orchestration system for Claude Code
+# Agent orchestrator design
 
-Status: M5 complete (worktree pool, dep resolution, all three delivery modes),
-plus an `orchestrator` CLI (add-task/run/daemon/answer/status, docs/usage.md)
-layered on top so the system is usable without hand-writing a Python script.
+The orchestrator is a deterministic asyncio/SQLite control plane for Claude
+worker sessions. Harbor supplies one outer task environment, selects a policy,
+and owns hidden evaluation. The orchestrator owns scheduling, retries,
+dependencies, worker supervision, candidate lineage, delivery, and durable
+metrics.
 
-This is the full architecture design document, the source of truth for
-architecture decisions. `CLAUDE.md` carries a trimmed copy of the
-always-relevant parts (thesis, architecture overview, invariants) plus
-pointers into `.claude/skills/` for topic-specific detail, so every Claude
-Code session gets the core context without paying for all of it on every
-task; this file remains the complete reference for deep review. Update it
-when decisions change; log the change and rationale in devlog.md.
+## Current security model
 
-Working name TBD. "agent-orchestrator" is a placeholder.
+Harbor is the supported benchmark isolation boundary. Workers inside one
+Harbor trial share that trial's container resources. The orchestrator does not
+provide a general-purpose OS sandbox or protect the host filesystem from a
+live Claude worker. Its Git worktrees isolate concurrent edits, not workers
+from the host.
 
----
+Hidden tests and scoring run in Harbor's separate verifier environment, and
+hidden verifier results never enter the agent environment. Visible
+verification is public worker feedback only, uses agent-visible repository
+state, and inherits the worker environment; benchmark use therefore requires
+the same trusted outer boundary as the worker. Caller-supplied worker
+environment variables may contain authentication material and are never
+persisted or logged. The orchestrator does not access the macOS Keychain.
+Direct live workers on the host are trusted development mode only.
 
-## 1. Thesis
-
-A deterministic orchestration daemon — real code, real state machine,
-event-driven — that runs a team of Claude Code sessions in parallel, using LLM
-judgment only at the edges (triage decisions), built natively on the Claude
-Agent SDK. Benchmarked against baselines, which almost no system in this space
-does.
-
-Prior art: kunchenguid/firstmate (AGENTS.md prompt + bash toolbelt + tmux
-scraping). Ideas kept from it: event-driven wake instead of polling, worktree
-isolation, explicit per-project delivery modes, "delivered = PR open, merge is
-the manager's call", restart-proof state on disk. Ideas rejected: pane-scraping
-transport (we use SDK hooks + structured streams), LLM-in-the-control-loop for
-scheduling (deterministic code), harness-agnosticism (we commit to Claude Code
-and take the SDK's structured integration).
-
-### Non-goals (v1)
-
-- Multi-machine / multi-user. Single manager, single box.
-- Container isolation. Worktree + process-group + timeout. Documented limitation.
-- Chat liaison front-end. A TUI tailing the events table is the operator UI.
-- Adversarial LLM reviewer in the verify gate. Slots in later as optional
-  stage 5; the gate ships fully deterministic.
-- LangGraph / Temporal / Celery. Workers are jobs, not graph nodes. asyncio +
-  SQLite + a topological sort. "Why not X" gets a section in the writeup.
-
----
-
-## 2. Architecture overview
-
-```
- manager (TUI / CLI)
-      │
-      ▼
- ┌──────────────────────────────────────────────┐
- │ orchestrator daemon (python, asyncio)        │
- │                                              │
- │  scheduler ── state machine ── watchdog      │
- │      │              │                        │
- │      │        events + tasks (SQLite)        │
- │      │              │                        │
- │  supervisor ─── verify gate ─── delivery     │
- │  (one LLM call) (deterministic) (git/gh)     │
- └──────┬───────────────────────────────────────┘
-        │ spawn / inject / observe (Agent SDK)
-        ▼
-  worker sessions, one per task, each in its own git worktree
-```
-
-Control plane is deterministic. The only LLM calls in the control plane are
-single-shot supervisor invocations. Workers are full Claude Code sessions and
-are the only things that write project code.
-
----
-
-## 3. Core principle: event-sourced state
-
-`events` is an append-only table of facts. `tasks.state` is a derived cache.
-The scheduler is the only writer of state transitions, and every transition is
-itself an event, written in the same SQLite transaction.
-
-### Invariants (the contract — enforce in tests from M0)
+## Invariants
 
 1. Only the scheduler writes `tasks.state`; every write emits
-   `task.state_changed` atomically with it.
-2. The supervisor returns one action from a closed enum and never touches the
-   database.
-3. `tasks` is rebuildable from `events`: `replay(events) == tasks` is asserted
-   in CI.
-4. `task.state_changed` payloads carry `{from, to, cause_seq}` — the seq of the
-   event that caused the transition. Full causality chain.
-5. Stall is never self-reported. The watchdog derives `worker.stalled` from the
-   absence of events past a threshold.
-6. Retry/nudge caps are orchestrator config, never prompt suggestions.
+   `task.state_changed` atomically.
+2. The supervisor returns one action from a closed enum and never touches the DB.
+3. `replay(events) == tasks` is asserted in CI.
+4. State-change payloads carry `{from, to, cause_seq}`.
+5. Stall is derived by the watchdog from event silence.
+6. Retry and nudge caps are orchestrator configuration.
 
----
-
-## 4. Task state machine
+## State machine
 
 <!-- sync:task-states -->
 States: `blocked, queued, running, verifying, triage, needs_human, delivering,
@@ -122,31 +62,14 @@ finite batch, but remains recoverable in daemon mode.
 
 Design notes:
 
-- Every exception path funnels through `triage`: stall, crash, failed verify,
-  failed delivery become the same shape of problem. The supervisor is one
-  function with one prompt, not five special cases.
-- `delivered` means artifact handed off (PR open), not merged. Post-delivery
-  merge tracking is an event, not a state.
-- Crash recovery is a reconciliation pass at startup: for every task in
-  `running`, check whether `session_id` is a live session; dead ones get a
-  synthetic `worker.exited` event and route through triage like any other
-  crash. No special recovery code path.
-- Worker capacity is a live execution lease, not a task-lifetime lease. After
-  a worker's candidate SHA and any dirty-worktree status are durable, the
-  process is reaped and its pooled checkout/worker lease is released before
-  verification or supervisor triage. Verification reads the durable candidate
-  ref, allowing another task to reuse the checkout. A live ask/nudge/wait
-  session retains its lease because the process and checkout are still needed
-  for the intervention.
+- Every exception path funnels through `triage`.
+- `delivered` means artifact handed off, not merged.
+- Crash recovery reconciles dead running sessions through `worker.exited`.
+- Candidate SHA and dirty-worktree facts are durable before the worker lease is
+  released; verification reads the durable candidate ref.
 <!-- /sync:task-states -->
 
----
-
-## 5. Storage schema
-
-Durable retry lineage is specified in [attempts.md](attempts.md): pooled
-worktrees are disposable, while each attempt retains an immutable candidate
-commit ref and explicit parent.
+## Storage
 
 <!-- sync:storage-schema -->
 ```sql
@@ -157,9 +80,6 @@ CREATE TABLE tasks (
   repo          TEXT NOT NULL,
   delivery_mode TEXT NOT NULL,           -- 'pr' | 'local' | 'scout'
   verify_cmd    TEXT,                    -- null for scout
-  hidden_cmd    TEXT,                    -- benchmark/instructor-owned check, never in brief
-  setup_cmd     TEXT,
-  protected_paths TEXT,                  -- JSON array, null = none
   state         TEXT NOT NULL DEFAULT 'blocked',
   retries       INTEGER NOT NULL DEFAULT 0,
   max_retries   INTEGER NOT NULL DEFAULT 2,
@@ -191,7 +111,7 @@ CREATE TABLE events (
 CREATE INDEX idx_events_task ON events(task_id, seq);
 ```
 
-### Event taxonomy
+## Event taxonomy
 
 ```
 task.created          task.state_changed      dep.satisfied       dep.blocked
@@ -204,20 +124,14 @@ delivery.started      delivery.pr_opened      delivery.merged_local
 delivery.report_written                       delivery.failed
 human.messaged        human.approved          human.cancelled
 system.started        system.reconciled
-bench.run_started     bench.run_finished      bench.delivered
-bench.unsupervised_failed                    bench.fault_injected
-bench.fault_recovered
 ```
 
 - `worker.tool_used` comes from a PostToolUse hook; log EVERY call but keep the
   payload minimal (tool name, target, duration_ms). Highest-volume event by
-  ~100x; tool-call counts per task are a benchmark metric.
+  ~100x; tool-call counts per task are an experiment metric.
 - `worker.startup_failed` fires when the worker's own connect step raises
-  before any session starts — currently only `failIfUnavailable`'s hard fail
-  when the OS-level Bash sandbox can't start (docs/design.md section 8).
-  Distinct from `worker.exited` (a session that started and then crashed or
-  finished without a claim) so triage/operators can tell "never sandboxed"
-  from "sandboxed session died."
+  before any session starts. Distinct from `worker.exited` (a session that
+  started and then crashed or finished without a claim).
 - `verify.failed` payload includes a normalized failure signature (last
   assertion line, stripped of addresses/line numbers) so "same failure twice"
   is a cheap comparison, not vibes.
@@ -227,9 +141,7 @@ bench.fault_recovered
   path. Not in SQLite.
 <!-- /sync:storage-schema -->
 
----
-
-## 6. Supervisor contract
+## Supervisor contract
 
 <!-- sync:supervisor-contract -->
 One function, one contract: packet in, action out, no side effects. A single
@@ -251,381 +163,227 @@ class TriagePacket(BaseModel):
     repo: str
     delivery_mode: Literal["pr", "local", "scout"]
     verify_cmd: str | None
-
-    trigger: TriggerEvent           # the cause event, verbatim
-    verify_output: str | None       # tail, only on verify.failed
-
-    event_history: list[EventRow]   # this task's events, compacted
-    transcript_tail: str            # last ~3k tokens of the worker session
-
-    allowed_actions: list[ActionType]   # computed by orchestrator
+    trigger: TriggerEvent
+    verify_output: str | None
+    event_history: list[EventRow]
+    transcript_tail: str
+    allowed_actions: list[ActionType]
     nudges_remaining: int
     retries_remaining: int
     yolo: bool
 ```
 
-Exclusions, deliberate: no team state (per-task judge; digest batching is a
-presentation concern), no filesystem access (if the packet isn't enough,
-escalate or restart — investigation belongs to workers), no `hidden_cmd`
-(hidden checks grade the task, never train the retry), no memory (but prior
-`supervisor.acted` events are IN event_history, so it sees its own past actions
-on this task for free).
+Exclusions, deliberate: no team state, no filesystem access, no evaluator-only
+configuration (Harbor owns hidden checks), and no memory.
 
-event_history compaction: collapse runs of `worker.tool_used` into counts
-("47 tool calls: 31 Read, 9 Edit, 7 Bash over 14 min"); keep state changes,
-questions, supervisor actions verbatim. Target: a few hundred tokens.
+### Response
 
-### Response (closed union)
+The closed response union is `nudge`, `restart`, `wait`, `escalate`, or
+`abandon`; orchestrator-side enforcement computes allowed actions and caps.
+Validation failure falls back visibly to human escalation.
 
-```python
-class Nudge(BaseModel):
-    action: Literal["nudge"]
-    message: str                    # injected into the live session
-    reason: str
-
-class Restart(BaseModel):
-    action: Literal["restart"]
-    feedback: str | None            # appended to brief for fresh session
-    reason: str
-
-class Wait(BaseModel):
-    action: Literal["wait"]
-    seconds: int                    # orchestrator-capped, max 1800
-    reason: str
-
-class Escalate(BaseModel):
-    action: Literal["escalate"]
-    summary: str                    # 2-3 sentences, manager-facing
-    question: str
-    options: list[str]              # 2-4 concrete choices
-    recommended: int | None         # index; benchmark metric: how often
-    reason: str                     #   manager picks the recommendation
-
-class Abandon(BaseModel):
-    action: Literal["abandon"]      # yolo mode only
-    reason: str
-```
-
-Notes: `restart` with feedback subsumes retry-with-feedback. `wait` exists for
-declared external waits (CI) — re-arms the watchdog with a longer deadline;
-without it the only options for a healthy-but-waiting task are a pointless
-nudge or a destructive restart. `Escalate` is deliberately the fattest schema:
-it renders directly in the manager UI.
-
-### Enforcement (all orchestrator-side)
-
-1. `allowed_actions` computed deterministically pre-call: no nudges left drops
-   `nudge`; no retries left drops `restart`; `abandon` only when yolo; `wait`
-   only on stall triggers. Out-of-menu response is rejected.
-2. When retries are exhausted, still invoke with
-   `allowed_actions=["escalate"]` — the decision is forced, the articulation
-   (summary/question/options) is the value.
-3. Validation failure → one re-ask with the error appended → fallback to a
-   synthetic Escalate ("supervisor failed to produce a valid action") and a
-   `supervisor.failed` event. Fallback is ALWAYS escalate. When the judgment
-   layer breaks, degrade to the human, visibly.
-4. Caps (max_nudges=2, max_retries=2, wait ceiling 30 min) live in config.
-
-### Prompt heuristics (iterate against saved packets)
-
-- `worker.asked`: answer via nudge only if the answer is unambiguously in the
-  brief; else escalate. Never guess on the manager's behalf.
-- `worker.stalled`: declared external wait → `wait`. Transcript shows repeated
-  similar tool calls (spinning) → `restart`; a confused session rarely
-  un-confuses.
-- `verify.failed`: restart with failure as feedback, unless history shows the
-  same failure signature twice → escalate (the brief is the problem).
 <!-- /sync:supervisor-contract -->
 
----
-
-## 7. Verify gate contract
+## Verify gate
 
 <!-- sync:verify-gate -->
-Boring, deterministic, paranoid. No LLM anywhere in it. Converts "done" claims
-into evidence; its failure taxonomy is what makes the supervisor smart.
-
-Also a standalone CLI (`verify-gate --task <id> --json`) so the benchmark
-harness grades ALL conditions — including non-orchestrated baselines — with
-identical machinery.
+The verify gate is deterministic and contains no LLM or evaluator-only logic.
+Harbor owns hidden tests and scoring. The gate turns a worker's committed
+candidate into public evidence, a normalized failure signature, and a patch.
+Visible verification inherits the agent environment and is not a host sandbox;
+benchmark use requires Harbor or another trusted outer isolation boundary.
 
 ```python
-class VerifyRequest(BaseModel):
+class VerifyRequest:
     task_id: str
     worktree: str
     base_sha: str
-    verify_cmd: str                 # visible to the worker
-    hidden_cmd: str | None          # NOT in the brief; benchmark/paranoia
-    setup_cmd: str | None           # cached per repo
+    verify_cmd: str
     timeout_s: int = 600
-    protected_paths: list[str]      # opt-in globs the worker may not modify (existing files only)
-    rerun_on_fail: bool = True      # flake detection
+    rerun_on_fail: bool = True
+    repo: str | None = None
+    candidate_sha: str | None = None
+    worker_dirty: str | None = None
+    artifact_root: str | None = None
 
-class VerifyResult(BaseModel):
+class VerifyResult:
     passed: bool
     cause: Literal[
-        "tests_passed",
-        "tests_failed", "hidden_tests_failed",
-        "timeout", "setup_failed",
+        "tests_passed", "tests_failed", "timeout", "candidate_checkout_failed",
         "uncommitted_changes", "empty_diff",
-        "protected_path_modified",
-        "baseline_broken",
     ]
     exit_code: int | None
     duration_s: float
-    flaky: bool                     # failed once, passed on rerun
-    output_tail: str                # ~2k chars, feeds the supervisor packet
+    flaky: bool
+    output_tail: str
     diff_stat: str
     tests_modified: list[str]
-    output_path: str                # full logs on disk
-    patch_path: str | None          # saved review patch for committed diffs
+    output_path: str
+    patch_path: str | None
+    failure_signature: str | None
 ```
 
-### Execution order (cheapest first)
+Execution is: dirty-worktree and empty-diff checks, patch export, materialize
+the durable candidate in an internal disposable checkout when needed, run the
+public command with a timeout, and rerun one failure to identify flakes.
+The candidate checkout is not given evaluator-only material and is removed
+afterward. Timeout cleanup kills the check's process group.
 
-1. **Preflight (git, ms):** dirty worktree → `uncommitted_changes` (supervisor
-   nudges "commit and re-claim"). Empty diff on a ship task → `empty_diff`
-   (hallucinated completion). Diff modifies (edits, deletes, or renames) a
-   file that already existed at base_sha and matches explicit
-   `protected_paths` → `protected_path_modified` — the anti-gaming check for
-   benchmark/hidden/instructor-owned checks an agent must not rewrite. New
-   files under protected_paths are exempt — a brand-new test is a
-   contribution, not gaming. Default protected_paths is empty: visible project
-   tests are normal feature-work surface and often need to change with the
-   implementation.
-2. **Baseline (cached on (repo, base_sha, verify_cmd, setup_cmd)):** run setup+verify on
-   base_sha itself. Baseline red → `baseline_broken` → escalate, never retry.
-   No number of retries fixes a repo whose tests were already failing; without
-   this check a flaky upstream test burns the whole retry budget for nothing.
-3. **The run:** after the worker has been terminated and reaped, create a
-   detached verifier worktree from its exact `HEAD`. Run setup_cmd (own cause
-   — env problem ≠ code problem), then verify_cmd under timeout, in that
-   verifier worktree only. Kill the process GROUP on timeout; test runners
-   orphan children. The worker checkout remains untouched for delivery.
-4. **Flake protocol + hidden check:** fail → rerun once. Fail-fail →
-   `tests_failed`. Fail-pass → PASSED with `flaky=true` (don't burn retries on
-   nondeterminism the worker didn't cause) — but log loudly; flake rate per
-   repo is a benchmark covariate and a finding. If visible passed, run
-   hidden_cmd in the detached verifier worktree. `hidden_tests_failed` restart feedback must NOT leak hidden
-   output — say the change didn't hold up under additional checks, without
-   revealing which. Otherwise hidden tests train the worker to overfit them.
-
-### Cause → supervisor heuristic
-
-| cause | heuristic |
+| cause | supervisor heuristic |
 |---|---|
-| tests_failed | restart w/ output_tail; same signature twice → escalate |
-| hidden_tests_failed | restart w/ non-revealing feedback; twice → escalate |
+| tests_failed | restart with output; equivalent signatures escalate |
 | uncommitted_changes | nudge |
-| empty_diff | restart, pointed "you changed nothing" |
-| protected_path_modified | restart/escalate "revert X or request an explicit protected-path exception"; also a benchmark metric (gaming attempts per condition) |
-| baseline_broken, setup_failed | escalate, never retry |
-| timeout | ambiguous — supervisor reads duration vs baseline + transcript |
+| empty_diff | restart with a pointed commit/change reminder |
+| timeout | inspect duration and transcript |
+| candidate_checkout_failed | escalate as infrastructure failure |
 
-Events: `verify.started`, then passed/failed with payload
-`{cause, exit_code, duration_s, flaky, diff_stat, tests_modified,
-output_path, patch_path}`.
+Events are `verify.started`, then `verify.passed` or `verify.failed` with the
+cause, duration, output/patch paths, and failure signature. Verification attempt
+counts remain available to generic experiment metrics.
 <!-- /sync:verify-gate -->
 
----
-
-## 8. Worker lifecycle
+## Worker lifecycle and delivery
 
 <!-- sync:worker-lifecycle -->
 Worker lifecycle is implemented by the SDK worker and scheduler:
 
-- One Agent SDK session per task, cwd = a pooled git worktree, per-task
-  permission policy.
-- `worker.*` events map from: PostToolUse hook → `worker.tool_used`; result
-  messages → `worker.messaged` / `worker.asked` / `worker.done_claimed`;
-  session end → `worker.exited`.
-- Done-claim detection uses a required sentinel in the final structured result;
-  it never relies on parsing prose.
-- Intervention = injecting a message into the live session (supervisor
-  nudge) or, once escalation has already torn the session down, requeuing
-  with the intervention folded into the brief for a fresh one (manager
-  answer via `orchestrator answer`, docs/usage.md). Logged as events either
-  way; the orchestrator always knows a human intervened.
-- Worktree pool: raw `git worktree`, ~50 lines, no treehouse dependency.
-- Worker trust boundary: every real SDK worker is launched through the
-  fail-closed macOS Seatbelt wrapper in `worker/sandbox.py`. Its allowlist is
-  the public task worktree, the Git metadata needed to commit, Python/SDK and
-  orchestrator runtime paths, and one private worker temp/config directory.
-  The target repository's parent, benchmark source directories, verifier
-  directories, and global temporary directories are not allowlisted. A
-  missing or unusable Seatbelt launcher aborts the worker; it never falls
-  back to an unsandboxed process. The Claude SDK sandbox remains defense in
-  depth inside that OS boundary. Unsupported hosts fail closed for real
-  workers; FakeWorker remains an unchanged deterministic test fixture.
-- Verification trust boundary: once a worker claims done, the scheduler
-  terminates and reaps its process before any setup runs. The verify gate then
-  creates a detached temporary worktree from the worker's exact `HEAD` and
-  runs `setup_cmd`, `verify_cmd`, and `hidden_cmd` there. Hidden material is
-  never copied into the worker checkout, which remains the committed delivery
-  artifact; the verifier worktree is removed afterward.
-- Benchmark preflight rejects protected hidden material already present in a
-  target repository or reusable worker slot and asserts configured hidden
-  verifier sources are outside each worker allowlist. It does not delete
-  contamination or rewrite historical benchmark runs; those runs remain
-  exploratory evidence.
-- Worktree escape is a two-layer defense, not one. The PreToolUse hook
-  (`_path_escapes_worktree` in sdk_worker.py) denies escaping paths for
-  structured file tools (Read/Edit/Write) only — it never inspected Bash,
-  and batch01 dogfooding hit that gap twice: a worker ran `sed -i` against
-  an absolute path in the main checkout (`~/Development/sqlite-utils`),
-  dirtying it and causing unrelated tasks' `local` delivery to fail with
-  `dirty_tree`. Claude Code's native OS-level Bash sandbox (Seatbelt on
-  macOS, bubblewrap on Linux, v2.0.24+) closes that gap by restricting the
-  Bash tool's *process*, not its declared intent — enforced by the kernel,
-  so it holds regardless of what the model claims the command does. Workers
-  set `sandbox.enabled=True` on `ClaudeAgentOptions`; the default write
-  policy (cwd + subdirs + session temp dir) already matches worker cwd =
-  worktree, so no custom path rules are needed. `sandbox.
-  allowUnsandboxedCommands=False` makes the model's `dangerouslyDisableSandbox`
-  escape hatch a no-op — commands can no longer opt back out. `sandbox.
-  failIfUnavailable=True` turns a missing dependency or unsupported platform
-  into a hard connect failure instead of the CLI's default warn-and-run-
-  unsandboxed — sdk_worker.py catches that failure, emits a `worker.
-  startup_failed` event (stderr is discarded by the spawning process, so
-  this is the only way it reaches the operator), and exits rather than
-  proceeding unsandboxed.
-- Network denial does NOT come from `permission_mode`. Workers used
-  `permission_mode="bypassPermissions"` pre-sandbox to avoid hanging on
-  approval prompts headless sessions can't answer; with the sandbox in
-  place that flag turned out to auto-grant the sandbox's own network-domain
-  approval too — the SDK exposes "does this Bash command get to reach a new
-  host" as a synthetic `SandboxNetworkAccess` tool call routed through the
-  same decision pipeline as any other tool, and `bypassPermissions`
-  auto-approves that pipeline wholesale. `sandbox.network.strictAllowlist=
-  True` alone did nothing against it — verified live: a sandboxed `curl` to
-  an unlisted host returned a real HTTP response under `bypassPermissions`
-  despite `strictAllowlist`. Workers now pass `can_use_tool=_can_use_tool`
-  instead of `permission_mode`: that callback denies exactly
-  `tool_name == "SandboxNetworkAccess"` and allows everything else, which
-  keeps sessions headless (no hang on a plain in-worktree Read/Edit/Write)
-  while this codebase, not the CLI's blanket bypass, owns the one decision
-  that has to stay a real deny. Re-verified live after the fix: the same
-  `curl` now fails with a proxy-level 403 (`CONNECT tunnel failed`), fast
-  and clean, no hang. `strictAllowlist` is left set as defense in depth in
-  case `can_use_tool` isn't consulted in some future CLI path, but it is
-  not what's doing the denying today. Benchmark workers also explicitly deny
-  GitHub hosts, hosted web/search tools, and GitHub-looking `gh`/`git`
-  commands so they cannot inspect upstream PRs/solutions. Workers don't need
-  network anyway — verify/setup_cmd run outside the session, in the gate.
-- Both denials — filesystem escape and network — were spot-checked against
-  a negative control, not just observed once: disabling the mechanism under
-  test (dropping `sandbox=` entirely for the filesystem case; forcing
-  `_path_escapes_worktree` to always return `False` for the FakeWorker
-  scenario) reproduces the original batch01 failure (the write succeeds),
-  confirming the passing case denies for the right reason and isn't an
-  artifact of the test environment.
+- One Agent SDK session per task, cwd = a pooled internal Git worktree.
+- `worker.*` events map from hooks and structured result messages; session end
+  maps to `worker.exited`.
+- Done-claim detection uses a required sentinel in the final structured result.
+- Intervention is a live stdin message for nudge, or a fresh retry with folded
+  feedback after escalation. Every intervention is logged.
+- The worktree pool is internal worker isolation and remains even when Harbor
+  supplies the outer task container. Attempt refs preserve candidate lineage;
+  pooled checkout slots remain disposable.
+- The orchestrator does not provide OS-level host isolation. Real workers
+  require Harbor/another trusted outer boundary or explicit trusted host
+  development mode; the latter is never benchmark isolation.
+- Real and fake workers share a JSON-lines protocol. The caller supplies worker
+  environment variables; the launcher never reads credentials or a Keychain.
+- The SDK worker's path hook rejects structured file-tool paths outside its
+  assigned worktree. Harbor owns broader task isolation and hidden evaluation.
+- A done claim is followed by process-group termination/reaping before the
+  candidate is verified. Scheduler teardown is idempotent and closes child
+  transports, releases the worktree slot, and preserves the candidate ref.
 <!-- /sync:worker-lifecycle -->
 
-## 9. Delivery modes
-
 <!-- sync:delivery-modes -->
-Per-task `delivery_mode`, firstmate-style, explicit:
+Per-task `delivery_mode` remains explicit:
 
-- `pr`: push branch, open PR via gh. Delivered = PR open. Merge is the
-  manager's call; merge tracking is an event. The delivery payload carries
-  `{url, branch, commit_sha}` so review does not depend on a live worktree.
-- `local`: approved fast-forward merge into the local default branch. The
-  delivery payload carries `{before_sha, after_sha, commit_sha}` so the
-  manager can review with `git diff before_sha..after_sha` after pooled
-  worktrees have been torn down.
-- `scout`: no push ever; report written to `data/<task_id>/report.md`.
+- `pr` — push branch and open a PR; delivered means PR open.
+- `local` — approved fast-forward merge into the local default branch.
+- `scout` — no push; write a report for investigation tasks.
 
-Delivery failures (push rejected, conflict) → `delivery.failed` → triage.
+Delivery failures (`delivery.failed`) route through supervisor triage.
 <!-- /sync:delivery-modes -->
 
----
+## Harbor boundary
 
-## 10. Benchmark plan
+`orchestrator.harbor.run_instruction` starts one task from an instruction and
+repository path, selects `sequential`, `naive-parallel`, or `orchestrator`,
+accepts caller environment variables, waits for reliable scheduler teardown,
+and returns the final candidate SHA plus metrics. Real workers require the
+caller to declare `external_isolation=True`; this declaration does not create
+or verify a sandbox. Direct host execution is trusted development mode only.
+`export_patch` exports only the declared base-to-candidate diff. Harbor
+transfers that patch to its separate verifier; no hidden evaluator material or
+verifier result enters the agent environment.
 
-<!-- sync:benchmark-plan -->
-Conditions (identical model, pinned version in config day one):
+## Core v2 execution shape
 
-- (a) single Claude Code session, tasks sequential
-- (b) naive parallel: N independent headless sessions, no supervision
-- (c) firstmate
-- (d) this system
+```text
+task graph
+    ↓
+scheduler
+    ↓
+worker attempts
+    ↓
+durable candidate state
+    ↓
+public verification
+    ↓
+event-triggered supervisor when recovery is needed
+    ↓
+retry, continue, escalate, or finish
+    ↓
+final candidate SHA
+```
 
-M6 machinery lives in `orchestrator.bench` and the `bench-run` CLI. It
-currently runs (a) as `sequential`, (b) as `naive-parallel`, and (d) as
-`orchestrator`; (c) is a reserved comparison slot, not implemented yet.
+Sequential, naive-parallel, and orchestrator are policy selections over this
+same execution machinery. The benchmark-specific hidden evaluator, scoring,
+and outer filesystem isolation remain outside this flow in Harbor. The
+repository provides the Python boundary (`orchestrator.harbor`), the installed
+agent wrapper (`orchestrator.harbor_agent:HarborOrchestratorAgent`), an
+in-container runtime, and a separate-verifier canary under
+`harbor/tasks/orchestrator-canary/`. A live multi-seed comparison remains M7.
 
-All conditions are graded by the same verify gate, including stored
-`hidden_cmd` checks. (a)+(b) run first: they calibrate task difficulty (if
-naive-parallel resolves 90%, the suite is too easy and the comparison is dead)
-and exercise the harness before (d) exists.
-
-Workload: multi-task batches. Both of: a subset of SWE-bench Verified grouped
-by repo (parallel batches force worktree contention; free test-based grading;
-note contamination caveats honestly) and 2-3 seeded repos with 10-20
-hand-written issues, each with a hidden verification test.
-
-Metrics (all SQL over events):
-
-- verified resolution rate (tests pass, not self-report)
-- wall-clock per batch; throughput (tasks/hour)
-- total cost, split worker vs supervision overhead
-- human interventions count; escalation precision (were interruptions
-  warranted; did manager pick `recommended`)
-- fault recovery: kill a worker mid-task every run; does the system recover
-  without losing the task
-- gaming attempts (`protected_path_modified` count) per condition
-- flake rate per repo (covariate + finding)
-
-Rigor: 3-5 seeds per condition, mean + spread, publish harness, configs, and
-full transcripts. Estimate API cost before launching eval runs.
-
-Ablation slots (cheap, thanks to architecture): supervisor model swap
-(Haiku vs Sonnet) via packet replay — action agreement rate + cost delta;
-supervision context serialization (JSON vs TOON) if overhead is non-trivial.
-
-Scope levers if the calendar slips, in order: cut condition (c), cut the DAG,
-shrink the task suite. NEVER cut seeds-per-condition.
-<!-- /sync:benchmark-plan -->
-
----
-
-## 11. Milestones
+## Milestones
 
 <!-- sync:milestones -->
-- **M0 — skeleton:** scaffold, schema, event store, replay + invariant test in
-  CI. Exit: `replay(events) == tasks` asserted green.
-- **M1 — SDK spike (throwaway):** one script; spawn session in worktree,
-  PostToolUse hook, token capture, mid-session injection, end detection.
-  Exit: the four spike questions in §8 answered in devlog.
-- **M2 — core loop, fake workers only:** scheduler, state machine,
-  spawn/teardown vs FakeWorker, watchdog, verify gate CLI. Exit: all fake
-  scenarios drive correct transition sequences; `kill -9` the orchestrator at
-  arbitrary points → clean reconcile on restart.
-- **M3 — real workers:** SDK sessions on a toy repo with 3-4 seeded issues.
-- **M4 — supervisor:** packet builder, closed-enum validation, packet
-  dump/replay tooling BEFORE prompt tuning; iterate heuristics against saved
-  packets generated with the fake worker.
-- **M5 — parallelism, DAG, delivery:** worktree pool, concurrency limits, dep
-  resolution, three delivery modes. Test 10-task parallel batches with fakes.
-- **M6 — benchmark harness:** runner + grading via verify-gate CLI; conditions
-  (a),(b) first, then (d), then (c) last.
-- **M7 — eval runs + writeup.** Budget generously; days of wall-clock.
+- **M0 — durable state and replay:** scaffold the SQLite event store, task
+  graph, state machine, and invariant tests. Attempts are first-class durable
+  records with lineage, timestamps, candidate/base SHAs, failure data,
+  feedback, disposition, and execution contract. Exit: state is reconstructible
+  after a crash and `replay(events) == tasks` is asserted green.
+- **M1 — worker protocol:** establish the Claude Code session contract,
+  worktree execution, hooks, token capture, mid-session messages, done/ask
+  signals, and startup-failure classification. The public contract contains
+  the task, working directory, visible verification, commit expectations, and
+  delivery rules; it contains no hidden evaluator material.
+- **M2 — recoverable core loop with FakeWorker:** implement scheduler,
+  watchdog, process-group ownership, teardown/reaping, public verify gate, and
+  crash reconciliation. A worker that exits hands off a persisted candidate;
+  its slot and worktree are released before verification or triage. FakeWorker
+  scenarios remain the deterministic regression suite.
+- **M3 — real workers:** run SDK sessions on toy repositories while keeping
+  infrastructure failures (authentication, SDK initialization, and backend
+  failures) separate from task failures. Real workers require the caller to
+  provide the outer isolation boundary; the orchestrator does not claim to
+  sandbox the host.
+- **M4 — event-triggered supervision:** build a closed-action supervisor,
+  packet dump/replay tooling, durable interventions, and deterministic policy
+  checks. Successful first attempts make zero supervisor calls. Supervision is
+  entered only for stalls, asks, incomplete exits, public verification
+  failures, delivery failures, or other uncertain states. The canonical
+  implementation actions are `restart` (retry), `wait`, `escalate` (human),
+  `abandon` (terminate), and `nudge`; repeated equivalent failures can
+  deterministically escalate without another model call.
+- **M5 — v2 execution and coordination:** add stateful retries that inherit
+  the previous candidate SHA and preserved edits, record whether the candidate
+  materially changed, and fold feedback into the next attempt. Add explicit
+  dependency resolution with missing-reference and cycle validation,
+  multi-dependency propagation, and `dependency_blocked` tasks that consume no
+  workers, retries, verification attempts, or supervisor calls. Pool workers
+  independently from verification/triage, run slow verification off the async
+  event loop, and track teardown tasks through shutdown. Deliver through the
+  configured git modes and record queue wait, execution, slot occupancy,
+  verification, supervisor/triage time, retry gaps, peak/limit, attempts,
+  verification attempts, tokens, costs, and recovery events. Sequential,
+  naive-parallel, and orchestrator policies use this same scheduler and worker
+  machinery; only concurrency and supervisor policy differ.
+- **M6 — Harbor boundary integration:** expose policy selection, candidate patch
+  export, and durable metrics to a Harbor adapter. Harbor owns outer task
+  isolation, hidden evaluation, and scoring; the orchestrator returns the final
+  candidate SHA and exports the declared base-to-candidate patch. Package the
+  installed agent and a canary task with a separate verifier; keep scheduler
+  diagnostics outside Harbor's published artifact directory.
+- **M7 — eval runs + writeup.** Harbor owns task isolation, hidden evaluation,
+  and scoring.
 
 TUI: unscheduled. Tail of the events table suffices through M7. Timebox
 Textual to one weekend, after M3, whenever.
 
-### FakeWorker (build first, in M2)
+## FakeWorker (build first, in M2)
 
 A scripted subprocess impersonating a Claude Code session. Scenarios: complete
-cleanly, claim done without committing, empty diff, modify a protected test,
+cleanly, claim done without committing, empty diff,
 stall silently, ask a question, crash mid-task, declare an external wait. The
 scenario suite IS the regression suite; fault injection is a test case, not a
 prayer. Never debug the orchestrator through paid nondeterministic workers.
 <!-- /sync:milestones -->
 
----
-
-## 12. Config defaults
+## Config defaults
 
 <!-- sync:config-defaults -->
 ```
@@ -643,18 +401,12 @@ model_supervisor       = <pinned>
 ```
 <!-- /sync:config-defaults -->
 
-## 13. Open questions
+## Open questions
 
 <!-- sync:open-questions -->
 - Done-claim protocol (M1 decides).
 - transcript_tail sizing (ship fixed, log packet sizes, watch escalate
   reasons).
-- SWE-bench subset selection + contamination framing for the post.
+- Harbor workload selection and contamination framing for the post.
 - Name.
 <!-- /sync:open-questions -->
-
-## 14. Devlog discipline
-
-A few lines per session in docs/devlog.md: what was decided, what surprised
-you, what the agent building this nailed or fumbled. The post is 70% written
-if this is kept; a slog if reconstructed in week eight.

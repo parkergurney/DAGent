@@ -3,6 +3,24 @@
 A few lines per working session. What was decided, what surprised you, what
 the agent nailed or fumbled. This file writes the Substack post.
 
+Historical note: entries below may describe experimental Seatbelt/native
+sandbox settings, private worker directories, `protected_paths`, or hidden
+benchmark commands. Those mechanisms are no longer the current security or
+evaluation boundary. The current model is Harbor-supplied outer isolation,
+internal worktree isolation, public visible verification, and a separate
+Harbor verifier; historical entries are retained as design history.
+
+## 2026-08-10 - Harbor installed-agent port
+
+Added `HarborOrchestratorAgent`, which installs this package inside the task
+image and invokes the existing scheduler through `orchestrator.harbor_runtime`.
+The runtime captures the base SHA, publishes a candidate patch plus durable
+metrics/result metadata, and keeps scheduler diagnostics outside Harbor's
+artifact transfer directory. Added a fixed-baseline canary with a separate
+verifier image so hidden grading code is not present in the agent image. Local
+contract and full regression suites pass; a live Harbor/Docker matrix remains
+the M7 execution gate.
+
 ## 2026-08-08 - deterministic dependency settlement
 
 Added the terminal `dependency_blocked` disposition. The scheduler now
@@ -13,7 +31,12 @@ unanswered `needs_human` prerequisites as nonrecoverable; daemon mode leaves
 them recoverable for `answer`. Reports now expose executed, failed, escalated,
 dependency-blocked, cancelled, and infrastructure-aborted counts separately.
 
-## 2026-08-07 - isolate benchmark workers from hidden verification
+## 2026-08-07 - [historical architecture] isolate benchmark workers from hidden verification
+
+This entry records an abandoned local Seatbelt/hidden-verifier architecture. It
+is not active: the orchestrator no longer supplies OS sandboxing or owns hidden
+evaluation. Harbor supplies both the outer isolation and separate verifier.
+
 - Added a fail-closed macOS Seatbelt launcher around every real SDK worker.
   The outer allowlist contains only public worktree/Git metadata,
   Python/SDK/orchestrator runtime paths, and a private worker temp/config
@@ -179,7 +202,7 @@ connection mid-'running', reopens it fresh, and confirms reconcile() +
 Scheduler.run_until_settled() route the orphaned task through triage to
 needs_human with no special-cased recovery code.
 
-## 2026-07-20 - M3: real Agent SDK workers
+## 2026-07-20 - [historical architecture] M3: real Agent SDK workers
 
 Design call that made this small: don't touch the scheduler's worker
 abstraction at all. worker/sdk_worker.py runs the Agent SDK inside its own
@@ -217,7 +240,9 @@ issues -- add a function, fix a seeded bug, edit a doc -- delivery_mode=local,
   (the file doesn't exist yet) -- that's not a broken baseline, that's a
   mismatch between the task shape and the gate's model. design.md's
   verify_cmd is meant to be a stable, repo-wide suite that already passes at
-  base; task-specific correctness is hidden_cmd's job (benchmark-only, M6).
+  base; task-specific correctness was historically assigned to hidden_cmd in
+  the abandoned benchmark harness. That field and harness are no longer
+  active; Harbor owns hidden evaluation.
   Fixed by using verify_cmd="true" for the toy repo (no real suite yet) and
   checking task-specific correctness myself, post-delivery, outside the gate.
   Not a bug in the gate -- a reminder that toy repos for this system need a
@@ -475,7 +500,7 @@ panes) or the `answer` command's restart-vs-nudge semantics for
 second is an intentional, already-logged decision (2026-07-21 entry above),
 not a bug.
 
-## 2026-07-28 - design-sync test, baseline cache key fix, protected_paths (documented retroactively)
+## 2026-07-28 - [historical benchmark architecture] design-sync test, baseline cache key fix, protected_paths (documented retroactively)
 
 Two commits landed on 2026-07-28 (`e3b48bb`, `ede1433`) without devlog entries.
 Closing that gap now because both are the fixes that closed defects an audit
@@ -522,7 +547,7 @@ checkout (passed, unaffected).
 Verify-gate invocations for Python repos must use `python -m pytest`, never
 bare `pytest`.
 
-## 2026-08-04 - sqlite-utils dogfood session: config, protected_paths, fork setup
+## 2026-08-04 - [historical benchmark architecture] sqlite-utils dogfood session: config, protected_paths, fork setup
 
 `sqlite-utils` is dogfood-only -- never reuse it as a bench task suite.
 It's the repo used to shake out real-worker bug classes FakeWorker can't
@@ -583,7 +608,11 @@ before claiming done."
 cause in dogfooding; this is the cheapest possible fix, explicit contract
 language instead of relying on structural detection alone.
 
-## 2026-08-05 - native OS sandbox closes the Bash containment gap
+## 2026-08-05 - [historical architecture] native OS sandbox closes the Bash containment gap
+
+This entire probe and its configuration conclusions are historical evidence,
+not a claim about the current runtime. The current SDK and CLI worker paths do
+not configure Seatbelt or another OS sandbox.
 
 The arc, end to end. The PreToolUse hook (`_path_escapes_worktree` in
 sdk_worker.py) only ever inspected structured file tools (Read/Edit/Write).
@@ -730,7 +759,7 @@ original batch01 failure exactly, which is the strongest evidence available
 that the earlier denial was the sandbox's doing and not, say, a stray
 macOS permission on the temp directory.
 
-## 2026-08-05 - protected_paths is opt-in after batch02
+## 2026-08-05 - [historical benchmark architecture] protected_paths is opt-in after batch02
 
 Batch02 showed the previous default was the wrong semantic boundary:
 protecting `tests/**` by default turned normal feature work into 13
@@ -795,7 +824,11 @@ removed the slot worktree directories, but `git worktree remove` leaves the
 scratch branch behind. Close now deletes `pool/slot-*` branches after removing
 the worktrees, with a regression test in `tests/test_worktree_pool.py`.
 
-## 2026-08-05 - M6 benchmark harness skeleton
+## 2026-08-05 - [historical architecture] M6 benchmark harness skeleton
+
+This benchmark harness and its hidden-command/evaluator plumbing were removed.
+The retained text documents the earlier experiment only; Harbor now owns
+benchmark execution, hidden tests, and scoring.
 
 Added the first real M6 machinery: `orchestrator.bench` plus the `bench-run`
 console script. Suite files are TOML (`[bench]` defaults plus `[[tasks]]`);

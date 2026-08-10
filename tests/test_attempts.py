@@ -86,7 +86,7 @@ def test_execution_contract_is_public_and_persisted(tmp_path):
     ).fetchone()["execution_contract"]
     assert "test ! -e retry_marker.txt" in contract
     assert "Run the visible verification command" in contract
-    assert "hidden" not in contract.lower()
+    assert "evaluator" not in contract.lower()
 
 
 def test_interruption_after_triage_reuses_persisted_action_and_candidate(tmp_path):

@@ -25,7 +25,10 @@ from orchestrator import config
 from orchestrator.scheduler import Scheduler
 from orchestrator.store import append_event, connect, create_task, transition
 from orchestrator.supervisor import always_escalate, invoke_supervisor
-from orchestrator.worker import spawn_cli_worker, spawn_fake_worker, spawn_sdk_worker
+from orchestrator.worker import (
+    WorkerIsolationError, spawn_cli_worker, spawn_fake_worker, spawn_sdk_worker,
+    validate_worker_boundary,
+)
 
 # States worth a stdout line the moment a task lands there: the "your crew
 # needs you" and "here's your PR" moments. A backgrounded `run`/`daemon`
@@ -53,7 +56,6 @@ def cmd_add_task(args) -> int:
     task_id = create_task(
         conn, title=args.title, brief=args.brief, repo=repo,
         delivery_mode=args.delivery_mode, verify_cmd=args.verify_cmd,
-        hidden_cmd=args.hidden_cmd, setup_cmd=args.setup_cmd, protected_paths=args.protected_paths,
         max_retries=args.max_retries, depends_on=args.depends_on,
     )
     print(task_id)
@@ -68,6 +70,11 @@ def _build_scheduler(conn, args) -> Scheduler:
         spawn_worker = spawn_cli_worker
     else:
         spawn_worker = spawn_sdk_worker
+    validate_worker_boundary(
+        fake_worker=args.fake_worker,
+        external_isolation=args.external_isolation,
+        trusted_development=args.trusted_development,
+    )
     supervisor = always_escalate if args.fake_supervisor else partial(
         invoke_supervisor, model=args.supervisor_model or cfg.model_supervisor)
     return Scheduler(
@@ -118,7 +125,11 @@ async def _run_with_notify(coro, db_path: str) -> None:
 
 def cmd_run(args) -> int:
     conn = connect(args.db)
-    scheduler = _build_scheduler(conn, args)
+    try:
+        scheduler = _build_scheduler(conn, args)
+    except WorkerIsolationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     asyncio.run(_run_with_notify(scheduler.run_until_settled(), args.db))
     _print_status_table(conn)
     return 0
@@ -126,7 +137,11 @@ def cmd_run(args) -> int:
 
 def cmd_daemon(args) -> int:
     conn = connect(args.db)
-    scheduler = _build_scheduler(conn, args)
+    try:
+        scheduler = _build_scheduler(conn, args)
+    except WorkerIsolationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     print(f"watching {args.db} for tasks (Ctrl-C to stop)...", file=sys.stderr)
     try:
         asyncio.run(_run_with_notify(
@@ -180,12 +195,6 @@ def _print_task_detail(conn, task_id: str) -> int:
     print(f"  repo:          {task['repo']}")
     print(f"  delivery_mode: {task['delivery_mode']}")
     print(f"  verify_cmd:    {task['verify_cmd']}")
-    if task["hidden_cmd"]:
-        print(f"  hidden_cmd:    {task['hidden_cmd']}")
-    if task["setup_cmd"]:
-        print(f"  setup_cmd:     {task['setup_cmd']}")
-    if task["protected_paths"]:
-        print(f"  protected:     {', '.join(json.loads(task['protected_paths']))}")
 
     if task["state"] == "needs_human":
         acted = conn.execute(
@@ -289,6 +298,15 @@ def _add_scheduler_args(p) -> None:
                    help="launch the installed claude CLI directly instead of the Agent SDK")
     p.add_argument("--fake-supervisor", action="store_true",
                    help="always escalate instead of calling a live LLM supervisor")
+    boundary = p.add_mutually_exclusive_group()
+    boundary.add_argument(
+        "--external-isolation", action="store_true",
+        help="declare that Harbor/container isolation is already present",
+    )
+    boundary.add_argument(
+        "--trusted-development", action="store_true",
+        help="explicitly allow direct host execution; not benchmark isolation",
+    )
     p.add_argument("--yolo", action="store_true")
     p.add_argument("--config", help="TOML overriding config defaults (design.md section 12)")
 
@@ -304,17 +322,6 @@ def main(argv=None) -> int:
     p_add.add_argument("--repo", required=True)
     p_add.add_argument("--delivery-mode", required=True, choices=["pr", "local", "scout"])
     p_add.add_argument("--verify-cmd")
-    p_add.add_argument("--hidden-cmd",
-        help="benchmark/instructor-owned check run after visible verify_cmd; never shown "
-             "to the worker brief")
-    p_add.add_argument("--setup-cmd",
-        help="run before verify_cmd, in the baseline scratch checkout and the "
-             "detached verifier checkout (e.g. 'npm install') -- design.md section 7")
-    p_add.add_argument("--protected-paths", action="append", default=[], metavar="GLOB",
-        help="path glob(s) the worker may not touch (anti-gaming check, design.md "
-             "section 7); repeatable. Defaults to empty because visible project "
-             "tests are normal feature-work surface. Pass explicit globs only "
-             "for benchmark/hidden/instructor-owned checks the worker must not rewrite")
     p_add.add_argument("--depends-on", action="append", default=[], metavar="TASK_ID")
     p_add.add_argument("--max-retries", type=int, default=2)
     p_add.set_defaults(func=cmd_add_task)

@@ -1,7 +1,4 @@
-"""Standalone `verify-gate` CLI (design.md section 7): grades a task's
-worktree against its verify_cmd through the exact machinery the scheduler
-uses, so the benchmark harness can grade every condition -- orchestrated or
-not -- with identical code.
+"""Standalone visible verification CLI for a durable task candidate.
 
     verify-gate --task <id> [--db data/orchestrator.db] [--json] [--record]
 """
@@ -9,17 +6,18 @@ import argparse
 import sys
 
 from orchestrator.store import append_event, connect, transition
-from orchestrator.verify.gate import DEFAULT_PROTECTED, VerifyRequest, run_verify
+from orchestrator.verify.gate import VerifyRequest, run_verify
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(prog="verify-gate")
+    p = argparse.ArgumentParser(
+        prog="verify-gate",
+        description=("Run public worker-visible verification only. "
+                     "This command is not a host sandbox; benchmark use "
+                     "requires Harbor or another trusted outer boundary."),
+    )
     p.add_argument("--task", required=True, help="task id")
     p.add_argument("--db", default="data/orchestrator.db")
-    p.add_argument("--protected", action="append", default=None,
-                   help="protected-path glob; repeatable (default: empty)")
-    p.add_argument("--setup-cmd", help="overrides the task's own setup_cmd if given")
-    p.add_argument("--hidden-cmd")
     p.add_argument("--timeout", type=int, default=600)
     p.add_argument("--json", action="store_true")
     p.add_argument("--record", action="store_true",
@@ -35,9 +33,8 @@ def main(argv=None) -> int:
 
     req = VerifyRequest(
         task_id=task["id"], worktree=task["worktree"], base_sha=task["base_sha"],
-        verify_cmd=task["verify_cmd"] or "true", setup_cmd=args.setup_cmd or task["setup_cmd"],
-        hidden_cmd=args.hidden_cmd or task["hidden_cmd"], timeout_s=args.timeout,
-        protected_paths=tuple(args.protected) if args.protected else DEFAULT_PROTECTED,
+        verify_cmd=task["verify_cmd"] or "true", timeout_s=args.timeout,
+        repo=task["repo"], candidate_sha=task["candidate_sha"],
     )
     result = run_verify(req)
 

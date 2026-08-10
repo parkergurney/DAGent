@@ -28,8 +28,7 @@ def _drive_representative_team(conn):
     paths. Returns the created task ids."""
     # a: the dependency, walked all the way to delivered (happy path).
     a = create_task(conn, title="dep", brief="build the lib", repo="r",
-                    delivery_mode="pr", verify_cmd="pytest", hidden_cmd="pytest hidden_tests",
-                    setup_cmd="pip install -e .")
+                    delivery_mode="pr", verify_cmd="pytest")
     # b: depends on a; failed verify -> triage -> restart -> ... -> delivered.
     b = create_task(conn, title="feature", brief="use the lib", repo="r",
                     delivery_mode="local", verify_cmd="pytest", depends_on=[a])
