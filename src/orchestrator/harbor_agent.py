@@ -39,6 +39,9 @@ except ImportError:  # pragma: no cover - Harbor supplies these in a trial image
         async def exec_as_agent(self, environment, **kwargs):
             return await environment.exec(**kwargs)
 
+        async def exec_as_root(self, environment, **kwargs):
+            return await environment.exec(**kwargs)
+
 
 class HarborOrchestratorAgent(BaseInstalledAgent):
     """Run the existing orchestrator scheduler inside a Harbor trial."""
@@ -46,6 +49,14 @@ class HarborOrchestratorAgent(BaseInstalledAgent):
     SUPPORTS_ATIF = False
     SUPPORTS_CONFIG = True
     VERSION = "0.0.1"
+
+    def __init__(self, logs_dir: Path, *args, config=None, **kwargs):
+        # Harbor 0.20 forwards unknown agent kwargs to BaseAgent, which
+        # intentionally discards them. Capture our comparison configuration
+        # before delegating so policy/seed/limits reach the in-container
+        # runtime. Newer Harbor versions may also populate ``_config``.
+        self._orchestrator_config = config
+        super().__init__(logs_dir, *args, **kwargs)
 
     @staticmethod
     def name() -> str:
@@ -55,7 +66,9 @@ class HarborOrchestratorAgent(BaseInstalledAgent):
         return self.VERSION
 
     def _settings(self) -> dict:
-        source = getattr(self, "_config", None)
+        source = self._orchestrator_config
+        if source is None:
+            source = getattr(self, "_config", None)
         if isinstance(source, dict):
             data = source
         elif source:
@@ -98,17 +111,43 @@ class HarborOrchestratorAgent(BaseInstalledAgent):
             bundle.add(root / "src", arcname="orchestrator/src")
         return archive
 
+    async def _ensure_system_dependencies(self, environment) -> None:
+        """Ensure the small runtime toolset across Harbor versions.
+
+        Harbor 0.20's BaseInstalledAgent does not provide the convenience
+        package helper available in newer Harbor revisions. The task image
+        already contains these tools; this probe is the normal path, with an
+        apt fallback for compatible Debian images.
+        """
+        probe = await environment.exec(
+            command=(
+                "command -v git && command -v python3 && command -v tar && "
+                "python3 -m pip --version"
+            ),
+            user="root",
+        )
+        if probe.return_code == 0:
+            return
+        await self.exec_as_root(
+            environment,
+            command=(
+                "apt-get update && apt-get install -y --no-install-recommends "
+                "git python3 python3-pip tar ca-certificates"
+            ),
+            timeout_sec=600,
+        )
+
     async def install(self, environment) -> None:
         """Install system tools and this checkout's package in the agent image."""
-        await self.ensure_system_dependencies(
-            environment,
-            ("git", "python3", "python_pip", "python_venv", "procps", "coreutils",
-             "ca_certificates"),
-        )
+        await self._ensure_system_dependencies(environment)
         archive = self._source_archive()
         try:
             await environment.upload_file(archive, "/tmp/orchestrator-source.tar.gz")
-            await self.exec_as_agent(
+            # The runtime may use Claude Code's headless bypass-permissions
+            # mode for local Ollama. Install the package as root so a
+            # non-root Harbor agent user can import it without needing a
+            # writable system site-packages directory.
+            await self.exec_as_root(
                 environment,
                 command=(
                     "rm -rf /tmp/orchestrator-source && "
@@ -131,6 +170,13 @@ class HarborOrchestratorAgent(BaseInstalledAgent):
             source.write(text)
             source.flush()
             await environment.upload_file(source.name, remote_path)
+        # Harbor's upload helper creates files as root-owned 0600. The task
+        # instruction and scheduler config contain no credentials, but the
+        # configured non-root agent still needs to read them.
+        await self.exec_as_root(
+            environment,
+            command=f"chmod 0644 {shlex.quote(remote_path)}",
+        )
 
     @with_prompt_template
     async def run(self, instruction: str, environment, context) -> None:
@@ -181,6 +227,8 @@ class HarborOrchestratorAgent(BaseInstalledAgent):
         metadata["orchestrator"] = {
             "state": result.get("state"),
             "task_id": result.get("task_id"),
+            "task_ids": result.get("task_ids", []),
+            "task_states": result.get("task_states", {}),
             "base_sha": result.get("base_sha"),
             "candidate_sha": result.get("candidate_sha"),
             "policy": result.get("policy"),

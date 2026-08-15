@@ -185,6 +185,17 @@ git -C /path/to/repo log --oneline <before_sha>..<after_sha>
 
 For `scout`, read `data/<task_id>/report.md`.
 
+Task specifications may additionally declare `output_artifacts`,
+`output_schema`, `input_contract`, `node_verify_cmd`, and `repair_policy`.
+These public contracts are persisted with the task, validated before
+dependents run, and reported as interface validation events. The
+`protocol_recovery_v2`, `deterministic_recovery`, `adaptive_scheduling`, and
+`evidence_ladder`
+configuration flags are enabled by default and can be set to `false` for
+legacy fallback behavior; sequential and naive-parallel remain unchanged
+baselines. Attempts also carry durable execution leases, and preflight
+write-conflict groups are serialized before workers are admitted.
+
 The verify gate also saves an event-specific patch for committed diffs and
 keeps `data/<task_id>/review.patch` as the latest convenience copy, so a patch
 artifact remains after pooled worktrees are torn down.
@@ -289,8 +300,9 @@ The runnable Harbor canary is in
 [`harbor/tasks/orchestrator-canary/`](../harbor/tasks/orchestrator-canary/).
 It loads the installed agent by import path and uses Harbor's separate
 verifier mode. The wrapper publishes only `base_sha.txt`, `candidate.patch`,
-`result.json`, and `metrics.json`; scheduler packets and verification logs stay
-in the container's private runtime directory.
+`result.json`, `metrics.json`, and the pre-run `run_manifest.json`; scheduler
+packets and verification logs stay in the container's private runtime
+directory.
 
 ## 12. Security model
 

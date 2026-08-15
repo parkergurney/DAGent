@@ -11,7 +11,10 @@ Worker lifecycle is implemented by the SDK worker and scheduler:
 - One Agent SDK session per task, cwd = a pooled internal Git worktree.
 - `worker.*` events map from hooks and structured result messages; session end
   maps to `worker.exited`.
-- Done-claim detection uses a required sentinel in the final structured result.
+- ResultMessage success is authoritative; the DONE_CLAIM/ASK/NO_CHANGE lines
+  are optional protocol metadata. Missing metadata is recorded as
+  protocol_incomplete and can receive one bounded corrective retry when the v2
+  protocol flag is enabled (the production default).
 - Intervention is a live stdin message for nudge, or a fresh retry with folded
   feedback after escalation. Every intervention is logged.
 - The worktree pool is internal worker isolation and remains even when Harbor

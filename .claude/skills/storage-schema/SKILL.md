@@ -14,6 +14,11 @@ CREATE TABLE tasks (
   repo          TEXT NOT NULL,
   delivery_mode TEXT NOT NULL,           -- 'pr' | 'local' | 'scout'
   verify_cmd    TEXT,                    -- null for scout
+  output_artifacts TEXT,                  -- public JSON declaration
+  output_schema TEXT,                     -- public schema/required fields
+  input_contract TEXT,                    -- dependency inputs required by node
+  node_verify_cmd TEXT,                   -- optional public node gate
+  repair_policy TEXT,                     -- bounded recovery policy metadata
   state         TEXT NOT NULL DEFAULT 'blocked',
   retries       INTEGER NOT NULL DEFAULT 0,
   max_retries   INTEGER NOT NULL DEFAULT 2,

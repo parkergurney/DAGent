@@ -1,21 +1,22 @@
 schema_version = "1.4"
 
 [task]
-name = "agent-orchestrator/orchestrator-canary"
+name = "agent-orchestrator/orchestrator-dag-canary"
 version = "1.0.0"
-description = "Small deterministic canary for the Harbor orchestrator adapter"
-keywords = ["orchestration", "git", "canary"]
+description = "Dependency-aware Harbor benchmark task graph for comparing scheduler policies"
+keywords = ["orchestration", "dependencies", "git", "benchmark"]
 
 [metadata]
 category = "agent-orchestration"
 hidden_evaluation = "tests/grader.py"
+graph = "graph.json"
 
 [agent]
-timeout_sec = 1800
+timeout_sec = 3600
 user = "harbor"
 
 [verifier]
-timeout_sec = 120
+timeout_sec = 180
 environment_mode = "separate"
 
 [verifier.environment]
@@ -40,3 +41,4 @@ ORCH_SUPERVISOR_MODEL = "qwen3-coder:30b"
 ORCH_MAX_CONCURRENCY = "2"
 ORCH_CONTEXT_LENGTH = "32768"
 ORCH_WORKER_TIMEOUT_S = "1200"
+

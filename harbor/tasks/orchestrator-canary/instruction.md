@@ -8,5 +8,8 @@ the single line:
 ready
 ```
 
+The file must end with the newline shown above. For example, use
+`printf 'ready\n' > output.txt`; do not use `echo -n`.
+
 Run the visible verification command before you finish, commit the change, and
 end your response with the required `DONE_CLAIM` marker.

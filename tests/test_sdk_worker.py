@@ -11,10 +11,25 @@ from claude_agent_sdk import AssistantMessage, ClaudeSDKError, ResultMessage, Te
 
 from orchestrator.worker import sdk_worker
 from orchestrator.worker.sdk_worker import (
-    _parse_terminal,
+    _agent_options, _parse_terminal,
     _path_escapes_worktree,
     _prompt_with_protocol,
 )
+
+
+def test_ollama_uses_compact_headless_tool_profile(monkeypatch, tmp_path):
+    monkeypatch.setenv("ORCH_BACKEND", "ollama")
+    options = _agent_options(tmp_path, "qwen3-coder:30b")
+    assert options.tools == ["Bash", "Read", "Edit", "Write", "Glob", "Grep"]
+    assert options.permission_mode == "bypassPermissions"
+    assert options.thinking == {"type": "disabled"}
+
+
+def test_non_ollama_keeps_default_tool_profile(monkeypatch, tmp_path):
+    monkeypatch.delenv("ORCH_BACKEND", raising=False)
+    options = _agent_options(tmp_path, "claude-sonnet-5")
+    assert options.tools is None
+    assert options.permission_mode is None
 
 
 def test_prompt_appends_protocol_to_brief():
@@ -34,6 +49,12 @@ def test_parse_terminal_ask():
     kind, extra = _parse_terminal("Not sure how to proceed.\nASK: which logging library?")
     assert kind == "asked"
     assert extra == {"question": "which logging library?"}
+
+
+def test_parse_terminal_no_change():
+    kind, extra = _parse_terminal("NO_CHANGE: the requested setting is already present")
+    assert kind == "no_change"
+    assert extra == {"result": "the requested setting is already present"}
 
 
 def test_parse_terminal_no_sentinel_is_unclaimed():
@@ -146,6 +167,23 @@ def test_run_exits_loudly_when_sdk_fails_to_start(tmp_path, capsys, monkeypatch)
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert [e["type"] for e in events] == ["startup_failed"]
     assert events[0]["payload"]["category"] == "sdk_initialization_failure"
+
+
+def test_run_redacts_unexpected_sdk_startup_exception(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(
+        sdk_worker, "_agent_options",
+        lambda worktree, model, **kwargs: (_ for _ in ()).throw(RuntimeError("bad option")),
+    )
+
+    assert asyncio.run(sdk_worker.run(tmp_path, "set up a server", None)) == 1
+
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert events == [{
+        "type": "startup_failed",
+        "payload": {"category": "sdk_initialization_failure", "error": "bad option"},
+    }]
+
+
 class _ResultClient:
     def __init__(self, result, assistant_text=None, options=None):
         self.result = result
@@ -192,6 +230,8 @@ def test_result_message_persists_safe_aggregate_usage_and_starts_execution(
     assert result_event["payload"]["tokens_out"] == 40
     assert result_event["payload"]["cost_usd"] == 0.12
     assert [event["type"] for event in events].count("execution_started") == 1
+    assert events[-1]["type"] == "unclaimed"
+    assert events[-1]["payload"]["reason"] == "result_missing_terminal_marker"
     # Per-message usage remains diagnostic, while the result aggregate is the
     # only accounting record with canonical token/cost fields.
     message_event = next(event for event in events if event["type"] == "messaged")

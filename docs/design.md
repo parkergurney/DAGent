@@ -64,9 +64,22 @@ Design notes:
 
 - Every exception path funnels through `triage`.
 - `delivered` means artifact handed off, not merged.
-- Crash recovery reconciles dead running sessions through `worker.exited`.
+- Crash recovery reconciles dead running sessions through `worker.exited`. The
+  orchestrator policy has one deterministic fast path for a non-zero worker
+  exit: when retry budget remains, it records `recovery.policy_applied` and
+  retries through the ordinary candidate-lineage path without an LLM triage
+  call. Startup/authentication failures and ambiguous failures still escalate
+  through the supervisor; baseline policies keep the fast path disabled.
 - Candidate SHA and dirty-worktree facts are durable before the worker lease is
   released; verification reads the durable candidate ref.
+- SDK `ResultMessage` is the primary completion record. `DONE_CLAIM`, `ASK`,
+  and `NO_CHANGE` are optional metadata; a completion still requires a clean
+  worker exit, a committed candidate (or explicit no-change), and public
+  verification. The scheduler records `completed`, `asked`,
+  `protocol_incomplete`, `sdk_failure`, `worker_crash`, `timeout`, and
+  `startup_failure` classifications. Protocol repair is at most one retry and
+  is enabled by default; a benchmark manifest can explicitly disable it for a
+  legacy fallback comparison.
 <!-- /sync:task-states -->
 
 ## Storage
@@ -80,6 +93,11 @@ CREATE TABLE tasks (
   repo          TEXT NOT NULL,
   delivery_mode TEXT NOT NULL,           -- 'pr' | 'local' | 'scout'
   verify_cmd    TEXT,                    -- null for scout
+  output_artifacts TEXT,                  -- public JSON declaration
+  output_schema TEXT,                     -- public schema/required fields
+  input_contract TEXT,                    -- dependency inputs required by node
+  node_verify_cmd TEXT,                   -- optional public node gate
+  repair_policy TEXT,                     -- bounded recovery policy metadata
   state         TEXT NOT NULL DEFAULT 'blocked',
   retries       INTEGER NOT NULL DEFAULT 0,
   max_retries   INTEGER NOT NULL DEFAULT 2,
@@ -250,7 +268,10 @@ Worker lifecycle is implemented by the SDK worker and scheduler:
 - One Agent SDK session per task, cwd = a pooled internal Git worktree.
 - `worker.*` events map from hooks and structured result messages; session end
   maps to `worker.exited`.
-- Done-claim detection uses a required sentinel in the final structured result.
+- ResultMessage success is authoritative; the DONE_CLAIM/ASK/NO_CHANGE lines
+  are optional protocol metadata. Missing metadata is recorded as
+  protocol_incomplete and can receive one bounded corrective retry when the v2
+  protocol flag is enabled (the production default).
 - Intervention is a live stdin message for nudge, or a fresh retry with folded
   feedback after escalation. Every intervention is logged.
 - The worktree pool is internal worker isolation and remains even when Harbor

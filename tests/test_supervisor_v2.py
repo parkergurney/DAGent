@@ -116,6 +116,50 @@ def test_successful_first_attempt_makes_zero_supervisor_calls(tmp_path):
     assert conn.execute("SELECT COUNT(*) c FROM supervisor_interventions").fetchone()["c"] == 0
 
 
+def test_orchestrator_fast_retries_a_nonzero_worker_exit_without_supervisor(tmp_path):
+    repo = init_repo(tmp_path)
+    conn = connect()
+    task_id = _task(conn, repo, "crash once", max_retries=1)
+    calls = {"n": 0}
+    script = r'''
+from pathlib import Path
+import json
+import subprocess
+import sys
+
+wt = Path(sys.argv[1])
+if sys.argv[2] == "first":
+    raise SystemExit(9)
+(wt / "output.txt").write_text("done\n")
+subprocess.run(["git", "-C", str(wt), "-c", "user.email=test@local", "-c", "user.name=test",
+                "add", "-A"], check=True)
+subprocess.run(["git", "-C", str(wt), "-c", "user.email=test@local", "-c", "user.name=test",
+                "commit", "-qm", "retry"], check=True)
+print(json.dumps({"type": "done_claimed", "payload": {"result": "DONE_CLAIM: retry"}}), flush=True)
+'''
+
+    async def spawn(task, worktree, *, model=None):
+        del task, model
+        calls["n"] += 1
+        phase = "first" if calls["n"] == 1 else "second"
+        return await asyncio.create_subprocess_exec(
+            sys.executable, "-c", script, str(worktree), phase,
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL, start_new_session=True,
+        )
+
+    supervisor = CountingSupervisor()
+    _run(conn, repo, tmp_path, supervisor, spawn_worker=spawn,
+         deterministic_crash_recovery=True)
+
+    assert calls["n"] == 2
+    assert supervisor.calls == 0
+    assert conn.execute("SELECT state FROM tasks WHERE id = ?", (task_id,)).fetchone()["state"] == "delivered"
+    policy = _events(conn, task_id, "recovery.policy_applied")[-1]
+    assert json.loads(policy["payload"])["diagnosis_code"] == "worker_crash_retry"
+    assert conn.execute("SELECT COUNT(*) c FROM supervisor_interventions").fetchone()["c"] == 0
+
+
 def test_first_public_failure_has_one_structured_intervention(tmp_path):
     repo = init_repo(tmp_path)
     conn = connect()

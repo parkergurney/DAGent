@@ -1,8 +1,19 @@
-data/
+# Local runtime state and generated benchmark output.
+/data/
+/jobs/
+/old/
 *.db
+
+# Python tooling and build artifacts.
 __pycache__/
 *.egg-info/
-.venv/
-.pytest_cache/
-.ruff_cache/
-repos.toml
+/.venv/
+/.pytest_cache/
+/.ruff_cache/
+
+# Local operator configuration.
+/repos.toml
+
+# Local review/editor artifacts and OS metadata.
+/.lavish/
+.DS_Store

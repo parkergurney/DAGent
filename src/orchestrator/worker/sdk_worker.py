@@ -7,18 +7,26 @@ unless Harbor or another trusted outer environment supplies containment.
 import argparse
 import asyncio
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
 from claude_agent_sdk import (
-    AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, ClaudeSDKError,
+    AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient,
     HookMatcher, ResultMessage,
 )
 
 _PROTOCOL = """
+You must perform the requested work in the worktree using the available coding
+tools. A text-only explanation is not completion. Begin by inspecting or
+editing the relevant file immediately; do not just describe what should be
+done.
+
 Commit your changes in the worktree before claiming done. Uncommitted work
 will fail verification.
+
+Run the requested visible verification after editing and correct any failure.
 
 When you are completely finished, end your final message with exactly one line:
 DONE_CLAIM: <one-line summary of what you did>
@@ -26,6 +34,10 @@ DONE_CLAIM: <one-line summary of what you did>
 If you are blocked on a decision only a human can make, end your message with
 exactly one line instead, and stop there:
 ASK: <your question>
+
+If the requested work is already satisfied and no file change is required,
+end your final message with exactly one line instead:
+NO_CHANGE: <one-line explanation>
 """
 _AUTH_FAILURE_MARKERS = (
     "not logged in", "please run /login", "authentication required",
@@ -37,6 +49,7 @@ _SECRET_PATTERNS = (
     (re.compile(r"(?i)(oauth[_ -]?token|access[_ -]?token|refresh[_ -]?token)\s*[:=]\s*\S+"),
      r"\1=[REDACTED]"),
 )
+_OLLAMA_TOOLS = ["Bash", "Read", "Edit", "Write", "Glob", "Grep"]
 
 
 def _prompt_with_protocol(brief: str) -> str:
@@ -52,6 +65,8 @@ def _parse_terminal(result_text: str | None) -> tuple:
             return "done_claimed", {"result": line[len("DONE_CLAIM:"):].strip()}
         if line.startswith("ASK:"):
             return "asked", {"question": line[len("ASK:"):].strip()}
+        if line.startswith("NO_CHANGE:"):
+            return "no_change", {"result": line[len("NO_CHANGE:"):].strip()}
     return None, {}
 
 
@@ -103,8 +118,10 @@ def _startup_failure_category(snapshot: dict | None, transcript: list[str]) -> t
         return "authentication_failure", "Claude Code reported an authentication failure"
     if result.get("is_error"):
         if result.get("api_error_status"):
-            return "backend_initialization_failure", "Claude backend initialization failed"
-        return "backend_initialization_failure", "Claude Code returned an error ResultMessage"
+            return ("sdk_failure" if result.get("session_id") else "backend_initialization_failure",
+                    "Claude backend returned an API error")
+        return ("sdk_failure" if result.get("session_id") else "backend_initialization_failure",
+                "Claude Code returned an error ResultMessage")
     if not result.get("session_id") or result.get("subtype") not in ("success", "completion"):
         return "sdk_initialization_failure", "Claude SDK did not produce a successful session result"
     return None
@@ -150,23 +167,51 @@ async def _post_tool_use_failure(input_data, tool_use_id, context):
     return {}
 
 
-async def run(worktree: Path, brief: str, model: str | None) -> int:
-    options = ClaudeAgentOptions(
-        cwd=str(worktree), model=model,
-        hooks={
+def _agent_options(worktree: Path, model: str | None, *, stderr=None) -> ClaudeAgentOptions:
+    options = {
+        "cwd": str(worktree),
+        "model": model,
+        "hooks": {
             "PreToolUse": [HookMatcher(hooks=[_make_pre_tool_use(worktree)])],
             "PostToolUse": [HookMatcher(hooks=[_post_tool_use])],
             "PostToolUseFailure": [HookMatcher(hooks=[_post_tool_use_failure])],
         },
-    )
-    client = ClaudeSDKClient(options=options)
+    }
+    if stderr is not None:
+        options["stderr"] = stderr
+    # Claude Code's complete tool/system profile is roughly 18K tokens. That
+    # leaves no usable generation room for the local Qwen model at 16K and
+    # makes prompt evaluation unacceptably slow at 32K. The compact profile is
+    # sufficient for the worker contract's coding tasks and keeps the normal
+    # Claude backend behavior unchanged.
+    if os.environ.get("ORCH_BACKEND", "").strip().lower() == "ollama":
+        options.update({
+            "tools": list(_OLLAMA_TOOLS),
+            "permission_mode": "bypassPermissions",
+            "thinking": {"type": "disabled"},
+        })
+    return ClaudeAgentOptions(**options)
+
+
+async def run(worktree: Path, brief: str, model: str | None) -> int:
+    sdk_stderr: list[str] = []
+
+    def capture_sdk_stderr(line: str) -> None:
+        if line:
+            sdk_stderr.append(_redact_text(line, limit=1000))
+
     try:
+        options = _agent_options(worktree, model, stderr=capture_sdk_stderr)
+        client = ClaudeSDKClient(options=options)
         await client.connect()
-    except ClaudeSDKError as exc:
+    except Exception as exc:
         category = "authentication_failure" if any(
             marker in _redact_text(exc).lower() for marker in _AUTH_FAILURE_MARKERS
         ) else "sdk_initialization_failure"
-        emit("startup_failed", category=category, error=_redact_text(exc))
+        error = _redact_text(exc)
+        if sdk_stderr:
+            error = f"{error}; sdk_stderr: {_redact_text(' '.join(sdk_stderr), limit=2000)}"
+        emit("startup_failed", category=category, error=error)
         return 1
 
     try:
@@ -192,8 +237,8 @@ async def run(worktree: Path, brief: str, model: str | None) -> int:
                     failure = _startup_failure_category(result_snapshot, transcript)
                     if failure:
                         category, reason = failure
-                        emit("startup_failed", category=category, reason=reason,
-                             result=result_snapshot)
+                        emit("sdk_failed" if category == "sdk_failure" else "startup_failed",
+                             category=category, reason=reason, result=result_snapshot)
                         return 1
                     if not execution_started:
                         emit("execution_started", session_id=session_id,
@@ -210,8 +255,22 @@ async def run(worktree: Path, brief: str, model: str | None) -> int:
                     return 0
                 await client.query(reply.rstrip("\n"))
                 continue
+            if kind == "no_change":
+                emit("no_change", cost_usd=cost_usd, session_id=session_id, **extra)
+                return 0
             if kind == "done_claimed":
                 emit("done_claimed", cost_usd=cost_usd, session_id=session_id, **extra)
+            else:
+                # A successful SDK result without DONE_CLAIM/ASK is a real
+                # worker protocol failure. Preserve the distinction from an
+                # infrastructure startup failure so the scheduler/artifacts
+                # explain why no candidate was produced.
+                emit(
+                    "unclaimed",
+                    reason="result_missing_terminal_marker",
+                    session_id=session_id,
+                    result=_redact_text(result_snapshot.get("result")),
+                )
             return 0
     finally:
         await client.disconnect()

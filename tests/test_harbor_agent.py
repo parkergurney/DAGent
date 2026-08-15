@@ -70,11 +70,47 @@ def test_runtime_exports_patch_metrics_and_result(tmp_path):
     assert asyncio.run(harbor_runtime.run_from_files(instruction, config)) == 0
     result = json.loads((artifacts / "result.json").read_text())
     metrics = json.loads((artifacts / "metrics.json").read_text())
+    manifest = json.loads((artifacts / "run_manifest.json").read_text())
     assert result["state"] == "delivered"
     assert result["base_sha"] == (artifacts / "base_sha.txt").read_text().strip()
     assert result["candidate_sha"]
     assert metrics["attempts"] == 1
+    assert manifest["policy"] == "sequential"
+    assert manifest["repository"]["base_sha"] == result["base_sha"]
+    assert manifest["authentication"]["values_recorded"] is False
+    assert manifest["fault_target_reachability"]["enabled"] is False
     assert "output.txt" in (artifacts / "candidate.patch").read_text()
+
+
+def test_runtime_records_dependency_graph_manifest_and_result(tmp_path):
+    repo = init_repo(tmp_path)
+    instruction = tmp_path / "instruction.md"
+    instruction.write_text("dependency graph")
+    config = tmp_path / "config.json"
+    artifacts = tmp_path / "artifacts"
+    graph = [
+        {"id": "first", "brief": "clean", "depends_on": [],
+         "delivery_mode": "scout", "verify_cmd": "true"},
+        {"id": "second", "brief": "clean", "depends_on": ["first"],
+         "delivery_mode": "scout", "verify_cmd": "true"},
+    ]
+    config.write_text(json.dumps({
+        "repo_root": str(repo), "artifact_root": str(artifacts),
+        "db_path": str(tmp_path / "state.db"),
+        "worktree_root": str(tmp_path / "worktrees"),
+        "policy": "sequential", "fake_worker": True, "fake_supervisor": True,
+        "tasks": graph,
+    }))
+
+    assert asyncio.run(harbor_runtime.run_from_files(instruction, config)) == 0
+    result = json.loads((artifacts / "result.json").read_text())
+    manifest = json.loads((artifacts / "run_manifest.json").read_text())
+    assert result["state"] == "delivered"
+    assert result["task_ids"] == ["first", "second"]
+    assert result["task_states"] == {"first": "delivered", "second": "delivered"}
+    assert manifest["task_graph"]["count"] == 2
+    assert manifest["task_graph"]["tasks"][1]["depends_on"] == ["first"]
+    assert manifest["task_graph"]["sha256"]
 
 
 def test_runtime_fails_closed_without_harbor_isolation(tmp_path, monkeypatch):

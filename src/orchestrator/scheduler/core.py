@@ -31,7 +31,15 @@ import time
 from pathlib import Path
 
 from orchestrator import delivery
+from orchestrator import execution_lease
+from orchestrator.interfaces import (
+    run_node_verification, validate_dependency_interfaces, validate_output_artifacts,
+)
+from orchestrator.recovery import (
+    FailureClass, RecoveryAction, choose_recovery, classify_failure, recovery_payload,
+)
 from orchestrator.scheduler.reconcile import reconcile
+from orchestrator.scheduler.adaptive import choose_task, effective_limit
 from orchestrator.store import (
     append_event, create_attempt, create_intervention, interventions_for_target, latest_attempt,
     transition, ulid, update_attempt, update_intervention,
@@ -193,9 +201,40 @@ def advance_dependency_states(conn, *, run_id: str, block_needs_human: bool = Tr
                 transition(conn, task_id, "dependency_blocked", cause_seq=cause)
                 pass_changed = changed = True
             elif all(state == "delivered" for _, state in dep_rows):
+                interface_ok, interface_detail = validate_dependency_interfaces(
+                    conn, task_id, deps,
+                )
+                for dep in deps:
+                    upstream = conn.execute("SELECT * FROM tasks WHERE id = ?", (dep,)).fetchone()
+                    if upstream and interface_ok:
+                        node_ok, node_detail = run_node_verification(dict(upstream))
+                        interface_detail.setdefault("node_verification", {})[dep] = node_detail
+                        if not node_ok:
+                            interface_ok = False
+                            interface_detail["reason"] = "node_verification_failed"
+                            interface_detail["failed_task_id"] = dep
+                            break
+                validation_type = "interface.validation_passed" if interface_ok else "interface.validation_failed"
+                validation_seq = append_event(
+                    conn, source="verifier", type=validation_type, task_id=task_id,
+                    payload={"run_id": run_id, "task_id": task_id,
+                             "dependencies": deps, **interface_detail},
+                )
+                if not interface_ok:
+                    cause = append_event(
+                        conn, source="scheduler", type="dep.blocked", task_id=task_id,
+                        payload={"run_id": run_id, "blocked_task_id": task_id,
+                                 "blocking_prerequisites": [{"task_id": dep, "state": "interface_failed"}
+                                                             for dep in deps],
+                                 "reason": interface_detail.get("reason", "dependency interface failed"),
+                                 "validation_seq": validation_seq},
+                    )
+                    transition(conn, task_id, "dependency_blocked", cause_seq=cause)
+                    pass_changed = changed = True
+                    continue
                 cause = append_event(
                     conn, source="scheduler", type="dep.satisfied", task_id=task_id,
-                    payload={"run_id": run_id},
+                    payload={"run_id": run_id, "interface_validation_seq": validation_seq},
                 )
                 transition(conn, task_id, "queued", cause_seq=cause)
                 pass_changed = changed = True
@@ -234,7 +273,10 @@ class Scheduler:
                 supervisor=always_escalate,
                 max_nudges=2, wait_ceiling_s=1800, transcript_tail_tokens=3000, yolo=False,
                 base_branch="main", artifact_root=None, run_id=None,
-                repeated_failure_threshold=1):
+                repeated_failure_threshold=1, deterministic_crash_recovery=False,
+                adaptive_scheduling=False, protocol_recovery_v2=False,
+                deterministic_recovery=False, evidence_ladder=False,
+                preflight_plan=None):
         self.conn = conn
         self.repo_root = repo_root
         self.worktree_root = worktree_root
@@ -252,6 +294,21 @@ class Scheduler:
         self.base_branch = base_branch
         self.run_id = run_id or ulid()
         self.repeated_failure_threshold = max(1, repeated_failure_threshold)
+        # The orchestrator policy may handle an unambiguous non-zero worker
+        # crash with one bounded retry without buying an LLM triage call.
+        # Baseline policies leave this disabled so the policy comparison
+        # changes only the intended recovery behavior.
+        self.deterministic_crash_recovery = deterministic_crash_recovery
+        self.adaptive_scheduling = adaptive_scheduling
+        self.protocol_recovery_v2 = protocol_recovery_v2
+        self.deterministic_recovery = deterministic_recovery
+        self.evidence_ladder = evidence_ladder
+        self.preflight_plan = preflight_plan or {}
+        self._conflict_groups = {
+            task_id: group
+            for group in self.preflight_plan.get("conflicts", [])
+            for task_id in group.get("task_ids", [])
+        }
         self.artifact_root = Path(artifact_root).resolve() if artifact_root else None
 
         # Pool size == max_concurrency: never a reason for more slots than
@@ -283,6 +340,8 @@ class Scheduler:
         self._last_event_ts: dict[str, float] = {}
         self._wait_grace: dict[str, float] = {}  # task_id -> seconds, set by a "wait" decision
         self._infrastructure_failure: WorkerStartupFailure | None = None
+        self._leases: dict[str, execution_lease.ExecutionLease] = {}
+        self._lease_heartbeat: dict[str, float] = {}
 
     # -- public entry point -------------------------------------------------
 
@@ -424,13 +483,44 @@ class Scheduler:
 
     # -- queued -> running ----------------------------------------------------
 
+    def _conflict_blocked(self, task_id: str) -> bool:
+        """Keep preflight-detected overlapping writers out of the same slot."""
+        group = self._conflict_groups.get(task_id)
+        if not group:
+            return False
+        active = set(self._worker_slots)
+        return any(other in active for other in group.get("task_ids", ()) if other != task_id)
+
     async def _launch_ready(self) -> None:
-        while len(self._worker_slots) < self.max_concurrency:
-            row = self.conn.execute(
-                "SELECT * FROM tasks WHERE state = 'queued' ORDER BY created_at LIMIT 1"
-            ).fetchone()
-            if row is None:
+        while True:
+            if self.adaptive_scheduling:
+                limit, inputs = effective_limit(self.conn, self.max_concurrency,
+                                                len(self._worker_slots))
+            else:
+                limit, inputs = self.max_concurrency, {
+                    "base_limit": self.max_concurrency,
+                    "effective_limit": self.max_concurrency,
+                    "active_workers": len(self._worker_slots),
+                }
+            if len(self._worker_slots) >= limit:
                 return
+            rows = self.conn.execute(
+                "SELECT * FROM tasks WHERE state = 'queued' ORDER BY created_at, id"
+            ).fetchall()
+            if not rows:
+                return
+            rows = [row for row in rows if not self._conflict_blocked(row["id"])]
+            if not rows:
+                return
+            if self.adaptive_scheduling:
+                row, scores = choose_task(self.conn, [dict(item) for item in rows])
+                self._append_timing_event(
+                    row["id"], "scheduler.decision",
+                    payload={"policy": "adaptive", "selected_task": row["id"],
+                             "inputs": inputs, "candidate_scores": scores},
+                )
+            else:
+                row = rows[0]
             await self._launch(dict(row))
 
     async def _launch(self, task: dict, *, retries: int | None = None,
@@ -500,9 +590,23 @@ class Scheduler:
             )
         if intervention_id and not resume:
             update_intervention(self.conn, intervention_id, target_attempt_id=attempt_id)
-        wt, base_sha = await self._pool.acquire(
-            task_id, base_branch=self.base_branch, base_sha=starting_sha, branch=branch,
+        owner_id = f"scheduler:{self.run_id}:{attempt_id}"
+        lease = execution_lease.acquire(
+            self.conn, attempt_id, owner_id, source="scheduler",
         )
+        self._leases[task_id] = lease
+        self._lease_heartbeat[task_id] = time.monotonic()
+        try:
+            wt, base_sha = await self._pool.acquire(
+                task_id, base_branch=self.base_branch, base_sha=starting_sha, branch=branch,
+            )
+        except BaseException:
+            execution_lease.recover(
+                self.conn, lease, reason="worktree_acquire_failed", source="scheduler",
+            )
+            self._leases.pop(task_id, None)
+            self._lease_heartbeat.pop(task_id, None)
+            raise
         self._worker_slots[task_id] = wt
         self._append_timing_event(
             task_id, "worker.slot_acquired", attempt_id=attempt_id,
@@ -513,7 +617,23 @@ class Scheduler:
         update_attempt(self.conn, attempt_id, execution_contract=contract)
         worker_task = {**task, "execution_contract": contract,
                        "_fake_scenario": task.get("_fake_scenario", task["brief"])}
-        proc = await self.spawn_worker(worker_task, wt, model=self.worker_model)
+        try:
+            proc = await self.spawn_worker(worker_task, wt, model=self.worker_model)
+        except BaseException:
+            execution_lease.recover(
+                self.conn, lease, reason="worker_spawn_failed", source="scheduler",
+            )
+            self._leases.pop(task_id, None)
+            self._lease_heartbeat.pop(task_id, None)
+            raise
+        if worker_task.get("_fault_injection_reached"):
+            append_event(
+                self.conn, source="system", type="fault_injection.target_reached",
+                task_id=task_id, session_id=str(proc.pid),
+                payload={"attempt_id": attempt_id,
+                         "target": worker_task.get("_fault_injection_target", task_id),
+                         "mode": "worker_exit"},
+            )
         session_id = str(proc.pid)
 
         update_attempt(self.conn, attempt_id, worker_started_at=self._timestamp(),
@@ -558,6 +678,30 @@ class Scheduler:
         return append_event(self.conn, source="scheduler", type=event_type, task_id=task_id,
                              session_id=session_id, payload=details)
 
+    def _validate_worker_lease(self, task_id: str) -> bool:
+        """Fence late output from an attempt that no longer owns the task."""
+        lease = self._leases.get(task_id)
+        attempt = latest_attempt(self.conn, task_id)
+        if lease is None or attempt is None or attempt["id"] != lease.attempt_id:
+            return False
+        try:
+            execution_lease.validate(self.conn, lease)
+            now = time.monotonic()
+            if now - self._lease_heartbeat.get(task_id, 0.0) >= max(1.0, self.stall_threshold_s / 3):
+                lease = execution_lease.renew(self.conn, lease, source="scheduler")
+                self._leases[task_id] = lease
+                self._lease_heartbeat[task_id] = now
+            return True
+        except execution_lease.ExecutionLeaseError as exc:
+            append_event(
+                self.conn, source="watchdog", type="execution_lease.rejected",
+                task_id=task_id, payload={"attempt_id": attempt["id"],
+                                          "lease_id": lease.lease_id,
+                                          "generation": lease.generation,
+                                          "reason": str(exc)},
+            )
+            return False
+
     # -- running: read the worker's event stream -----------------------------
 
     def _capture_candidate(self, task_id: str, *, disposition="worker_ended",
@@ -594,6 +738,8 @@ class Scheduler:
 
     async def _watch(self, task_id: str, proc: asyncio.subprocess.Process) -> None:
         claimed_or_triaged = False
+        sdk_result_ok = False
+        protocol_incomplete = False
         try:
             while True:
                 line = await proc.stdout.readline()
@@ -604,6 +750,11 @@ class Scheduler:
                     rec = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                if not self._validate_worker_lease(task_id):
+                    # This watcher belongs to an old or fenced attempt.  Its
+                    # process is cleaned up by the finally block, but none of
+                    # its output can mutate current task state.
+                    break
                 etype, payload = rec.get("type"), rec.get("payload", {})
                 # ResultMessage is the canonical aggregate for a worker
                 # session. AssistantMessage usage is retained in its payload
@@ -611,6 +762,7 @@ class Scheduler:
                 # otherwise a session is double-counted.
                 usage_kwargs = {}
                 if etype == "result":
+                    sdk_result_ok = not bool(payload.get("is_error"))
                     usage_kwargs = dict(tokens_in=payload.get("tokens_in"),
                                         tokens_out=payload.get("tokens_out"),
                                         cost_usd=payload.get("cost_usd"))
@@ -618,6 +770,12 @@ class Scheduler:
                 event_payload = {**payload, "attempt_id": attempt["id"] if attempt else None}
 
                 if etype == "done_claimed":
+                    if sdk_result_ok:
+                        event_payload["protocol_result"] = {
+                            "sdk_success": True,
+                            "worker_exited": True,
+                            "terminal_metadata_ok": True,
+                        }
                     s = append_event(self.conn, source="worker", type="worker.done_claimed",
                                      task_id=task_id, session_id=str(proc.pid), payload=event_payload,
                                      **usage_kwargs)
@@ -643,6 +801,24 @@ class Scheduler:
                         self._last_event_ts[task_id] = time.monotonic()
                         continue  # a nudge landed on proc.stdin; keep reading this same session
                     claimed_or_triaged = True
+                    self._append_terminal_classification(task_id, "asked", cause_seq=s)
+                    break
+                elif etype == "no_change":
+                    if sdk_result_ok:
+                        event_payload["protocol_result"] = {
+                            "sdk_success": True,
+                            "worker_exited": True,
+                            "terminal_metadata_ok": True,
+                        }
+                    s = append_event(self.conn, source="worker", type="worker.no_change",
+                                     task_id=task_id, session_id=str(proc.pid), payload=event_payload,
+                                     **usage_kwargs)
+                    claimed_or_triaged = True
+                    await self._reap_process(task_id, proc)
+                    candidate = self._capture_candidate(task_id, disposition="no_change")
+                    self._enter_verifying(task_id, s, candidate_sha=candidate)
+                    await self._teardown(task_id, expect_proc=proc)
+                    await self._run_verify(task_id)
                     break
                 elif etype == "startup_failed":
                     category = str(payload.get("category") or "other_infrastructure_startup_failure")
@@ -652,6 +828,8 @@ class Scheduler:
                                      payload={**event_payload, "category": category,
                                               "reason": reason})
                     claimed_or_triaged = True
+                    self._append_terminal_classification(task_id, "startup_failure", cause_seq=s,
+                                                         category=category)
                     self._capture_candidate(task_id, disposition="startup_failed",
                                             failure_cause=category)
                     self._infrastructure_failure = WorkerStartupFailure(task_id, category, reason)
@@ -659,6 +837,21 @@ class Scheduler:
                     # failure. It must never enter the supervisor policy.
                     await self._teardown(task_id, expect_proc=proc)
                     break
+                elif etype == "sdk_failed":
+                    s = append_event(self.conn, source="worker", type="worker.sdk_failure",
+                                     task_id=task_id, session_id=str(proc.pid),
+                                     payload={**event_payload, "failure_class": "sdk_failure"})
+                    claimed_or_triaged = True
+                    self._capture_candidate(task_id, disposition="sdk_failure",
+                                            failure_cause="sdk_failure")
+                    self._append_terminal_classification(task_id, "sdk_failure", cause_seq=s)
+                    await self._teardown(task_id, expect_proc=proc)
+                    break
+                elif etype == "unclaimed":
+                    protocol_incomplete = True
+                    append_event(self.conn, source="worker", type="worker.protocol_incomplete",
+                                 task_id=task_id, session_id=str(proc.pid),
+                                 payload={**event_payload, "failure_class": "protocol_incomplete"})
                 else:
                     append_event(self.conn, source="worker", type=f"worker.{etype}",
                                 task_id=task_id, session_id=str(proc.pid), payload=event_payload,
@@ -666,9 +859,27 @@ class Scheduler:
 
             if not claimed_or_triaged:
                 code = await proc.wait()
+                if sdk_result_ok and protocol_incomplete and code == 0:
+                    s = self._mark_running_failure(
+                        task_id, source="worker", event_type="worker.protocol_incomplete",
+                        payload={"exit_code": code, "failure_class": "protocol_incomplete"},
+                        session_id=str(proc.pid),
+                    )
+                    if s is not None:
+                        candidate = self._capture_candidate(
+                            task_id, disposition="protocol_incomplete",
+                            failure_cause="protocol_incomplete",
+                        )
+                        self._append_terminal_classification(task_id, "protocol_incomplete", cause_seq=s)
+                        await self._teardown(task_id, expect_proc=proc)
+                        await self._handle_triage(task_id, s, live_proc=None,
+                                                  candidate_sha=candidate)
+                    return
                 s = self._mark_running_failure(task_id, source="worker", event_type="worker.exited",
                                                payload={"exit_code": code}, session_id=str(proc.pid))
                 if s is not None:
+                    self._append_terminal_classification(task_id, "worker_crash", cause_seq=s,
+                                                         exit_code=code)
                     candidate = self._capture_candidate(task_id, disposition="worker_failed",
                                                         failure_cause="worker.exited")
                     # No live worker remains. Release capacity before any
@@ -698,6 +909,101 @@ class Scheduler:
             return None
         return append_event(self.conn, source=source, type=event_type, task_id=task_id,
                             payload=payload or {}, session_id=session_id)
+
+    def _append_terminal_classification(self, task_id: str, classification: str, *,
+                                        cause_seq: int | None = None, **extra) -> int:
+        """Persist the terminal interpretation separately from task state."""
+        payload = {"classification": classification}
+        if cause_seq is not None:
+            payload["cause_seq"] = cause_seq
+        payload.update(extra)
+        return append_event(self.conn, source="system", type="task.terminal_classified",
+                            task_id=task_id, payload=payload)
+
+    async def _apply_protocol_recovery(self, task_id: str, cause_seq: int) -> bool:
+        """Perform exactly one metadata-repair retry for a clean SDK result."""
+        if not self.protocol_recovery_v2:
+            return False
+        cause = self.conn.execute("SELECT type FROM events WHERE seq = ?", (cause_seq,)).fetchone()
+        if not cause or cause["type"] != "worker.protocol_incomplete":
+            return False
+        task_row = self.conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        attempt = latest_attempt(self.conn, task_id)
+        if not task_row or not attempt or task_row["retries"] >= task_row["max_retries"]:
+            return False
+        prior = self.conn.execute(
+            "SELECT COUNT(*) c FROM events WHERE task_id = ? AND type = 'recovery.policy_applied' "
+            "AND json_extract(payload, '$.diagnosis_code') = 'protocol_incomplete_repair'",
+            (task_id,),
+        ).fetchone()["c"]
+        decision = choose_recovery(FailureClass.PROTOCOL_INCOMPLETE,
+                                   retries=task_row["retries"], max_retries=task_row["max_retries"],
+                                   protocol_retries=prior)
+        if decision.action is not RecoveryAction.REPAIR:
+            return False
+        policy_seq = append_event(
+            self.conn, source="system", type="recovery.policy_applied", task_id=task_id,
+            payload=recovery_payload(decision, cause_seq=cause_seq, attempt_id=attempt["id"],
+                                     diagnosis_code="protocol_incomplete_repair",
+                                     recovery_class="protocol_incomplete"),
+        )
+        feedback = (
+            "The previous SDK session completed without the optional terminal metadata. "
+            "Inspect the candidate, run visible verification, commit the result, and end "
+            "with exactly one DONE_CLAIM line."
+        )
+        update_attempt(self.conn, attempt["id"], disposition="retry_requested",
+                       failure_cause="protocol_incomplete", failure_signature="protocol_incomplete",
+                       supervisor_feedback=feedback)
+        await self._teardown(task_id)
+        await self._launch({**dict(task_row), "brief": task_row["brief"],
+                            "recovery_feedback": feedback},
+                           retries=task_row["retries"] + 1)
+        append_event(self.conn, source="system", type="recovery.attempted", task_id=task_id,
+                     payload={"action": decision.action.value, "cause_seq": cause_seq,
+                              "policy_seq": policy_seq, "attempt_id": attempt["id"]})
+        return True
+
+    async def _apply_public_recovery(self, task_id: str, cause_seq: int) -> bool:
+        """Repair unambiguous public candidate failures without supervision."""
+        if not self.deterministic_recovery:
+            return False
+        cause = self.conn.execute(
+            "SELECT type, payload FROM events WHERE seq = ?", (cause_seq,)
+        ).fetchone()
+        if not cause or cause["type"] not in {
+            "verify.failed", "artifact.validation_failed", "interface.validation_failed",
+        }:
+            return False
+        payload = json.loads(cause["payload"] or "{}")
+        failure_class = classify_failure(cause["type"], payload)
+        task = self.conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        attempt = latest_attempt(self.conn, task_id)
+        if not task or not attempt:
+            return False
+        decision = choose_recovery(failure_class, retries=task["retries"],
+                                   max_retries=task["max_retries"])
+        if decision.action not in {RecoveryAction.REPAIR, RecoveryAction.RETRY_RETAINED_CANDIDATE}:
+            return False
+        feedback = payload.get("output_tail") or payload.get("reason") or (
+            "Repair the public candidate failure and rerun the visible verification."
+        )
+        feedback = str(feedback)[:2000]
+        policy_seq = append_event(
+            self.conn, source="system", type="recovery.policy_applied", task_id=task_id,
+            payload=recovery_payload(decision, cause_seq=cause_seq, attempt_id=attempt["id"],
+                                     diagnosis_code=failure_class.value),
+        )
+        update_attempt(self.conn, attempt["id"], disposition="retry_requested",
+                       supervisor_feedback=feedback)
+        await self._teardown(task_id)
+        await self._launch({**dict(task), "recovery_feedback": feedback},
+                           retries=task["retries"] + 1)
+        append_event(self.conn, source="system", type="recovery.attempted", task_id=task_id,
+                     payload={"action": decision.action.value, "failure_class": failure_class.value,
+                              "cause_seq": cause_seq, "policy_seq": policy_seq,
+                              "attempt_id": attempt["id"]})
+        return True
 
     # -- triage: build a packet, ask the supervisor, dispatch its decision ---
 
@@ -871,6 +1177,74 @@ class Scheduler:
         await self._teardown(task_id)
         return True
 
+    async def _apply_deterministic_crash_recovery(self, task_id: str,
+                                                  cause_seq: int) -> bool:
+        """Retry one explicit worker crash without an avoidable model call.
+
+        A non-zero ``worker.exited`` is an unambiguous process failure: the
+        worker produced no completion claim and startup failures have already
+        been classified separately. The retry still uses the normal launch
+        path, candidate lineage, worktree pool, verification gate, and retry
+        cap. Ambiguous failures continue through the supervisor.
+        """
+        if not self.deterministic_crash_recovery:
+            return False
+        cause = self.conn.execute(
+            "SELECT type, payload FROM events WHERE seq = ?", (cause_seq,)
+        ).fetchone()
+        if not cause or cause["type"] != "worker.exited":
+            return False
+        try:
+            payload = json.loads(cause["payload"])
+        except (TypeError, json.JSONDecodeError):
+            return False
+        if int(payload.get("exit_code", 0)) == 0:
+            return False
+        attempt = latest_attempt(self.conn, task_id)
+        task_row = self.conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if not attempt or not task_row or attempt["failure_cause"] != "worker.exited":
+            return False
+        if task_row["retries"] >= task_row["max_retries"]:
+            return False
+
+        task = dict(task_row)
+        append_event(
+            self.conn, source="system", type="recovery.policy_applied", task_id=task_id,
+            payload={
+                "action_type": "RESTART",
+                "action": RecoveryAction.RETRY_RETAINED_CANDIDATE.value,
+                "failure_class": FailureClass.WORKER_CRASH.value,
+                "diagnosis_code": "worker_crash_retry",
+                "cause_seq": cause_seq,
+                "attempt_id": attempt["id"],
+                "previous_candidate_sha": attempt["candidate_sha"] or attempt["base_sha"],
+                "reason": "non-zero worker exit has no completion claim; retry within budget",
+            },
+        )
+        update_attempt(
+            self.conn, attempt["id"],
+            disposition="retry_requested",
+            supervisor_feedback="The previous worker process exited before completion. Continue from the retained candidate and finish the task.",
+        )
+        await self._teardown(task_id)
+        feedback = (
+            "The previous worker process exited before completion. Continue from "
+            "the retained candidate and finish the task."
+        )
+        brief = f"{task['brief']}\n\nRecovery feedback:\n{feedback}"
+        await self._launch(
+            {**task, "brief": brief, "_fake_scenario": task.get("_fake_scenario") or task["brief"],
+             "recovery_feedback": feedback},
+            retries=task["retries"] + 1,
+        )
+        append_event(self.conn, source="system", type="recovery.attempted", task_id=task_id,
+                     payload={"action": RecoveryAction.RETRY_RETAINED_CANDIDATE.value,
+                              "failure_class": FailureClass.WORKER_CRASH.value,
+                              "cause_seq": cause_seq, "attempt_id": attempt["id"]})
+        # The immediate state transition is caused by worker.spawned; the
+        # policy event remains in the durable causality chain.
+        return True
+
     async def _handle_triage(self, task_id: str, cause_seq: int, *, live_proc,
                              candidate_sha=None) -> bool:
         row = self.conn.execute("SELECT state FROM tasks WHERE id = ?", (task_id,)).fetchone()
@@ -904,6 +1278,12 @@ class Scheduler:
         possible for nudge/wait); False means this attempt is over -- either
         genuinely finished (escalate/abandon) or replaced by a freshly
         launched attempt the caller no longer owns (restart)."""
+        if await self._apply_deterministic_crash_recovery(task_id, cause_seq):
+            return False
+        if await self._apply_protocol_recovery(task_id, cause_seq):
+            return False
+        if await self._apply_public_recovery(task_id, cause_seq):
+            return False
         if await self._apply_deterministic_policy(task_id, cause_seq):
             return False
 
@@ -1103,6 +1483,11 @@ class Scheduler:
         verification_base_sha = origin["base_sha"] if origin else task["base_sha"]
         attempt = self.conn.execute("SELECT * FROM attempts WHERE id = ?", (task["current_attempt_id"],)).fetchone()
         candidate_sha = task["candidate_sha"] or (attempt["candidate_sha"] if attempt else None)
+        no_change = bool(self.conn.execute(
+            "SELECT 1 FROM events WHERE task_id = ? AND type = 'worker.no_change' "
+            "AND json_extract(payload, '$.attempt_id') = ? ORDER BY seq DESC LIMIT 1",
+            (task_id, task["current_attempt_id"]),
+        ).fetchone())
         req = VerifyRequest(task_id=task_id, worktree=task["worktree"], base_sha=verification_base_sha,
                             verify_cmd=task["verify_cmd"] or "true", timeout_s=self.verify_timeout_s,
                             repo=task["repo"],
@@ -1110,6 +1495,24 @@ class Scheduler:
                             worker_dirty=attempt["worker_dirty"] if attempt else None,
                             artifact_root=(str(self.artifact_root / task_id)
                                            if self.artifact_root else None))
+        # Keep VerifyRequest's public schema stable; no-change is an internal
+        # protocol fact, not an evaluator input.
+        req.allow_empty_diff = no_change
+        terminal = self.conn.execute(
+            "SELECT payload FROM events WHERE task_id = ? AND type IN "
+            "('worker.done_claimed', 'worker.no_change') "
+            "ORDER BY seq DESC LIMIT 1", (task_id,),
+        ).fetchone()
+        protocol_result = None
+        if terminal:
+            try:
+                protocol_result = json.loads(terminal["payload"]).get("protocol_result")
+            except (TypeError, json.JSONDecodeError):
+                protocol_result = None
+        req.protocol_result = protocol_result
+        req.output_artifacts = task.get("output_artifacts")
+        req.output_schema = task.get("output_schema")
+        req.targeted_commands = [task["node_verify_cmd"]] if task.get("node_verify_cmd") else None
         attempt_id = task["current_attempt_id"]
         update_attempt(self.conn, attempt_id, verification_started_at=self._timestamp(),
                        disposition="verifying")
@@ -1118,7 +1521,30 @@ class Scheduler:
         # The gate owns subprocesses and filesystem work but has no scheduler
         # state access. Running it in a thread keeps the asyncio control loop
         # able to launch unrelated workers while verification is in progress.
-        result = await asyncio.to_thread(run_verify, req)
+        verify_kwargs = {}
+        if self.evidence_ladder:
+            verify_kwargs = {
+                "evidence_ladder": True,
+                "protocol_result": protocol_result,
+                "artifact_specs": task.get("output_artifacts"),
+                "output_schema": task.get("output_schema"),
+                "targeted_commands": req.targeted_commands,
+                "allow_empty_diff": no_change,
+            }
+        result = await asyncio.to_thread(run_verify, req, **verify_kwargs)
+        if result.evidence:
+            for stage in result.evidence.get("stages", []):
+                append_event(
+                    self.conn, source="verifier", type="verify.evidence_stage",
+                    task_id=task_id, payload={"attempt_id": attempt_id, **stage},
+                )
+            append_event(
+                self.conn, source="verifier", type="verify.evidence_completed",
+                task_id=task_id, payload={"attempt_id": attempt_id,
+                                          "passed": result.passed,
+                                          "decisive_stage": result.evidence.get("decisive_stage"),
+                                          "cause": result.cause},
+            )
         payload = {"cause": result.cause, "exit_code": result.exit_code,
                   "duration_s": result.duration_s, "flaky": result.flaky,
                   "output_tail": result.output_tail, "diff_stat": result.diff_stat,
@@ -1136,17 +1562,40 @@ class Scheduler:
         if result.passed:
             s = append_event(self.conn, source="verifier", type="verify.passed",
                              task_id=task_id, payload=payload)
+            self._append_terminal_classification(task_id, "completed", cause_seq=s,
+                                                 attempt_id=attempt_id)
+            if attempt and attempt["attempt_no"] > 1:
+                append_event(self.conn, source="system", type="recovery.verified", task_id=task_id,
+                             payload={"attempt_id": attempt_id, "cause_seq": s,
+                                      "outcome": "verified"})
             transition(self.conn, task_id, "delivering", cause_seq=s)
             await self._deliver(task_id)
         else:
             s = append_event(self.conn, source="verifier", type="verify.failed",
                              task_id=task_id, payload=payload)
+            if attempt and attempt["attempt_no"] > 1:
+                append_event(self.conn, source="system", type="recovery.failed", task_id=task_id,
+                             payload={"attempt_id": attempt_id, "cause_seq": s,
+                                      "outcome": "verification_failed"})
             await self._handle_triage(task_id, s, live_proc=None)
 
     # -- delivering -------------------------------------------------------------
 
     async def _deliver(self, task_id: str) -> None:
         task = dict(self.conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone())
+        artifact_ok, artifact_detail = validate_output_artifacts(task)
+        artifact_seq = append_event(
+            self.conn, source="verifier",
+            type="artifact.validation_passed" if artifact_ok else "artifact.validation_failed",
+            task_id=task_id, payload={"attempt_id": task.get("current_attempt_id"), **artifact_detail},
+        )
+        if not artifact_ok:
+            attempt = latest_attempt(self.conn, task_id)
+            if attempt:
+                update_attempt(self.conn, attempt["id"], failure_cause="artifact_validation_failed",
+                               failure_signature="artifact_validation_failed", disposition="artifact_failed")
+            await self._handle_triage(task_id, artifact_seq, live_proc=None)
+            return
         try:
             etype, payload = delivery.deliver(
                 task,
@@ -1210,6 +1659,7 @@ class Scheduler:
                     payload={"silent_for_s": round(now - last, 1)})
                 if s is None:
                     continue
+                self._append_terminal_classification(task_id, "timeout", cause_seq=s)
                 self._wait_grace.pop(task_id, None)
                 keep_watching = await self._handle_triage(task_id, s, live_proc=proc)
                 if keep_watching:
@@ -1318,6 +1768,19 @@ class Scheduler:
 
         wt = self._worktrees.pop(task_id, None)
         slot = self._worker_slots.pop(task_id, None)
+        lease = self._leases.pop(task_id, None)
+        self._lease_heartbeat.pop(task_id, None)
+        if lease is not None:
+            try:
+                execution_lease.release(
+                    self.conn, lease, reason="scheduler_teardown", source="scheduler",
+                )
+            except execution_lease.StaleLeaseError:
+                # A watchdog/reconciler may already have fenced it.  The
+                # durable recovery event is the authoritative outcome.
+                pass
+            except BaseException as exc:
+                failures.append(("execution lease release", exc))
         if wt is not None:
             # Attempt refs are durable candidates; only the pooled checkout
             # is disposable.

@@ -891,3 +891,176 @@ and new signatures, candidate-change status, budget exhaustion, and truthful
 opaque evaluator escalation without paying for another model call. Intervention
 outcomes are observed as improved, no improvement, or regression evidence, not
 causal claims.
+
+## 2026-08-11 - dependency-aware Harbor matrix: first policy comparison
+
+The first complete dependency-aware Harbor matrix finished overnight. This is
+the first result set that exercises both concurrency and dependency settlement;
+the earlier one-task Ollama matrix was only a Harbor boundary pilot.
+
+### Controlled setup
+
+- Harbor `0.20.0`
+- Backend: local Ollama through the Anthropic-compatible endpoint
+- Worker and supervisor model: `qwen3-coder:30b`
+- Context: `32768`
+- Configured concurrency ceiling: `2`
+- Worker timeout: `1200s`; verification timeout: `600s`
+- Separate Harbor verifier with hidden tests
+- Base SHA: `9d40c7ad5ea4dd596f9b98c82f57f6abadd8374d`
+- Task definition SHA256: `ec42ca10eb241fcf04b10ee707960c9cd0dc7da7353b1fc2739af95d79db263a`
+- Task graph SHA256: `c8911c829341c6756e39a4203a140f2764b3325832d3cb56f3d87930955c9a90`
+- Authentication: Harbor-injected Ollama settings; no credential values recorded
+- Actual API charge: `$0`; `cost_usd` below is an internal token-cost estimate
+
+The graph had three independent roots (`schema`, `implementation`, and
+`documentation`), a fan-in `integration` task depending on the first two, and
+`release-check` depending on `integration` and `documentation`. All task nodes
+used local delivery so settled dependencies were available to their children.
+
+### Cell results
+
+| Policy | Seed | Harbor job | Reward | Runtime (min) | State | Delivered | Attempts | Peak workers | Input tokens | Output tokens | Estimated cost |
+|---|---:|---|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| sequential | 0 | `2026-08-10__22-25-27` | 1.0 | 37.7 | delivered | 5 | 5 | 1 | 160,076 | 2,661 | $0.88576 |
+| sequential | 1 | `2026-08-11__00-20-12` | 1.0 | 33.9 | delivered | 5 | 5 | 1 | 171,091 | 2,810 | $0.94458 |
+| sequential | 2 | `2026-08-11__00-54-10` | 1.0 | 39.2 | delivered | 5 | 5 | 1 | 167,741 | 2,900 | $0.93006 |
+| naive-parallel | 0 | `2026-08-10__23-07-21` | 0.0 | 24.9 | needs_human | 3 | 4 | 2 | 106,678 | 1,938 | $0.59688 |
+| naive-parallel | 1 | `2026-08-11__01-33-26` | 1.0 | 40.8 | delivered | 5 | 5 | 2 | 178,094 | 2,915 | $0.98220 |
+| naive-parallel | 2 | `2026-08-11__02-14-15` | 0.0 | 11.9 | needs_human | 2 | 3 | 2 | 42,608 | 762 | $0.24344 |
+| orchestrator | 0 | `2026-08-10__23-33-51` | 1.0 | 43.4 | delivered | 5 | 5 | 2 | 177,001 | 2,993 | $0.97871 |
+| orchestrator | 1 | `2026-08-11__02-26-12` | 1.0 | 49.2 | delivered | 5 | 6 | 2 | 186,326 | 3,259 | $1.05139 |
+| orchestrator | 2 | `2026-08-11__03-15-29` | 1.0 | 44.3 | delivered | 5 | 5 | 2 | 177,618 | 3,058 | $0.98340 |
+
+### Aggregate results
+
+| Policy | Verified rewards | Mean runtime (min) | Mean attempts | Mean peak workers | Mean input tokens | Mean estimated cost | Supervisor interventions |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| sequential | 3/3 | 36.9 | 5.0 | 1.0 | 166,303 | $0.920 | 0 |
+| naive-parallel | 1/3 | 25.9 | 4.0 | 2.0 | 109,127 | $0.610 | 2 |
+| orchestrator | 3/3 | 45.6 | 5.3 | 2.0 | 180,315 | $1.000 | 1 |
+
+The naive-parallel failures were materially different: seed 0 had an
+`integration` worker with `uncommitted_changes`, and seed 2 had an
+`implementation` worker exit without a candidate. In both cases dependency
+settlement correctly blocked `release-check`. The orchestrator seed 1 also
+experienced a worker exit, but one supervisor intervention restarted/recovered
+the task and the cell still earned reward `1.0`. No cell had a Harbor exception.
+
+### What this does and does not show
+
+The strongest result is verified completion: sequential and orchestrator both
+completed 3/3 cells, while naive parallel completed 1/3. This is evidence that
+the orchestrator's recovery path can preserve end-to-end task completion under
+the observed worker failure, whereas naive parallelism did not recover the two
+observed failures.
+
+This is not yet a universal claim that orchestrator is better. There are only
+three seeds per policy, one task graph, one model, and one machine. The point
+estimate for a 3/3 policy result has wide uncertainty. The one recovered
+orchestrator failure is useful evidence about that run, but it is not a stable
+estimate of recovery probability.
+
+The naive-parallel runtime average is also censored by failures: failed cells
+ended early. Its only successful cell took 40.8 minutes, so the 25.9-minute
+mean must not be presented as a speed advantage. On this graph, concurrency did
+not produce a verified-completion speedup. Orchestrator used two workers and
+still averaged 45.6 minutes versus sequential's 36.9 minutes, with one
+supervisor recovery adding 557 seconds of triage time in seed 1.
+
+The correct reporting split is therefore:
+
+1. outcome quality: verifier reward, delivered-task rate, failure categories,
+   dependency-blocked count, and recovered failures;
+2. orchestration overhead: wall time, queue wait, worker execution, slot
+   occupancy, supervisor time, attempts, tokens, and estimated cost.
+
+Do not rank policies by wall time alone, and do not compare a failed cell's
+short runtime to a successful cell's runtime without marking the censoring.
+
+### Should the benchmark tasks be harder?
+
+Not simply yet. The current graph is semantically easy, but it already exposed
+worker reliability differences: naive parallelism failed two of three cells,
+while the orchestrator recovered one worker failure. Making the code puzzles
+harder immediately would mix model coding difficulty with scheduler behavior
+and make the result harder to interpret.
+
+The next benchmark revision should first be harder in graph structure, not in
+algorithmic cleverness:
+
+- use 8-12 nodes with 3-4 independent roots;
+- add two or three fan-in/fan-out stages and at least one longer critical path;
+- keep each node's file scope distinct so accidental merge conflicts do not
+  become the hidden concurrency variable;
+- include deterministic public checks plus hidden cross-task interface checks;
+- add controlled worker-exit, uncommitted-change, and verification-failure
+  scenarios so recovery is measured deliberately rather than by chance.
+
+After that scheduler-stress suite is stable, add a second capability suite with
+real multi-file implementation tasks and stronger hidden tests. That suite can
+test whether orchestration preserves quality on difficult work, but it should
+not replace the smaller graph suite used to isolate scheduling and recovery.
+
+For publishable agent-comparison evidence, repeat across several task graphs
+and more seeds (at least 5-10 per condition if compute permits), keep all
+non-policy inputs fixed, report per-cell artifacts, and predeclare the primary
+metric as verified completion/reward. The current matrix is a strong pilot and
+a valid demonstration of the recovery behavior, not yet a general benchmark
+claim.
+
+### Artifact locations
+
+The six overnight jobs are `2026-08-11__00-20-12`, `00-54-10`, `01-33-26`,
+`02-14-15`, `02-26-12`, and `03-15-29` under `old/jobs/`. Each contains
+`run_manifest.json`, `result.json`, `metrics.json`, `task_summary.json`,
+`candidate.patch`, and the separate verifier reward. The three seed-0 cells
+are recorded in `2026-08-10__22-25-27`, `23-07-21`, and `23-33-51`.
+
+## 2026-08-11 - controlled worker-exit recovery sequence
+
+The next validation sequence used the same five-node dependency DAG, base SHA
+`9d40c7ad5ea4dd596f9b98c82f57f6abadd8374d`, task definition hash
+`ec42ca10eb241fcf04b10ee707960c9cd0dc7da7353b1fc2739af95d79db263a`, seed 0,
+Qwen3-Coder 30B through Ollama, 32K context, concurrency ceiling 2, and a
+separate Harbor verifier. The controlled fault injector targeted `integration`
+with a worker exit after one second.
+
+| Cell | Job | Reward | Duration | State / exception | Attempts | Delivered | Dependency blocked | Supervisor s | Notes |
+|---|---|---:|---:|---|---:|---:|---:|---:|---|
+| sequential, fault | `old/jobs/2026-08-11__09-01-10` | 0.0 | 21m21s | needs_human / none | 4 | 3 | 1 | 0.038 | injected `integration` exit recorded; release blocked |
+| naive-parallel, fault | `old/jobs/2026-08-11__09-22-57` | 0.0 | 23m46s | needs_human / none | 4 | 3 | 1 | 0.021 | same injected failure; peak workers 2 |
+| orchestrator, pre-improvement | `old/jobs/2026-08-11__09-48-00` | 0.0 | 1h01m06s | timeout / `AgentTimeoutError` | incomplete | incomplete | incomplete | observed restart | supervisor restarted the injected failure, but the one-hour Harbor limit ended the trial before final artifacts were written |
+| orchestrator, post-improvement | `old/jobs/2026-08-11__10-49-42` | 0.0 | 42m41s | needs_human / none | 4 | 2 | 2 | 1419.411 | `schema` failed twice on missing terminal markers before `integration`; injected target was never reached |
+
+The post-improvement cell is not a valid before/after test of the new fast
+path. Its manifest correctly records `deterministic_crash_recovery: true`, but
+the `integration` fault was never exercised because an unrelated `schema`
+worker failed twice and caused dependency settlement to block `integration`.
+The post cell therefore demonstrates durable failure and dependency handling,
+not crash-recovery improvement. The pre cell demonstrates that supervisor
+recovery can add approximately seven minutes before a retry, but its Harbor
+timeout prevents a complete quality comparison.
+
+The controlled sequence exposed a benchmark-design issue: with this model and
+32K context, root-task terminal-marker failures are frequent enough to mask the
+fault being studied. Do not expand to the 9-cell fault matrix yet. First make a
+smaller, deterministic recovery canary whose injected task is guaranteed to
+run, or use a public fake-worker lifecycle test to validate the policy path;
+then repeat the same real-model cell only after the canary is stable. Preserve
+the current jobs as failure evidence rather than treating reward 0 as a model
+orchestrator ranking.
+
+## 2026-08-11 - reliability/proof v2 local milestone
+
+Added the first flag-gated reliability slice after the controlled-fault canary:
+the SDK ResultMessage is now modeled as primary completion evidence, with
+optional DONE_CLAIM/ASK/NO_CHANGE metadata and one bounded protocol-repair
+retry. Added typed recovery classification, durable recovery attempted/
+verified/failed metrics, typed task artifact/interface contracts, selective
+dependency interface validation, and an adaptive critical-path queue decision
+recorded in the event log. These behaviors are now enabled by default for the
+orchestrator policy, while sequential/naive-parallel baselines remain
+unchanged and explicit false flags retain legacy fallback behavior. The focused FakeWorker suite
+and full local regression suite pass; no new Harbor superiority claim is made
+until the target-reachable canary and censored-cell benchmark are rerun.

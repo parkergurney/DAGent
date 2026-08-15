@@ -2,10 +2,11 @@
 
 import json
 import sqlite3
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from orchestrator.store import connect
+from orchestrator.recovery import classify_failure
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,18 @@ class RunMetrics:
     worker_limit: int
     attempts: int
     verification_attempts: int
+    recovery_attempts: int
+    recovery_verified: int
+    recovery_failed: int
+    first_failure_class: str | None
+    first_failure_event_seq: int | None
+    failure_classes: dict
+    terminal_classifications: dict
+    recovery_time_s: float
+    evidence_stage_counts: dict = field(default_factory=dict)
+    evidence_stage_timing_s: dict = field(default_factory=dict)
+    fault_target_reached: bool = False
+    fault_target: str | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -112,7 +125,43 @@ def _timing(conn: sqlite3.Connection) -> dict:
     }
 
 
+def _evidence_metrics(events: list[dict]) -> dict:
+    """Aggregate additive evidence-stage metrics from future/current events.
+
+    The scheduler is intentionally not coupled here: once it emits a
+    ``verify.evidence_stage`` event, or embeds the ladder result in a verify
+    event, metrics become available without a schema migration.  Unknown
+    payloads are ignored so old databases remain readable.
+    """
+    counts: dict[str, int] = {}
+    timing: dict[str, float] = {}
+
+    def record(stage: object, duration: object) -> None:
+        if not stage:
+            return
+        name = str(stage)
+        counts[name] = counts.get(name, 0) + 1
+        try:
+            seconds = max(float(duration or 0.0), 0.0)
+        except (TypeError, ValueError):
+            seconds = 0.0
+        timing[name] = round(timing.get(name, 0.0) + seconds, 3)
+
+    for event in events:
+        payload = json.loads(event["payload"] or "{}")
+        if event["type"] in {"verify.evidence_stage", "evidence.stage_completed",
+                              "verify.stage_completed"}:
+            record(payload.get("stage"), payload.get("duration_s", payload.get("duration")))
+        embedded = payload.get("evidence")
+        if isinstance(embedded, dict):
+            for stage in embedded.get("stages", []):
+                if isinstance(stage, dict) and stage.get("applicable", True):
+                    record(stage.get("stage"), stage.get("duration_s", stage.get("duration")))
+    return {"evidence_stage_counts": counts, "evidence_stage_timing_s": timing}
+
+
 def metrics_for(conn: sqlite3.Connection) -> RunMetrics:
+    events = [dict(row) for row in conn.execute("SELECT * FROM events ORDER BY seq")]
     counts = {row["state"]: row["c"] for row in conn.execute(
         "SELECT state, COUNT(*) c FROM tasks GROUP BY state"
     )}
@@ -126,6 +175,31 @@ def metrics_for(conn: sqlite3.Connection) -> RunMetrics:
         "SELECT COUNT(*) c FROM supervisor_interventions"
     ).fetchone()["c"]
     timing = _timing(conn)
+    evidence_metrics = _evidence_metrics(events)
+    fault_event = next(
+        (event for event in events if event["type"] == "fault_injection.target_reached"),
+        None,
+    )
+    failure_events = []
+    failure_counts = {}
+    for row in conn.execute("SELECT seq, type, payload FROM events ORDER BY seq"):
+        payload = json.loads(row["payload"] or "{}")
+        if row["type"] in {"worker.exited", "worker.protocol_incomplete", "worker.stalled",
+                            "worker.startup_failed", "worker.sdk_failure", "verify.failed",
+                            "artifact.validation_failed", "interface.validation_failed",
+                            "delivery.failed"}:
+            value = ("sdk_failure" if row["type"] == "worker.sdk_failure"
+                     else classify_failure(row["type"], payload).value)
+            failure_events.append((row["seq"], value))
+            failure_counts[value] = failure_counts.get(value, 0) + 1
+    terminal = {}
+    for row in conn.execute("SELECT payload FROM events WHERE type = 'task.terminal_classified'"):
+        value = json.loads(row["payload"] or "{}").get("classification")
+        if value:
+            terminal[value] = terminal.get(value, 0) + 1
+    recovery_time = sum(_duration(row["started_at"], row["ended_at"])
+                        for row in conn.execute(
+                            "SELECT started_at, ended_at FROM supervisor_interventions"))
     return RunMetrics(
         tasks=sum(counts.values()),
         executed=conn.execute("SELECT COUNT(DISTINCT task_id) c FROM events WHERE type='worker.spawned'").fetchone()["c"],
@@ -140,6 +214,24 @@ def metrics_for(conn: sqlite3.Connection) -> RunMetrics:
             "SELECT COUNT(*) c FROM events WHERE type='verification.recovered'"
         ).fetchone()["c"],
         **timing,
+        fault_target_reached=fault_event is not None,
+        fault_target=(json.loads(fault_event["payload"]).get("target")
+                      if fault_event else None),
+        recovery_attempts=conn.execute(
+            "SELECT COUNT(*) c FROM events WHERE type = 'recovery.attempted'"
+        ).fetchone()["c"],
+        recovery_verified=conn.execute(
+            "SELECT COUNT(*) c FROM events WHERE type = 'recovery.verified'"
+        ).fetchone()["c"],
+        recovery_failed=conn.execute(
+            "SELECT COUNT(*) c FROM events WHERE type = 'recovery.failed'"
+        ).fetchone()["c"],
+        first_failure_class=failure_events[0][1] if failure_events else None,
+        first_failure_event_seq=failure_events[0][0] if failure_events else None,
+        failure_classes=failure_counts,
+        terminal_classifications=terminal,
+        recovery_time_s=round(recovery_time, 3),
+        **evidence_metrics,
     )
 
 

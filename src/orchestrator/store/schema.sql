@@ -8,6 +8,11 @@ CREATE TABLE IF NOT EXISTS tasks (
   repo          TEXT NOT NULL,
   delivery_mode TEXT NOT NULL CHECK (delivery_mode IN ('pr','local','scout')),
   verify_cmd    TEXT,
+  output_artifacts TEXT,
+  output_schema TEXT,
+  input_contract TEXT,
+  node_verify_cmd TEXT,
+  repair_policy TEXT,
   state         TEXT NOT NULL DEFAULT 'blocked' CHECK (state IN
     ('blocked','queued','running','verifying','triage','needs_human',
      'delivering','delivered','failed','cancelled','dependency_blocked')),
@@ -75,6 +80,30 @@ CREATE TABLE IF NOT EXISTS attempts (
 );
 CREATE INDEX IF NOT EXISTS idx_attempts_task ON attempts(task_id, attempt_no);
 CREATE INDEX IF NOT EXISTS idx_attempts_parent ON attempts(parent_attempt_id);
+
+-- A lease is the fencing token for one worker execution.  A recovered or
+-- released lease remains in this history so a late worker can never become
+-- current again; every reacquisition gets a larger generation.
+CREATE TABLE IF NOT EXISTS execution_leases (
+  lease_id       TEXT PRIMARY KEY,
+  attempt_id     TEXT NOT NULL REFERENCES attempts(id),
+  task_id        TEXT NOT NULL REFERENCES tasks(id),
+  generation     INTEGER NOT NULL CHECK (generation > 0),
+  owner_id       TEXT NOT NULL,
+  status         TEXT NOT NULL CHECK (status IN ('active','released','recovered')),
+  acquired_at    TEXT NOT NULL,
+  renewed_at     TEXT NOT NULL,
+  expires_at     TEXT,
+  released_at    TEXT,
+  release_reason TEXT,
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL,
+  UNIQUE(attempt_id, generation)
+);
+CREATE INDEX IF NOT EXISTS idx_execution_leases_attempt
+  ON execution_leases(attempt_id, generation);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_execution_leases_active
+  ON execution_leases(attempt_id) WHERE status = 'active';
 
 -- One row per actual supervisor model intervention. Deterministic policy
 -- decisions are events, not interventions, so they cannot be mistaken for

@@ -34,7 +34,20 @@ Design notes:
 
 - Every exception path funnels through `triage`.
 - `delivered` means artifact handed off, not merged.
-- Crash recovery reconciles dead running sessions through `worker.exited`.
+- Crash recovery reconciles dead running sessions through `worker.exited`. The
+  orchestrator policy has one deterministic fast path for a non-zero worker
+  exit: when retry budget remains, it records `recovery.policy_applied` and
+  retries through the ordinary candidate-lineage path without an LLM triage
+  call. Startup/authentication failures and ambiguous failures still escalate
+  through the supervisor; baseline policies keep the fast path disabled.
 - Candidate SHA and dirty-worktree facts are durable before the worker lease is
   released; verification reads the durable candidate ref.
+- SDK `ResultMessage` is the primary completion record. `DONE_CLAIM`, `ASK`,
+  and `NO_CHANGE` are optional metadata; a completion still requires a clean
+  worker exit, a committed candidate (or explicit no-change), and public
+  verification. The scheduler records `completed`, `asked`,
+  `protocol_incomplete`, `sdk_failure`, `worker_crash`, `timeout`, and
+  `startup_failure` classifications. Protocol repair is at most one retry and
+  is enabled by default; a benchmark manifest can explicitly disable it for a
+  legacy fallback comparison.
 <!-- /sync:task-states -->

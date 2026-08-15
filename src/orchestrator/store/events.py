@@ -10,6 +10,10 @@ Invariants enforced here (design.md section 3):
 Everything that mutates tasks records enough in the event payload for replay to
 rebuild it: task.created carries the full static task definition, and
 task.state_changed carries the new state plus any mutated columns.
+
+Execution lease lifecycle events are also append-only facts.  They are folded
+by replay_leases(); the task replay fold intentionally ignores them because
+leases are execution metadata, not derived task state.
 """
 import json
 import os
@@ -35,6 +39,13 @@ STATES = {
     "delivering", "delivered", "failed", "cancelled", "dependency_blocked",
 }
 TERMINAL = {"delivered", "failed", "cancelled", "dependency_blocked"}
+
+LEASE_EVENT_TYPES = frozenset({
+    "execution_lease.acquired",
+    "execution_lease.renewed",
+    "execution_lease.released",
+    "execution_lease.recovered",
+})
 
 # Legal (from -> to) edges, excluding the universal "any -> cancelled" which is
 # handled in _legal() (manager may kill any non-terminal task).
@@ -106,7 +117,9 @@ def append_event(conn, *, source, type, task_id=None, payload=None,
 
 
 def create_task(conn, *, title, brief, repo, delivery_mode, verify_cmd=None,
-                max_retries=2, depends_on=(), task_id=None) -> str:
+                max_retries=2, depends_on=(), task_id=None, output_artifacts=None,
+                output_schema=None, input_contract=None, dependency_input_contract=None,
+                node_verify_cmd=None, repair_policy=None) -> str:
     """Insert a task (state='blocked') and emit task.created atomically.
 
     The task.created payload carries the full static definition so replay can
@@ -120,16 +133,30 @@ def create_task(conn, *, title, brief, repo, delivery_mode, verify_cmd=None,
         "repo": repo,
         "delivery_mode": delivery_mode,
         "verify_cmd": verify_cmd,
+        "output_artifacts": output_artifacts,
+        "output_schema": output_schema,
+        "input_contract": (input_contract if input_contract is not None
+                            else dependency_input_contract),
+        "node_verify_cmd": node_verify_cmd,
+        "repair_policy": repair_policy,
         "max_retries": max_retries,
         "depends_on": list(depends_on),
     }
     with conn:
         conn.execute(
             "INSERT INTO tasks "
-            "(id, title, brief, repo, delivery_mode, verify_cmd, "
+            "(id, title, brief, repo, delivery_mode, verify_cmd, output_artifacts, output_schema, "
+            " input_contract, node_verify_cmd, repair_policy, "
             " state, retries, max_retries, worktree, session_id, base_sha, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,'blocked',0,?,NULL,NULL,NULL,?,?)",
-            (task_id, title, brief, repo, delivery_mode, verify_cmd, max_retries, ts, ts),
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,'blocked',0,?,NULL,NULL,NULL,?,?)",
+            (task_id, title, brief, repo, delivery_mode, verify_cmd,
+             json.dumps(output_artifacts) if output_artifacts is not None else None,
+             json.dumps(output_schema) if output_schema is not None else None,
+             json.dumps(input_contract if input_contract is not None else dependency_input_contract)
+             if (input_contract is not None or dependency_input_contract is not None) else None,
+             node_verify_cmd,
+             json.dumps(repair_policy) if repair_policy is not None else None,
+             max_retries, ts, ts),
         )
         for dep in depends_on:
             conn.execute(
@@ -201,6 +228,15 @@ def replay(events) -> dict:
                 "repo": payload["repo"],
                 "delivery_mode": payload["delivery_mode"],
                 "verify_cmd": payload.get("verify_cmd"),
+                "output_artifacts": (json.dumps(payload.get("output_artifacts"))
+                                     if payload.get("output_artifacts") is not None else None),
+                "output_schema": (json.dumps(payload.get("output_schema"))
+                                  if payload.get("output_schema") is not None else None),
+                "input_contract": (json.dumps(payload.get("input_contract"))
+                                   if payload.get("input_contract") is not None else None),
+                "node_verify_cmd": payload.get("node_verify_cmd"),
+                "repair_policy": (json.dumps(payload.get("repair_policy"))
+                                  if payload.get("repair_policy") is not None else None),
                 "state": "blocked",
                 "retries": 0,
                 "max_retries": payload.get("max_retries", 2),
@@ -222,6 +258,49 @@ def replay(events) -> dict:
                 if col in payload:
                     t[col] = payload[col]
     return tasks
+
+
+def replay_leases(events) -> dict:
+    """Fold execution lease lifecycle events into lease rows.
+
+    This is separate from :func:`replay` because leases do not derive any
+    column in ``tasks``.  The result uses the same column names as
+    ``execution_leases`` and is suitable for an exact live-table comparison.
+    """
+    leases: dict = {}
+    for e in events:
+        if e["type"] not in LEASE_EVENT_TYPES:
+            continue
+        payload = json.loads(e["payload"])
+        lease_id = payload["lease_id"]
+        if e["type"] == "execution_lease.acquired":
+            leases[lease_id] = {
+                "lease_id": lease_id,
+                "attempt_id": payload["attempt_id"],
+                "task_id": payload["task_id"],
+                "generation": payload["generation"],
+                "owner_id": payload["owner_id"],
+                "status": "active",
+                "acquired_at": payload["acquired_at"],
+                "renewed_at": payload["renewed_at"],
+                "expires_at": payload.get("expires_at"),
+                "released_at": None,
+                "release_reason": None,
+                "created_at": payload["created_at"],
+                "updated_at": e["ts"],
+            }
+        elif e["type"] == "execution_lease.renewed":
+            lease = leases[lease_id]
+            lease["renewed_at"] = payload["renewed_at"]
+            lease["expires_at"] = payload.get("expires_at")
+            lease["updated_at"] = e["ts"]
+        else:
+            lease = leases[lease_id]
+            lease["status"] = payload["status"]
+            lease["released_at"] = payload["released_at"]
+            lease["release_reason"] = payload.get("release_reason")
+            lease["updated_at"] = e["ts"]
+    return leases
 
 
 # --- durable attempts -------------------------------------------------------

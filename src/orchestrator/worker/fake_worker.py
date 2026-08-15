@@ -72,6 +72,17 @@ def _clean(wt):
     emit("done_claimed", result="DONE_CLAIM: ok")
 
 
+@scenario("sdk_result_no_claim")
+def _sdk_result_no_claim(wt):
+    """Successful SDK-shaped result followed by a missing protocol marker."""
+    (wt / "output.txt").write_text("done\n")
+    _commit(wt, "sdk result candidate")
+    emit("result", subtype="success", is_error=False, session_id="fake-sdk",
+         result="completed the requested work", cost_usd=0.01,
+         tokens_in=10, tokens_out=20)
+    emit("unclaimed", reason="result_missing_terminal_marker")
+
+
 @scenario("retry_candidate")
 def _retry_candidate(wt):
     """First execution commits a failing candidate; the retry must see and

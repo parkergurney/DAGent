@@ -7,12 +7,14 @@ recovery, verification, and metrics behavior remains in ``harbor.run_instruction
 """
 
 import argparse
+import hashlib
+import importlib.metadata
 import json
 import os
 import subprocess
 from pathlib import Path
 
-from orchestrator.harbor import export_patch, run_instruction
+from orchestrator.harbor import export_patch, export_task_summary, run_instruction
 from orchestrator.metrics import export_metrics
 
 _AUTH_ENV_NAMES = frozenset({
@@ -50,6 +52,41 @@ def _int(settings: dict, name: str, env_name: str, default: int) -> int:
     return int(_value(settings, name, env_name, default))
 
 
+def _task_specs(settings: dict) -> list[dict] | None:
+    specs = settings.get("tasks")
+    if specs is None:
+        specs = settings.get("task_graph")
+    if specs is None:
+        return None
+    if not isinstance(specs, list):
+        raise ValueError("orchestrator tasks/task_graph must be a list")
+    return specs
+
+
+def _task_graph_metadata(settings: dict) -> dict:
+    specs = _task_specs(settings)
+    if specs is None:
+        return {"count": 1, "sha256": None, "tasks": []}
+    canonical = json.dumps(specs, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {
+        "count": len(specs),
+        "sha256": hashlib.sha256(canonical).hexdigest(),
+        "tasks": [
+            {"id": str(spec.get("id")), "depends_on": list(spec.get("depends_on") or [])}
+            for spec in specs
+        ],
+    }
+
+
+def _fault_injection(settings: dict) -> dict | None:
+    fault = settings.get("fault_injection")
+    if fault is None:
+        return None
+    if not isinstance(fault, dict):
+        raise ValueError("orchestrator fault_injection must be an object")
+    return dict(fault)
+
+
 def _repo_sha(repo_root: Path) -> str:
     return subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=repo_root, check=True,
@@ -60,6 +97,74 @@ def _repo_sha(repo_root: Path) -> str:
 def _write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def _package_version() -> str:
+    try:
+        return importlib.metadata.version("agent-orchestrator")
+    except importlib.metadata.PackageNotFoundError:
+        return "0.0.1"
+
+
+def _manifest(settings: dict, *, instruction: str, repo_root: Path, base_sha: str,
+              policy: str, verify_cmd: str, artifact_root: Path,
+              task_graph: dict, fault_injection: dict | None,
+              deterministic_crash_recovery: bool,
+              adaptive_scheduling: bool = True,
+              protocol_recovery_v2: bool = True,
+              evidence_ladder: bool = True) -> dict:
+    """Build the immutable comparison record before any worker is launched."""
+    instruction_sha = hashlib.sha256(instruction.encode("utf-8")).hexdigest()
+    task_hash = _value(
+        settings, "task_definition_sha256", "ORCH_TASK_DEFINITION_SHA256", None
+    )
+    return {
+        "schema_version": 1,
+        "orchestrator_version": _package_version(),
+        "harbor_version": _value(settings, "harbor_version", "HARBOR_VERSION", "unknown"),
+        "trial_id": _value(settings, "trial_id", "HARBOR_TRIAL_ID", "unknown"),
+        "seed": _value(settings, "seed", "HARBOR_TRIAL_SEED", "unknown"),
+        "task_definition_sha256": task_hash or "not-provided",
+        "task_graph": task_graph,
+        "fault_injection": fault_injection,
+        "fault_target_reachability": {
+            "enabled": bool(fault_injection and fault_injection.get("target_reachable")),
+            "target": (fault_injection or {}).get("task_id") if fault_injection else None,
+            "requires_root": bool(fault_injection and fault_injection.get("target_reachable")),
+        },
+        "deterministic_crash_recovery": deterministic_crash_recovery,
+        "protocol_recovery_v2": protocol_recovery_v2,
+        "deterministic_recovery": _bool(_value(settings, "deterministic_recovery",
+                                                "ORCH_DETERMINISTIC_RECOVERY", True)),
+        "adaptive_scheduling": adaptive_scheduling,
+        "evidence_ladder": evidence_ladder,
+        "instruction_sha256": instruction_sha,
+        "repository": {"root": str(repo_root), "base_sha": base_sha},
+        "policy": policy,
+        "backend": _value(settings, "backend", "ORCH_BACKEND", "anthropic"),
+        "context_length": _value(
+            settings, "context_length", "ORCH_CONTEXT_LENGTH", "unknown"
+        ),
+        "model": {
+            "worker": _value(settings, "worker_model", "ORCH_WORKER_MODEL", "claude-sonnet-5"),
+            "supervisor": _value(
+                settings, "supervisor_model", "ORCH_SUPERVISOR_MODEL", "claude-sonnet-5"
+            ),
+        },
+        "limits": {
+            "max_concurrency": _int(settings, "max_concurrency", "ORCH_MAX_CONCURRENCY", 4),
+            "max_retries": _int(settings, "max_retries", "ORCH_MAX_RETRIES", 2),
+            "worker_timeout_s": _int(settings, "stall_threshold_s", "ORCH_WORKER_TIMEOUT_S", 300),
+            "verify_timeout_s": _int(settings, "verify_timeout_s", "ORCH_VERIFY_TIMEOUT_S", 600),
+            "wait_ceiling_s": _int(settings, "wait_ceiling_s", "ORCH_WAIT_CEILING_S", 1800),
+        },
+        "verifier": {
+            "mode": _value(settings, "verifier_mode", "ORCH_VERIFIER_MODE", "separate"),
+            "visible_command": verify_cmd,
+            "artifact_root": str(artifact_root),
+        },
+        "authentication": {"source": "Harbor-injected environment", "values_recorded": False},
+    }
 
 
 def _safe_failure(exc: BaseException) -> dict:
@@ -75,6 +180,13 @@ def _safe_failure(exc: BaseException) -> dict:
 
 async def run_from_files(instruction_file: str | Path, config_file: str | Path | None = None) -> int:
     settings = _config(str(config_file) if config_file else None)
+    task_specs = _task_specs(settings)
+    task_graph = _task_graph_metadata(settings)
+    fault_injection = _fault_injection(settings)
+    deterministic_crash_recovery = _bool(
+        _value(settings, "deterministic_crash_recovery", "ORCH_FAST_CRASH_RECOVERY", True),
+        True,
+    )
     instruction = Path(instruction_file).read_text()
     repo_root = Path(_value(settings, "repo_root", "ORCH_REPO_ROOT", "/app")).resolve()
     # Harbor implicitly transfers the complete /logs/artifacts directory to a
@@ -107,6 +219,21 @@ async def run_from_files(instruction_file: str | Path, config_file: str | Path |
     policy = str(_value(settings, "policy", "ORCH_POLICY", "orchestrator"))
     title = str(_value(settings, "title", "ORCH_TITLE", "Harbor task"))
     verify_cmd = _value(settings, "verify_cmd", "ORCH_VERIFY_CMD", "true")
+    _write_json(
+        artifact_root / "run_manifest.json",
+        _manifest(
+            settings, instruction=instruction, repo_root=repo_root, base_sha=base_sha,
+            policy=policy, verify_cmd=verify_cmd, artifact_root=artifact_root,
+            task_graph=task_graph, fault_injection=fault_injection,
+            deterministic_crash_recovery=deterministic_crash_recovery,
+            adaptive_scheduling=_bool(_value(settings, "adaptive_scheduling",
+                                              "ORCH_ADAPTIVE_SCHEDULING", True)),
+            protocol_recovery_v2=_bool(_value(settings, "protocol_recovery_v2",
+                                              "ORCH_PROTOCOL_RECOVERY_V2", True)),
+            evidence_ladder=_bool(_value(settings, "evidence_ladder",
+                                         "ORCH_EVIDENCE_LADDER", True)),
+        ),
+    )
 
     result_metadata = {
         "schema_version": 1,
@@ -139,13 +266,30 @@ async def run_from_files(instruction_file: str | Path, config_file: str | Path |
             wait_ceiling_s=_int(settings, "wait_ceiling_s", "ORCH_WAIT_CEILING_S", 1800),
             config_path=_value(settings, "config_path", "ORCH_CONFIG_PATH", None),
             base_branch=str(_value(settings, "base_branch", "ORCH_BASE_BRANCH", "main")),
+            task_specs=task_specs,
+            fault_injection=fault_injection,
+            deterministic_crash_recovery=deterministic_crash_recovery,
+            adaptive_scheduling=_bool(_value(settings, "adaptive_scheduling",
+                                              "ORCH_ADAPTIVE_SCHEDULING", True)),
+            protocol_recovery_v2=_bool(_value(settings, "protocol_recovery_v2",
+                                               "ORCH_PROTOCOL_RECOVERY_V2", True)),
+            evidence_ladder=_bool(_value(settings, "evidence_ladder",
+                                         "ORCH_EVIDENCE_LADDER", True)),
+            deterministic_recovery=_bool(_value(settings, "deterministic_recovery",
+                                                "ORCH_DETERMINISTIC_RECOVERY", True)),
         )
         result_metadata.update({
             "task_id": result.task_id,
+            "task_ids": list(result.task_ids),
+            "task_states": result.task_states,
             "state": result.state,
             "base_sha": result.base_sha,
             "candidate_sha": result.candidate_sha,
             "metrics": result.metrics,
+        })
+        _write_json(artifact_root / "task_summary.json", {
+            "schema_version": 1,
+            "tasks": export_task_summary(db_path),
         })
         if result.candidate_sha:
             export_patch(
@@ -168,6 +312,13 @@ async def run_from_files(instruction_file: str | Path, config_file: str | Path |
             # must not prevent Harbor from receiving failure artifacts.
             pass
         result_metadata["failure"] = _safe_failure(exc)
+        try:
+            _write_json(artifact_root / "task_summary.json", {
+                "schema_version": 1,
+                "tasks": export_task_summary(db_path),
+            })
+        except Exception:
+            pass
         _write_json(artifact_root / "result.json", result_metadata)
         _write_json(artifact_root / "metrics.json", result_metadata["metrics"])
         (artifact_root / "candidate.patch").write_text("")

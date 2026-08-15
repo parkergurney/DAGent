@@ -57,6 +57,9 @@ def cmd_add_task(args) -> int:
         conn, title=args.title, brief=args.brief, repo=repo,
         delivery_mode=args.delivery_mode, verify_cmd=args.verify_cmd,
         max_retries=args.max_retries, depends_on=args.depends_on,
+        output_artifacts=args.output_artifacts, output_schema=args.output_schema,
+        input_contract=args.input_contract, node_verify_cmd=args.node_verify_cmd,
+        repair_policy=args.repair_policy,
     )
     print(task_id)
     return 0
@@ -324,6 +327,11 @@ def main(argv=None) -> int:
     p_add.add_argument("--verify-cmd")
     p_add.add_argument("--depends-on", action="append", default=[], metavar="TASK_ID")
     p_add.add_argument("--max-retries", type=int, default=2)
+    p_add.add_argument("--output-artifacts", help="JSON list/path map of required output artifacts")
+    p_add.add_argument("--output-schema", help="JSON output schema declaration")
+    p_add.add_argument("--input-contract", help="JSON dependency input contract")
+    p_add.add_argument("--node-verify-cmd", help="public node-level verification command")
+    p_add.add_argument("--repair-policy", help="JSON repair policy declaration")
     p_add.set_defaults(func=cmd_add_task)
 
     p_run = sub.add_parser("run", help="drive every pending task to a resting state, then exit")

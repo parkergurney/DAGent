@@ -4,6 +4,7 @@ This is deliberately a narrow projection of a task. It contains the public
 verification command and delivery expectations, never external evaluator
 configuration or material.
 """
+import json
 
 
 def build_execution_contract(task: dict, worktree: str, *, recovery_feedback: str | None = None) -> str:
@@ -16,10 +17,22 @@ def build_execution_contract(task: dict, worktree: str, *, recovery_feedback: st
         "- Run the visible verification command in the working directory before claiming completion.",
         "- Commit the candidate changes in the working directory before claiming completion.",
         "- Submit the committed candidate according to the task's delivery mode.",
-        "",
+    ]
+    declarations = {
+        "Output artifacts": task.get("output_artifacts"),
+        "Output schema": task.get("output_schema"),
+        "Dependency input contract": task.get("input_contract"),
+        "Node verification command": task.get("node_verify_cmd"),
+        "Repair policy": task.get("repair_policy"),
+    }
+    for label, value in declarations.items():
+        if value not in (None, "", {}, []):
+            rendered = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
+            lines.append(f"- {label}: {rendered}")
+    lines.extend(["",
         "Task brief:",
         task["brief"].rstrip(),
-    ]
+    ])
     if recovery_feedback:
         lines.extend(["", "Recovery guidance from the previous attempt:", recovery_feedback.rstrip()])
     return "\n".join(lines) + "\n"

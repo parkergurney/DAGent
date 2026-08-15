@@ -47,9 +47,13 @@ class VerifyResult:
     output_path: str | None = None
     patch_path: str | None = None
     failure_signature: str | None = None
+    evidence: dict | None = None
 
     def to_json(self) -> str:
-        return json.dumps(asdict(self))
+        payload = asdict(self)
+        if self.evidence is None:
+            payload.pop("evidence", None)
+        return json.dumps(payload)
 
 
 def _git(*args, cwd) -> subprocess.CompletedProcess:
@@ -148,7 +152,7 @@ def _remove_candidate_checkout(checkout: Path, repo: Path) -> None:
     shutil.rmtree(checkout, ignore_errors=True)
 
 
-def run_verify(req: VerifyRequest) -> VerifyResult:
+def _run_verify_legacy(req: VerifyRequest) -> VerifyResult:
     started = time.monotonic()
     worker = Path(req.worktree)
     repo = Path(req.repo or worker).resolve()
@@ -176,6 +180,8 @@ def run_verify(req: VerifyRequest) -> VerifyResult:
                    _git("diff", "--name-status", req.base_sha, candidate_ref,
                         cwd=git_cwd).stdout.splitlines() if line]
     diff_names = [parts[-1] for parts in name_status]
+    if not diff_names and getattr(req, "allow_empty_diff", False):
+        return done(True, "no_change", None, "", diff_stat)
     if not diff_names:
         return done(False, "empty_diff", None, "", diff_stat)
 
@@ -211,3 +217,47 @@ def run_verify(req: VerifyRequest) -> VerifyResult:
     finally:
         if check_repo is not None:
             _remove_candidate_checkout(check_cwd, check_repo)
+
+
+def run_verify(req: VerifyRequest, *, evidence_ladder: bool = False,
+               protocol_result=None, artifact_specs=None, output_schema=None,
+               targeted_commands=None, targeted_checks=None,
+               allow_empty_diff=None) -> VerifyResult:
+    """Run visible verification, optionally through the evidence ladder.
+
+    The default remains the original gate for compatibility with existing
+    scheduler callers and baselines.  The ladder is an additive opt-in until
+    scheduler event wiring is complete.
+    """
+    if not evidence_ladder:
+        return _run_verify_legacy(req)
+
+    from orchestrator.verify.evidence import run_evidence_ladder
+
+    evidence = run_evidence_ladder(
+        req,
+        protocol_result=protocol_result,
+        artifact_specs=artifact_specs,
+        output_schema=output_schema,
+        targeted_commands=targeted_commands,
+        targeted_checks=targeted_checks,
+        allow_empty_diff=allow_empty_diff,
+    )
+    signature = None if evidence.passed else normalize_failure_signature(
+        evidence.cause, evidence.output_tail, evidence.exit_code,
+    )
+    evidence.failure_signature = signature
+    return VerifyResult(
+        passed=evidence.passed,
+        cause=evidence.cause,
+        exit_code=evidence.exit_code,
+        duration_s=evidence.duration_s,
+        flaky=evidence.flaky,
+        output_tail=evidence.output_tail,
+        diff_stat=evidence.diff_stat,
+        tests_modified=evidence.tests_modified,
+        output_path=evidence.output_path,
+        patch_path=evidence.patch_path,
+        failure_signature=signature,
+        evidence=evidence.to_dict(),
+    )

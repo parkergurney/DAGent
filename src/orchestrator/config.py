@@ -26,6 +26,10 @@ class Config:
     # configuration when running an evaluation.
     model_worker: str = "claude-sonnet-5"
     model_supervisor: str = "claude-sonnet-5"
+    protocol_recovery_v2: bool = True
+    deterministic_recovery: bool = True
+    adaptive_scheduling: bool = True
+    evidence_ladder: bool = True
 
 
 def load(path: str | Path | None = None) -> Config:

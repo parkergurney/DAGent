@@ -1,5 +1,8 @@
 """Small policy boundary for Harbor experiments."""
 
+import asyncio
+import os
+import signal
 from functools import partial
 from pathlib import Path
 
@@ -13,13 +16,53 @@ from orchestrator.worker import (
 POLICIES = ("sequential", "naive-parallel", "orchestrator")
 
 
+def _fault_injecting_worker(worker, fault_injection):
+    """Inject one controlled worker exit for a Harbor fault experiment."""
+    if not isinstance(fault_injection, dict):
+        raise ValueError("fault_injection must be an object")
+    mode = str(fault_injection.get("mode") or "worker_exit")
+    if mode != "worker_exit":
+        raise ValueError(f"unsupported fault injection mode {mode!r}")
+    task_id = str(fault_injection.get("task_id") or "").strip()
+    if not task_id:
+        raise ValueError("fault_injection.task_id is required")
+    delay_s = max(0.1, float(fault_injection.get("delay_s", 1.0)))
+    injected = False
+
+    async def spawn(task, worktree, *, model=None):
+        nonlocal injected
+        proc = await worker(task, worktree, model=model)
+        if not injected and task.get("id") == task_id:
+            injected = True
+            task["_fault_injection_reached"] = True
+            task["_fault_injection_target"] = task_id
+
+            async def terminate_first_attempt():
+                await asyncio.sleep(delay_s)
+                if proc.returncode is None:
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+            asyncio.create_task(terminate_first_attempt())
+        return proc
+
+    return spawn
+
+
 def build_scheduler(conn, repo_root, worktree_root, *, policy="orchestrator",
                     max_concurrency=4, worker_model=None, supervisor_model=None,
                     worker_env=None, config_path=None, fake_worker=False,
                     fake_supervisor=False, external_isolation=False,
                     trusted_development=False, artifact_root=None,
                     verify_timeout_s=None, stall_threshold_s=None,
-                    wait_ceiling_s=None, base_branch="main", **kwargs) -> Scheduler:
+                    wait_ceiling_s=None, base_branch="main",
+                    deterministic_crash_recovery=None, adaptive_scheduling=None,
+                    protocol_recovery_v2=None,
+                    deterministic_recovery=None,
+                    evidence_ladder=None,
+                    **kwargs) -> Scheduler:
     """Build the common scheduler for a Harbor-selected execution policy.
 
     Sequential and naive-parallel retain the same worker/verification lifecycle
@@ -38,6 +81,9 @@ def build_scheduler(conn, repo_root, worktree_root, *, policy="orchestrator",
     worker = spawn_fake_worker if fake_worker else spawn_sdk_worker
     if worker_env and worker in (spawn_sdk_worker, spawn_cli_worker):
         worker = partial(worker, env=dict(worker_env))
+    fault_injection = kwargs.pop("fault_injection", None)
+    if fault_injection is not None:
+        worker = _fault_injecting_worker(worker, fault_injection)
     supervisor = always_escalate if fake_supervisor or policy != "orchestrator" else partial(
         invoke_supervisor, model=supervisor_model or cfg.model_supervisor,
         artifact_root=artifact_root,
@@ -52,6 +98,17 @@ def build_scheduler(conn, repo_root, worktree_root, *, policy="orchestrator",
         wait_ceiling_s=wait_ceiling_s or cfg.wait_ceiling_s,
         verify_timeout_s=verify_timeout_s or cfg.verify_timeout_s,
         transcript_tail_tokens=cfg.transcript_tail_tokens, **kwargs,
+        deterministic_crash_recovery=(policy == "orchestrator"
+                                      if deterministic_crash_recovery is None
+                                      else deterministic_crash_recovery),
+        adaptive_scheduling=(policy == "orchestrator" and cfg.adaptive_scheduling
+                             if adaptive_scheduling is None else adaptive_scheduling),
+        protocol_recovery_v2=(policy == "orchestrator" and cfg.protocol_recovery_v2
+                              if protocol_recovery_v2 is None else protocol_recovery_v2),
+        deterministic_recovery=(policy == "orchestrator" and cfg.deterministic_recovery
+                                if deterministic_recovery is None else deterministic_recovery),
+        evidence_ladder=(policy == "orchestrator" and cfg.evidence_ladder
+                         if evidence_ladder is None else evidence_ladder),
     )
 
 
