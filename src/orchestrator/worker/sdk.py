@@ -17,6 +17,7 @@ from orchestrator.worker.contract import build_execution_contract
 _SRC = str(Path(__file__).resolve().parents[2])
 _AUTH_ENV = frozenset({
     "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
+    "CLAUDE_CODE_OAUTH_TOKEN",
     "CLAUDE_CODE_USE_BEDROCK", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
     "AWS_SESSION_TOKEN", "AWS_REGION", "AWS_DEFAULT_REGION",
 })

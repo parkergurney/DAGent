@@ -1,0 +1,40 @@
+schema_version = "1.4"
+
+[task]
+name = "agent-orchestrator/orchestrator-dag-canary-claude"
+version = "1.0.0"
+description = "Claude-backed dependency-aware Harbor benchmark for comparing scheduler policies"
+keywords = ["orchestration", "dependencies", "git", "benchmark"]
+
+[metadata]
+category = "agent-orchestration"
+hidden_evaluation = "tests/grader.py"
+graph = "graph.json"
+
+[agent]
+timeout_sec = 3600
+user = "harbor"
+
+[verifier]
+timeout_sec = 180
+environment_mode = "separate"
+
+[verifier.environment]
+cpus = 1
+memory_mb = 512
+
+[environment]
+network_mode = "public"
+cpus = 4
+memory_mb = 8192
+storage_mb = 4096
+
+[environment.env]
+ORCH_BACKEND = "anthropic"
+ORCH_BACKEND_TRACK = "practice-claude"
+ORCH_AUTH_MECHANISM = "subscription-oauth"
+ORCH_WORKER_MODEL = "claude-sonnet-4-6"
+ORCH_SUPERVISOR_MODEL = "claude-sonnet-4-6"
+ORCH_MAX_CONCURRENCY = "4"
+ORCH_CONTEXT_LENGTH = "32768"
+ORCH_WORKER_TIMEOUT_S = "1200"

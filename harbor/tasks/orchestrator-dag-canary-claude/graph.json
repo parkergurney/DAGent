@@ -1,0 +1,47 @@
+[
+  {
+    "id": "schema",
+    "title": "Create the public schema",
+    "brief": "Execute this task now: create schema.json with exactly one line containing {\"version\": 1, \"items\": []}. Use printf '%s\\n' '{\"version\": 1, \"items\": []}' > schema.json, run the visible verification command, git add schema.json, and commit it. Do not only describe the change and do not modify other files.",
+    "depends_on": [],
+    "delivery_mode": "local",
+    "verify_cmd": "python3 -c 'from pathlib import Path; assert Path(\"schema.json\").read_text() == \"{\\\"version\\\": 1, \\\"items\\\": []}\\n\"'",
+    "max_retries": 1
+  },
+  {
+    "id": "implementation",
+    "title": "Create the normalizer implementation",
+    "brief": "Execute this task now: create lib.py with exactly a normalize(items) function that returns sorted(set(items)). Use a coding tool to write the file, run PYTHONDONTWRITEBYTECODE=1 python3 -c 'from lib import normalize; assert normalize([3, 1, 3]) == [1, 3]', then git add lib.py and commit it. Do not only describe the change and do not modify other files.",
+    "depends_on": [],
+    "delivery_mode": "local",
+    "verify_cmd": "PYTHONDONTWRITEBYTECODE=1 python3 -c 'from lib import normalize; assert normalize([3, 1, 3]) == [1, 3]'",
+    "max_retries": 1
+  },
+  {
+    "id": "documentation",
+    "title": "Document the graph output",
+    "brief": "Execute this task now: update README.md so it contains the existing line # Dependency-aware canary baseline followed by the exact line DAG canary documentation. Run grep -Fx 'DAG canary documentation' README.md, then git add README.md and commit it. Do not only describe the change and do not modify other files.",
+    "depends_on": [],
+    "delivery_mode": "local",
+    "verify_cmd": "grep -Fx 'DAG canary documentation' README.md",
+    "max_retries": 1
+  },
+  {
+    "id": "integration",
+    "title": "Integrate schema and implementation",
+    "brief": "Create integration.py. Its build(items) function must load schema.json, call normalize from lib.py, and return {\"version\": 1, \"items\": sorted unique items}. Do not modify other files.",
+    "depends_on": ["schema", "implementation"],
+    "delivery_mode": "local",
+    "verify_cmd": "PYTHONDONTWRITEBYTECODE=1 python3 -c 'from integration import build; assert build([2, 1, 2]) == {\"version\": 1, \"items\": [1, 2]}'",
+    "max_retries": 1
+  },
+  {
+    "id": "release-check",
+    "title": "Produce the release marker",
+    "brief": "Run the integrated behavior and create release.txt containing exactly ready followed by a newline. Confirm integration.py and the documented README change are present. Do not modify other files.",
+    "depends_on": ["integration", "documentation"],
+    "delivery_mode": "local",
+    "verify_cmd": "PYTHONDONTWRITEBYTECODE=1 python3 -c 'from pathlib import Path; from integration import build; assert build([2, 1, 2]) == {\"version\": 1, \"items\": [1, 2]}; assert \"DAG canary documentation\" in Path(\"README.md\").read_text(); assert Path(\"release.txt\").read_text() == \"ready\\n\"'",
+    "max_retries": 1
+  }
+]

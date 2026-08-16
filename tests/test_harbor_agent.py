@@ -181,3 +181,14 @@ def test_runtime_redacts_credentials_from_failure_metadata(tmp_path, monkeypatch
         ))
     metadata = json.loads((artifacts / "result.json").read_text())
     assert secret not in json.dumps(metadata)
+
+
+def test_runtime_redacts_subscription_oauth_token_from_failure_metadata(monkeypatch):
+    token = "oauth-subscription-test-token"
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", token)
+
+    failure = harbor_runtime._safe_failure(RuntimeError(f"backend rejected {token}"))
+
+    assert token not in json.dumps(failure)
+    assert "[REDACTED_CREDENTIAL]" in failure["message"]
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in harbor_runtime._AUTH_ENV_NAMES

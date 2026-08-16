@@ -5,13 +5,13 @@ task_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$task_dir/../../.." && pwd)
 policy=${1:-orchestrator}
 seed=${2:-0}
-model=${3:-qwen3-coder:30b}
+model=${3:-claude-sonnet-4-6}
 graph_shape=${ORCH_GRAPH_SHAPE:-${4:-dag}}
-backend=${ORCH_BACKEND:-ollama}
-max_concurrency=${ORCH_MAX_CONCURRENCY:-2}
+backend=${ORCH_BACKEND:-anthropic}
+max_concurrency=${ORCH_MAX_CONCURRENCY:-4}
 context_length=${ORCH_CONTEXT_LENGTH:-32768}
 auth_env_file=${ORCH_AUTH_ENV_FILE:-}
-auth_mechanism=${ORCH_AUTH_MECHANISM:-environment}
+auth_mechanism=${ORCH_AUTH_MECHANISM:-subscription-oauth}
 fault_task=${ORCH_FAULT_TASK:-}
 fault_mode=${ORCH_FAULT_MODE:-worker_exit}
 fault_delay=${ORCH_FAULT_DELAY_S:-1.0}
@@ -124,8 +124,7 @@ if [ -n "$auth_env_file" ]; then
     -p "$task_dir" \
     -a orchestrator.harbor_agent:HarborOrchestratorAgent \
     -m "$model" \
-    --ak "config=$config" \
-    --allow-environment-host host.docker.internal
+    --ak "config=$config"
 fi
 
 exec harbor run \
@@ -133,5 +132,4 @@ exec harbor run \
   -p "$task_dir" \
   -a orchestrator.harbor_agent:HarborOrchestratorAgent \
   -m "$model" \
-  --ak "config=$config" \
-  --allow-environment-host host.docker.internal
+  --ak "config=$config"

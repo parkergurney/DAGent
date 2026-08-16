@@ -43,6 +43,12 @@ Known evidence limits:
   cannot establish a recovery-rate comparison.
 - Local Ollama inference introduces hardware contention that can be confused
   with scheduler behavior.
+- The current Harbor canary package is configured for Ollama and a maximum
+  concurrency of two; it does not use a host Claude login automatically.
+- A Claude Code subscription and programmatic Claude Agent SDK authentication
+  may be different access and billing paths. The exact authentication path
+  must be smoke-tested before treating a Claude-backed run as a subscription
+  benchmark.
 
 ## The sequence
 
@@ -189,11 +195,14 @@ Run only smoke tests here. These are integration checks, not performance
 experiments.
 
 1. Run one small real Claude Agent SDK task against a throwaway repository.
-2. Run one real supervisor recovery decision.
-3. If local inference is part of the final story, run one Ollama canary with
+2. Verify the intended Claude authentication path in the actual Harbor
+   environment. Do not put subscription credentials or API keys in the task
+   package, task manifest, logs, or committed configuration.
+3. Run one real supervisor recovery decision.
+4. If local inference is part of the final story, run one Ollama canary with
    fixed context and concurrency settings.
-4. Confirm PR/local/scout delivery and review artifacts on the intended path.
-5. Confirm the Harbor agent can publish a candidate patch and metrics without
+5. Confirm PR/local/scout delivery and review artifacts on the intended path.
+6. Confirm the Harbor agent can publish a candidate patch and metrics without
    exposing hidden verifier material.
 
 Use the live tests only when needed:
@@ -208,6 +217,8 @@ connectivity and lifecycle compatibility, not serve as the benchmark.
 Exit criteria:
 
 - At least one real Claude run completes or escalates safely.
+- The run's authentication and billing path is identified; a local Claude
+  login is not assumed to mean that an SDK worker is using the subscription.
 - At least one real supervisor call returns a valid closed action.
 - The local-model path, if used, has a documented resource profile.
 - No backend-specific failure is being misclassified as a scheduler failure.
@@ -250,12 +261,37 @@ conditions:
 - `naive-parallel`
 - `orchestrator`
 
-Prepare two backend tracks instead of mixing them:
+Prepare separate backend tracks instead of mixing them:
 
-1. Cloud Claude track: measures orchestration behavior with inference capacity
-   supplied remotely.
-2. Local Ollama track: measures orchestration plus constrained inference
+1. Practice Claude track: uses the same authenticated Claude path and model
+   intended for day-to-day use. Run separate concurrency-4 and concurrency-5
+   conditions, because these are the user's expected operating points. This
+   track estimates end-to-end user experience, including service latency,
+   account limits, throttling, and retries.
+2. Controlled cloud Claude track: measures orchestration behavior with a
+   pinned remote inference capacity and explicitly recorded authentication and
+   billing mechanism. Keep it separate from the practice track if the
+   subscription path cannot be reproduced programmatically.
+3. Local Ollama track: measures orchestration plus constrained inference
    capacity and must be reported as a separate resource-contention experiment.
+
+For every Claude track, first run a one-worker smoke test and confirm which
+credentials and billing path were used. A subscription login should not be
+treated as equivalent to API-key billing without evidence from the actual
+worker environment.
+
+For the practice track, use the same model, context length, task package, and
+resource profile at concurrency four and five. Exercise `wide` and `mixed`
+graphs so that five workers can become ready; a serial graph cannot measure
+five-agent behavior. Record service throttling and backoff separately from
+scheduler wait time. The effective worker count is bounded by the minimum of
+ready tasks, the orchestrator limit, and backend/account capacity.
+
+Use a starting resource profile large enough for five SDK processes, Git
+worktrees, verification, and the Harbor agent. A provisional baseline is four
+vCPUs and eight GiB of memory, then adjust only through a recorded resource
+sweep. The exact profile is an experiment input, not a universal hardware
+recommendation.
 
 Do not change model, context, task package, verifier, or resource limits inside
 one comparison matrix.
@@ -276,11 +312,18 @@ Run in this order:
 
 1. One clean canary for each policy on one graph and seed.
 2. One target-reachable fault canary for each policy.
-3. A small paired matrix across at least three graph shapes and five seeds.
-4. Expand to ten seeds only if the first matrix is stable and the compute
-   budget supports it.
-5. Repeat the selected matrix on the separate backend track if comparing cloud
-   and local inference.
+3. On the practice Claude track, run one clean `wide` canary at concurrency
+   four and one at concurrency five. Confirm that the observed worker count,
+   authentication path, and resource usage match expectations.
+4. Run a small paired matrix across at least three graph shapes and five seeds
+   at the selected practice concurrency. Include `wide` and `mixed` graphs;
+   use serial and diamond graphs to expose critical-path and fan-in behavior.
+5. Repeat the selected matrix at the other practice concurrency only if the
+   first condition is stable and the account/backend capacity allows it.
+6. Expand to ten seeds only if the first matrix is stable and the compute or
+   subscription budget supports it.
+7. Repeat the selected matrix on the separate controlled-cloud or local
+   backend track when comparing inference environments.
 
 Do not launch the large matrix if the canary is invalid, the target is not
 reachable, the resource profile changes, or the local suite fails.
@@ -293,6 +336,10 @@ Report at minimum:
 - Retry and verification behavior versus failure probability.
 - Successful runtime separately from censored runtime.
 - Resource contention separately from orchestration policy.
+- Queueing, service throttling, and backend retry time separately from worker
+  execution time.
+- Peak live workers, CPU, memory, and process-level resource use for the
+  four-agent and five-agent conditions.
 
 The likely useful conclusion is not that the orchestrator always wins. It may
 show that sequential execution is preferable for narrow or reliable workloads,
@@ -331,11 +378,15 @@ The project is resume-ready when it has:
 5. Completion, latency, cost, retry, verification, and contention metrics.
 6. One real Claude backend smoke test.
 7. Separate local-inference resource-contention results.
-8. One concise architecture diagram.
-9. One command reproducing a small experiment.
-10. A results document explaining when orchestration helps and when it does
-    not.
-11. A clean repository that another engineer can run.
+8. A documented, verified Claude authentication and billing path for the
+   practice benchmark.
+9. Four-agent and five-agent practice measurements, or an explicit account or
+   hardware limit explaining why one condition was not run.
+10. One concise architecture diagram.
+11. One command reproducing a small experiment.
+12. A results document explaining when orchestration helps and when it does
+   not.
+13. A clean repository that another engineer can run.
 
 At that point, the research question is more valuable than another thousand
 lines of orchestration code:
