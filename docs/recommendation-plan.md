@@ -101,6 +101,11 @@ Exit criteria:
 This is the highest-value systems demonstration and should precede any large
 benchmark.
 
+The reproducible operator procedure is in
+[docs/phase-2-exit-runbook.md](phase-2-exit-runbook.md). It separates the
+deterministic checkpoint assertions from the literal process-kill transcript
+required by this phase.
+
 Create a ten-node DAG using FakeWorker or a deterministic local worker. Start
 the run, kill the orchestrator process at several checkpoints, restart it with
 the same database, and let it settle.

@@ -24,6 +24,17 @@ injection can target an explicit attempt number while retaining the existing
 small task/mode/timing contract. Sequential and naive-parallel policy paths
 remain unchanged.
 
+## 2026-08-15 - Phase 2 restart recovery started
+
+Added durable startup checkpoint handling. Reconciliation now recovers active
+leases owned by orphaned attempts, and scheduler startup resumes verifying and
+delivering states from their latest attempt-scoped evidence. A ten-node DAG
+FakeWorker harness covers interruption with delivered and queued work,
+candidate committed before verification, in-progress verification, interrupted
+triage, and lease recovery. Completed work and successful delivery facts are
+not replayed on restart; incomplete verification and delivery resume through
+the ordinary gates.
+
 ## 2026-08-15 - Phase 0 reliability baseline
 
 Established the named `phase-0-reliability-2026-08-15` snapshot before adding

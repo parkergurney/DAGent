@@ -164,6 +164,10 @@ dead session get a synthetic `worker.exited` and route through triage like
 any other crash, and the worktree pool wipes and re-checks-out every slot
 unconditionally.
 
+For the full ten-node restart-recovery demonstration, including literal
+process-kill checkpoints and evidence capture, see the
+[Phase 2 exit runbook](phase-2-exit-runbook.md).
+
 ## 8. Reviewing delivered work and cleanup
 
 Do not review pooled worktree directories after a run. They are scratch slots,

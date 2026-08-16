@@ -11,6 +11,7 @@ a live crash.
 import os
 import subprocess
 
+from orchestrator import execution_lease
 from orchestrator.store import append_event, transition, update_attempt
 
 
@@ -37,14 +38,18 @@ def reconcile(conn) -> None:
         if row["state"] == "running" and _pid_alive(row["session_id"]):
             continue
         if row["state"] == "verifying":
+            _recover_orphaned_lease(conn, row, reason="reconciled_verifying")
             _close_orphaned_slot(conn, row)
             continue
 
         done = conn.execute(
             "SELECT seq, payload FROM events WHERE task_id = ? AND type = 'worker.done_claimed' "
-            "ORDER BY seq DESC LIMIT 1", (row["id"],)
+            "AND (json_extract(payload, '$.attempt_id') = ? OR "
+            "json_extract(payload, '$.attempt_id') IS NULL) "
+            "ORDER BY seq DESC LIMIT 1", (row["id"], row["current_attempt_id"])
         ).fetchone()
         if done:
+            _recover_orphaned_lease(conn, row, reason="reconciled_done_claim")
             _close_orphaned_slot(conn, row)
             candidate = conn.execute(
                 "SELECT candidate_sha FROM attempts WHERE id = ?", (row["current_attempt_id"],)
@@ -54,8 +59,11 @@ def reconcile(conn) -> None:
                           if candidate and candidate["candidate_sha"] else {}))
             continue
 
+        _recover_orphaned_lease(conn, row, reason="reconciled_worker_exit")
         s = append_event(conn, source="system", type="worker.exited", task_id=row["id"],
-                         payload={"reason": "reconciled: session not alive"})
+                         session_id=row["session_id"],
+                         payload={"attempt_id": row["current_attempt_id"],
+                                  "reason": "reconciled: session not alive"})
         candidate = None
         worker_dirty = None
         if row["candidate_branch"]:
@@ -80,6 +88,22 @@ def reconcile(conn) -> None:
                    candidate_sha=candidate) if candidate else transition(
                        conn, row["id"], "triage", cause_seq=s)
         _close_orphaned_slot(conn, row)
+
+
+def _recover_orphaned_lease(conn, row, *, reason: str) -> None:
+    """Fence the lease owned by a process that the restarted daemon cannot observe."""
+    if not row["current_attempt_id"]:
+        return
+    lease = conn.execute(
+        "SELECT * FROM execution_leases WHERE attempt_id = ? AND status = 'active'",
+        (row["current_attempt_id"],),
+    ).fetchone()
+    if lease is None:
+        return
+    execution_lease.recover(
+        conn, row["current_attempt_id"], lease["lease_id"], lease["generation"],
+        reason=reason, source="system",
+    )
 
 
 def _close_orphaned_slot(conn, row) -> None:

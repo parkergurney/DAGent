@@ -369,11 +369,15 @@ class Scheduler:
             trigger_seq = json.loads(sc["payload"])["cause_seq"]
             await self._handle_triage(row["id"], trigger_seq, live_proc=None)
         # A daemon crash after the worker-to-verifying transition must not
-        # strand the task. The candidate ref is durable and verification is
-        # safe to rerun; the verifier itself is idempotent from the scheduler
-        # perspective because the resulting events are append-only evidence.
+        # strand the task. Prefer durable terminal verification evidence when
+        # it exists; only an incomplete verification is rerun.
         for row in self.conn.execute("SELECT id FROM tasks WHERE state = 'verifying'").fetchall():
-            await self._run_verify(row["id"])
+            await self._resume_verifying(row["id"])
+        # Delivery is also a resumable checkpoint. A successful delivery fact
+        # is projected directly to delivered; an incomplete delivery runs
+        # through the normal idempotent delivery path.
+        for row in self.conn.execute("SELECT id FROM tasks WHERE state = 'delivering'").fetchall():
+            await self._resume_delivering(row["id"])
 
         watchdog = asyncio.create_task(self._watchdog_loop())
         try:
@@ -1567,6 +1571,78 @@ class Scheduler:
 
     # -- verifying ------------------------------------------------------------
 
+    @staticmethod
+    def _event_attempt_matches(event, attempt_id: str | None) -> bool:
+        if not event:
+            return False
+        try:
+            payload = json.loads(event["payload"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            return False
+        recorded = payload.get("attempt_id")
+        # Older event records predate attempt_id in a few terminal payloads;
+        # state recovery may safely use their latest task-scoped fact.
+        return recorded in (None, attempt_id)
+
+    def _latest_attempt_event(self, task_id: str, attempt_id: str | None, types: tuple[str, ...]):
+        placeholders = ",".join("?" * len(types))
+        rows = self.conn.execute(
+            f"SELECT * FROM events WHERE task_id = ? AND type IN ({placeholders}) "
+            "ORDER BY seq DESC", (task_id, *types),
+        ).fetchall()
+        return next((row for row in rows if self._event_attempt_matches(row, attempt_id)), None)
+
+    async def _resume_verifying(self, task_id: str) -> None:
+        task = self.conn.execute(
+            "SELECT current_attempt_id FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+        attempt_id = task["current_attempt_id"] if task else None
+        passed = self._latest_attempt_event(task_id, attempt_id, ("verify.passed",))
+        failed = self._latest_attempt_event(task_id, attempt_id, ("verify.failed",))
+        terminal = max((event for event in (passed, failed) if event),
+                       key=lambda event: event["seq"], default=None)
+        if terminal is None:
+            await self._run_verify(task_id)
+            return
+        if terminal["type"] == "verify.passed":
+            transition(self.conn, task_id, "delivering", cause_seq=passed["seq"])
+            await self._resume_delivering(task_id)
+            return
+        if self.conn.execute(
+            "SELECT state FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()["state"] != "triage":
+            transition(self.conn, task_id, "triage", cause_seq=failed["seq"])
+        await self._handle_triage(task_id, failed["seq"], live_proc=None)
+
+    async def _resume_delivering(self, task_id: str) -> None:
+        task = self.conn.execute(
+            "SELECT current_attempt_id FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+        attempt_id = task["current_attempt_id"] if task else None
+        delivered = self._latest_attempt_event(
+            task_id, attempt_id,
+            ("delivery.pr_opened", "delivery.merged_local", "delivery.report_written"),
+        )
+        if delivered:
+            transition(self.conn, task_id, "delivered", cause_seq=delivered["seq"])
+            if attempt_id:
+                update_attempt(self.conn, attempt_id, disposition="delivered")
+            self._finish_interventions(task_id, "delivered", "improved")
+            self._record_verification_recovery(task_id)
+            return
+        failed = self._latest_attempt_event(
+            task_id, attempt_id,
+            ("delivery.failed", "artifact.validation_failed"),
+        )
+        if failed:
+            if self.conn.execute(
+                "SELECT state FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()["state"] != "triage":
+                transition(self.conn, task_id, "triage", cause_seq=failed["seq"])
+            await self._handle_triage(task_id, failed["seq"], live_proc=None)
+            return
+        await self._deliver(task_id)
+
     def _enter_verifying(self, task_id: str, cause_seq: int, *, candidate_sha=None) -> None:
         fields = {}
         if candidate_sha:
@@ -1703,10 +1779,14 @@ class Scheduler:
             )
         except delivery.DeliveryError as e:
             s = append_event(self.conn, source="delivery", type="delivery.failed",
-                             task_id=task_id, payload={"error": str(e)})
+                             task_id=task_id, payload={"attempt_id": task.get("current_attempt_id"),
+                                                       "error": str(e)})
             await self._handle_triage(task_id, s, live_proc=None)
             return
-        s = append_event(self.conn, source="delivery", type=etype, task_id=task_id, payload=payload)
+        s = append_event(
+            self.conn, source="delivery", type=etype, task_id=task_id,
+            payload={**payload, "attempt_id": task.get("current_attempt_id")},
+        )
         transition(self.conn, task_id, "delivered", cause_seq=s)
         task = self.conn.execute(
             "SELECT current_attempt_id FROM tasks WHERE id = ?", (task_id,)

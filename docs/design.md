@@ -80,6 +80,11 @@ Design notes:
   `startup_failure` classifications. Protocol repair is at most one retry and
   is enabled by default; a benchmark manifest can explicitly disable it for a
   legacy fallback comparison.
+- Startup reconciliation fences orphaned worker leases and resumes durable
+  checkpoints in order: incomplete verification is rerun, a persisted
+  verification result advances to delivery, and a persisted delivery result
+  advances to delivered without repeating the handoff. This is process-restart
+  recovery for one trusted host, not distributed failover.
 <!-- /sync:task-states -->
 
 ## Storage
