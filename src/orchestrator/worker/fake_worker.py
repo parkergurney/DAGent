@@ -111,6 +111,23 @@ def _no_commit(wt):
     emit("done_claimed", result="DONE_CLAIM: ok")
 
 
+@scenario("verify_fail")
+def _verify_fail(wt):
+    """Commits a candidate that the task's visible check deliberately rejects."""
+    emit("tool_used", tool="Write", target="verification_failure.txt")
+    (wt / "verification_failure.txt").write_text("bad candidate\n")
+    _commit(wt, "known failing candidate")
+    emit("done_claimed", result="DONE_CLAIM: candidate")
+
+
+@scenario("crash_dirty")
+def _crash_dirty(wt):
+    """Dies after an edit but before commit/normal teardown."""
+    emit("tool_used", tool="Write", target="crash-draft.txt")
+    (wt / "crash-draft.txt").write_text("unfinished\n")
+    sys.exit(17)
+
+
 @scenario("empty_diff")
 def _empty_diff(wt):
     """Claims done having changed nothing -- a hallucinated completion."""

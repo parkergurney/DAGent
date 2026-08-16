@@ -27,15 +27,25 @@ def _fault_injecting_worker(worker, fault_injection):
     if not task_id:
         raise ValueError("fault_injection.task_id is required")
     delay_s = max(0.1, float(fault_injection.get("delay_s", 1.0)))
+    try:
+        target_attempt = int(fault_injection.get("attempt", 1))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("fault_injection.attempt must be a positive integer") from exc
+    if target_attempt < 1:
+        raise ValueError("fault_injection.attempt must be a positive integer")
     injected = False
+    launches = 0
 
     async def spawn(task, worktree, *, model=None):
-        nonlocal injected
+        nonlocal injected, launches
         proc = await worker(task, worktree, model=model)
-        if not injected and task.get("id") == task_id:
+        if task.get("id") == task_id:
+            launches += 1
+        if not injected and task.get("id") == task_id and launches == target_attempt:
             injected = True
             task["_fault_injection_reached"] = True
             task["_fault_injection_target"] = task_id
+            task["_fault_injection_attempt"] = launches
 
             async def terminate_first_attempt():
                 await asyncio.sleep(delay_s)

@@ -342,6 +342,7 @@ class Scheduler:
         self._infrastructure_failure: WorkerStartupFailure | None = None
         self._leases: dict[str, execution_lease.ExecutionLease] = {}
         self._lease_heartbeat: dict[str, float] = {}
+        self._triage_locks: dict[str, asyncio.Lock] = {}
 
     # -- public entry point -------------------------------------------------
 
@@ -632,6 +633,7 @@ class Scheduler:
                 task_id=task_id, session_id=str(proc.pid),
                 payload={"attempt_id": attempt_id,
                          "target": worker_task.get("_fault_injection_target", task_id),
+                         "attempt": worker_task.get("_fault_injection_attempt", 1),
                          "mode": "worker_exit"},
             )
         session_id = str(proc.pid)
@@ -657,7 +659,9 @@ class Scheduler:
         )
         self._worktrees[task_id] = wt
         self._last_event_ts[task_id] = time.monotonic()
-        self._watchers[task_id] = asyncio.create_task(self._watch(task_id, proc))
+        self._watchers[task_id] = asyncio.create_task(
+            self._watch(task_id, proc, attempt_id=attempt_id, lease=lease)
+        )
         self._append_timing_event(
             task_id, "worker.started", attempt_id=attempt_id,
             session_id=session_id, payload={"slot": str(wt)},
@@ -678,11 +682,59 @@ class Scheduler:
         return append_event(self.conn, source="scheduler", type=event_type, task_id=task_id,
                              session_id=session_id, payload=details)
 
-    def _validate_worker_lease(self, task_id: str) -> bool:
-        """Fence late output from an attempt that no longer owns the task."""
+    def _reject_worker_event(self, task_id: str, *, attempt_id: str | None,
+                             lease: execution_lease.ExecutionLease | None,
+                             event_type: str | None, reason: str,
+                             session_id: str | None = None) -> None:
+        """Record a stale worker signal without projecting it into task state."""
+        current = self.conn.execute(
+            "SELECT current_attempt_id, session_id FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+        append_event(
+            self.conn, source="watchdog", type="worker.event_rejected", task_id=task_id,
+            session_id=session_id,
+            payload={
+                "attempt_id": attempt_id,
+                "lease_id": lease.lease_id if lease else None,
+                "generation": lease.generation if lease else None,
+                "event_type": event_type,
+                "reason": reason,
+                "current_attempt_id": current["current_attempt_id"] if current else None,
+                "current_session_id": current["session_id"] if current else None,
+            },
+        )
+
+    def _validate_worker_lease(self, task_id: str, *, expected_attempt_id: str | None = None,
+                               expected_lease: execution_lease.ExecutionLease | None = None,
+                               event_type: str | None = None,
+                               session_id: str | None = None) -> bool:
+        """Fence output against the lease captured when this watcher started.
+
+        Looking up only ``self._leases[task_id]`` is insufficient: after a
+        restart that lookup returns the replacement attempt's lease, allowing
+        a late line from the old process to masquerade as current output.
+        """
         lease = self._leases.get(task_id)
         attempt = latest_attempt(self.conn, task_id)
+        if expected_attempt_id is not None and (
+            expected_lease is None
+            or expected_lease.attempt_id != expected_attempt_id
+            or lease is None
+            or lease.lease_id != expected_lease.lease_id
+            or lease.generation != expected_lease.generation
+        ):
+            self._reject_worker_event(
+                task_id, attempt_id=expected_attempt_id, lease=expected_lease,
+                event_type=event_type, reason="worker attempt is no longer current",
+                session_id=session_id,
+            )
+            return False
         if lease is None or attempt is None or attempt["id"] != lease.attempt_id:
+            self._reject_worker_event(
+                task_id, attempt_id=expected_attempt_id or (attempt["id"] if attempt else None),
+                lease=expected_lease or lease, event_type=event_type,
+                reason="task has no current worker lease", session_id=session_id,
+            )
             return False
         try:
             execution_lease.validate(self.conn, lease)
@@ -693,12 +745,9 @@ class Scheduler:
                 self._lease_heartbeat[task_id] = now
             return True
         except execution_lease.ExecutionLeaseError as exc:
-            append_event(
-                self.conn, source="watchdog", type="execution_lease.rejected",
-                task_id=task_id, payload={"attempt_id": attempt["id"],
-                                          "lease_id": lease.lease_id,
-                                          "generation": lease.generation,
-                                          "reason": str(exc)},
+            self._reject_worker_event(
+                task_id, attempt_id=expected_attempt_id or attempt["id"], lease=lease,
+                event_type=event_type, reason=str(exc), session_id=session_id,
             )
             return False
 
@@ -736,7 +785,8 @@ class Scheduler:
             return candidate
         return None
 
-    async def _watch(self, task_id: str, proc: asyncio.subprocess.Process) -> None:
+    async def _watch(self, task_id: str, proc: asyncio.subprocess.Process, *,
+                     attempt_id: str, lease: execution_lease.ExecutionLease) -> None:
         claimed_or_triaged = False
         sdk_result_ok = False
         protocol_incomplete = False
@@ -745,17 +795,20 @@ class Scheduler:
                 line = await proc.stdout.readline()
                 if not line:
                     break
-                self._last_event_ts[task_id] = time.monotonic()
                 try:
                     rec = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if not self._validate_worker_lease(task_id):
+                etype, payload = rec.get("type"), rec.get("payload", {})
+                if not self._validate_worker_lease(
+                    task_id, expected_attempt_id=attempt_id, expected_lease=lease,
+                    event_type=etype, session_id=str(proc.pid),
+                ):
                     # This watcher belongs to an old or fenced attempt.  Its
                     # process is cleaned up by the finally block, but none of
                     # its output can mutate current task state.
                     break
-                etype, payload = rec.get("type"), rec.get("payload", {})
+                self._last_event_ts[task_id] = time.monotonic()
                 # ResultMessage is the canonical aggregate for a worker
                 # session. AssistantMessage usage is retained in its payload
                 # for diagnostics, but is not put in event accounting columns;
@@ -904,11 +957,30 @@ class Scheduler:
         guard, not a lock: nothing here awaits between the read and the
         write, so no other coroutine can interleave. Returns the new event's
         seq, or None if something else already moved the task on."""
-        row = self.conn.execute("SELECT state FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        row = self.conn.execute(
+            "SELECT state, current_attempt_id FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()
         if row is None or row["state"] != "running":
             return None
+        attempt_id = row["current_attempt_id"]
+        if attempt_id and event_type in {"worker.exited", "worker.stalled"}:
+            duplicate = self.conn.execute(
+                "SELECT 1 FROM events WHERE task_id = ? "
+                "AND type IN ('worker.exited', 'worker.stalled') "
+                "AND json_extract(payload, '$.attempt_id') = ? LIMIT 1",
+                (task_id, attempt_id),
+            ).fetchone()
+            # A supervisor ``wait`` deliberately starts a new silence window
+            # for the same attempt. Its later stall is a new signal, while a
+            # second observer reporting the original stall is a duplicate.
+            new_wait_window = event_type == "worker.stalled" and task_id in self._wait_grace
+            if duplicate and not new_wait_window:
+                return None
+        event_payload = {**(payload or {})}
+        if attempt_id:
+            event_payload.setdefault("attempt_id", attempt_id)
         return append_event(self.conn, source=source, type=event_type, task_id=task_id,
-                            payload=payload or {}, session_id=session_id)
+                            payload=event_payload, session_id=session_id)
 
     def _append_terminal_classification(self, task_id: str, classification: str, *,
                                         cause_seq: int | None = None, **extra) -> int:
@@ -1247,31 +1319,54 @@ class Scheduler:
 
     async def _handle_triage(self, task_id: str, cause_seq: int, *, live_proc,
                              candidate_sha=None) -> bool:
-        row = self.conn.execute("SELECT state FROM tasks WHERE id = ?", (task_id,)).fetchone()
-        if row["state"] != "triage":
-            transition(self.conn, task_id, "triage", cause_seq=cause_seq,
-                       **({"candidate_sha": candidate_sha} if candidate_sha else {}))
-        attempt = latest_attempt(self.conn, task_id)
-        started = self.conn.execute(
-            "SELECT seq FROM events WHERE task_id = ? AND type = 'triage.started' "
-            "AND json_extract(payload, '$.cause_seq') = ? LIMIT 1",
-            (task_id, cause_seq),
-        ).fetchone()
-        if not started:
-            self._append_timing_event(
-                task_id, "triage.started", attempt_id=attempt["id"] if attempt else None,
-                payload={"cause_seq": cause_seq},
-            )
-        try:
-            return await self._handle_triage_inner(task_id, cause_seq, live_proc=live_proc)
-        finally:
-            # The event is deliberately emitted even when the process crashes
-            # during model transport; reconciliation can then close the
-            # interrupted triage deterministically.
-            self._append_timing_event(
-                task_id, "triage.finished", attempt_id=attempt["id"] if attempt else None,
-                payload={"cause_seq": cause_seq},
-            )
+        lock = self._triage_locks.setdefault(task_id, asyncio.Lock())
+        async with lock:
+            # A signal can arrive from both the worker reader and the
+            # watchdog, or be replayed after a restart. Once this exact cause
+            # has produced a recovery action, it must not consume another
+            # retry, supervisor call, or state transition.
+            row = self.conn.execute(
+                "SELECT state FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            if not row or row["state"] in _SETTLED_STATES:
+                return False
+            handled = self.conn.execute(
+                "SELECT type FROM events WHERE task_id = ? AND type IN "
+                "('recovery.attempted', 'supervisor.acted') "
+                "AND (json_extract(payload, '$.cause_seq') = ? OR "
+                "(json_extract(payload, '$.cause_seq') IS NULL AND seq > ?)) LIMIT 1",
+                (task_id, cause_seq, cause_seq),
+            ).fetchone()
+            # A persisted supervisor action with a task still in triage is an
+            # intentional restart-recovery window: dispatch it without
+            # invoking the model again. Any other state already consumed the
+            # signal and must remain untouched.
+            if handled and not (handled["type"] == "supervisor.acted" and row["state"] == "triage"):
+                return False
+            if row["state"] != "triage":
+                transition(self.conn, task_id, "triage", cause_seq=cause_seq,
+                           **({"candidate_sha": candidate_sha} if candidate_sha else {}))
+            attempt = latest_attempt(self.conn, task_id)
+            started = self.conn.execute(
+                "SELECT seq FROM events WHERE task_id = ? AND type = 'triage.started' "
+                "AND json_extract(payload, '$.cause_seq') = ? LIMIT 1",
+                (task_id, cause_seq),
+            ).fetchone()
+            if not started:
+                self._append_timing_event(
+                    task_id, "triage.started", attempt_id=attempt["id"] if attempt else None,
+                    payload={"cause_seq": cause_seq},
+                )
+            try:
+                return await self._handle_triage_inner(task_id, cause_seq, live_proc=live_proc)
+            finally:
+                # The event is deliberately emitted even when the process crashes
+                # during model transport; reconciliation can then close the
+                # interrupted triage deterministically.
+                self._append_timing_event(
+                    task_id, "triage.finished", attempt_id=attempt["id"] if attempt else None,
+                    payload={"cause_seq": cause_seq},
+                )
 
     async def _handle_triage_inner(self, task_id: str, cause_seq: int, *, live_proc) -> bool:
         """Returns True iff the caller should keep watching `live_proc` (only
@@ -1321,7 +1416,9 @@ class Scheduler:
                               transcript_tail_tokens=self.transcript_tail_tokens)
         persisted = self.conn.execute(
             "SELECT seq, payload FROM events WHERE task_id = ? AND type = 'supervisor.acted' "
-            "AND seq > ? ORDER BY seq DESC LIMIT 1", (task_id, cause_seq)
+            "AND (json_extract(payload, '$.cause_seq') = ? OR "
+            "(json_extract(payload, '$.cause_seq') IS NULL AND seq > ?)) "
+            "ORDER BY seq DESC LIMIT 1", (task_id, cause_seq, cause_seq)
         ).fetchone()
         persisted_payload = None
         if persisted:
@@ -1346,6 +1443,7 @@ class Scheduler:
                                disposition="supervisor_running")
             append_event(self.conn, source="supervisor", type="supervisor.invoked", task_id=task_id,
                          payload={"trigger": packet.trigger.type,
+                                  "cause_seq": cause_seq,
                                   "allowed_actions": packet.allowed_actions,
                                   "attempt_id": attempt["id"] if attempt else None,
                                   "intervention_id": intervention_id})
@@ -1399,6 +1497,7 @@ class Scheduler:
             s = append_event(self.conn, source="supervisor", type="supervisor.acted", task_id=task_id,
                              payload={**action.model_dump(exclude={"action"}),
                                       "action": action.action, "action_type": action_type,
+                                      "cause_seq": cause_seq,
                                       "intervention_id": intervention_id,
                                       "source_attempt_id": attempt["id"] if attempt else None,
                                       "worker_instruction": worker_instruction,

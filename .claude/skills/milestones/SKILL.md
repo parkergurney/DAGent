@@ -62,10 +62,11 @@ Textual to one weekend, after M3, whenever.
 ## FakeWorker (build first, in M2)
 
 A scripted subprocess impersonating a Claude Code session. Scenarios: complete
-cleanly, claim done without committing, empty diff,
-stall silently, ask a question, crash mid-task, declare an external wait. The
-scenario suite IS the regression suite; fault injection is a test case, not a
-prayer. Never debug the orchestrator through paid nondeterministic workers.
+cleanly, claim done without committing, commit a visible-verification failure,
+leave a dirty draft before crashing, empty diff, stall silently, ask a question,
+crash mid-task, and declare an external wait. The scenario suite IS the
+regression suite; fault injection is a test case, not a prayer. Never debug the
+orchestrator through paid nondeterministic workers.
 <!-- /sync:milestones -->
 
 # Config defaults

@@ -10,6 +10,20 @@ evaluation boundary. The current model is Harbor-supplied outer isolation,
 internal worktree isolation, public visible verification, and a separate
 Harbor verifier; historical entries are retained as design history.
 
+## 2026-08-15 - Phase 1 deterministic reliability contract
+
+Closed the Phase 1 worker-boundary gaps with deterministic FakeWorker coverage
+for committed-but-failing candidates and dirty crashes, plus replay/state
+assertions across the full scenario batch. Worker readers now retain the
+attempt and lease generation captured at spawn; late output from an old
+attempt is recorded as rejected and cannot update liveness, task state, or
+candidate lineage. Process-exit and watchdog failure signals are deduplicated
+per attempt, and triage uses a per-task lock plus durable cause sequence so
+duplicate recovery cannot consume another retry or supervisor call. Fault
+injection can target an explicit attempt number while retaining the existing
+small task/mode/timing contract. Sequential and naive-parallel policy paths
+remain unchanged.
+
 ## 2026-08-15 - Phase 0 reliability baseline
 
 Established the named `phase-0-reliability-2026-08-15` snapshot before adding
