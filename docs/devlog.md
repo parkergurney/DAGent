@@ -10,6 +10,16 @@ evaluation boundary. The current model is Harbor-supplied outer isolation,
 internal worktree isolation, public visible verification, and a separate
 Harbor verifier; historical entries are retained as design history.
 
+## 2026-08-15 - Phase 0 reliability baseline
+
+Established the named `phase-0-reliability-2026-08-15` snapshot before adding
+new reliability features or benchmark inputs. The README now contains the
+concise scheduler/lease/candidate/verification/supervisor/delivery/Harbor
+architecture diagram. Added `docs/phase-0-baseline.md` to define verified task
+completion rate as the primary outcome, preserve the secondary metrics, and
+make censored and inconclusive cells explicit. The local validation result is
+recorded in that document after the baseline suite runs.
+
 ## 2026-08-10 - Harbor installed-agent port
 
 Added `HarborOrchestratorAgent`, which installs this package inside the task

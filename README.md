@@ -29,6 +29,37 @@ Real CLI runs require either `--external-isolation` (a caller declaration that
 Harbor/container isolation is present) or `--trusted-development` (explicit
 direct-host development mode). Fake workers remain available without either.
 
+## Architecture at a glance
+
+```mermaid
+flowchart LR
+    H[Harbor outer boundary<br/>worker container + hidden verifier]
+
+    subgraph O[orchestrator daemon]
+        S[Scheduler + state machine]
+        L[Worker lease + worktree pool]
+        W[Claude SDK / FakeWorker]
+        C[Candidate lineage]
+        V[Visible verify gate]
+        U[Supervisor<br/>closed recovery action]
+        D[Delivery<br/>PR / local / scout]
+        DB[(SQLite events<br/>+ derived task state)]
+
+        S <--> DB
+        S --> L --> W --> C --> V --> D
+        V -->|failure evidence| U -->|bounded recovery| S
+    end
+
+    H -. isolates .-> O
+    C -. candidate patch .-> H
+```
+
+The scheduler owns transitions and worker leases; workers only produce
+candidates. Public verification is performed against worker-visible state,
+while Harbor evaluates the published candidate separately with hidden tests.
+The candidate SHA and attempt lineage connect worker execution, verification,
+recovery, delivery, and Harbor scoring without exposing hidden verifier data.
+
 Day-to-day operation is meant to be natural language through an agent session:
 ask it to queue tasks, start or watch a batch, check status, and answer
 escalations. The agent uses the `orchestrator` CLI underneath; operators should
@@ -37,6 +68,7 @@ only need raw commands for setup, debugging, or automation.
 ## Layout
 
     docs/design.md        full architecture design doc, the source of truth
+    docs/phase-0-baseline.md  primary outcome, secondary metrics, validation record
     CLAUDE.md              trimmed core (thesis, architecture, invariants), always loaded
     .claude/skills/        topic skills with the rest of docs/design.md, loaded on demand
     docs/usage.md         practical "how do I actually run tasks" guide
