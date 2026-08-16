@@ -10,6 +10,15 @@ evaluation boundary. The current model is Harbor-supplied outer isolation,
 internal worktree isolation, public visible verification, and a separate
 Harbor verifier; historical entries are retained as design history.
 
+## 2026-08-16 - Harbor graph-shape launcher
+
+Extended the Harbor DAG canary launcher to select `serial`, `wide`, `diamond`,
+or `mixed` Phase 5 topologies. Non-legacy shapes are converted at launch into
+real-worker tasks with distinct public artifacts and local delivery, while the
+existing five-node `dag` canary remains the default. The benchmark runner now
+selects shapes, derives a root fault target, and records the selected graph in
+the manifest; the hidden verifier validates the complete ten-node artifact set.
+
 ## 2026-08-16 - Phase 5 benchmark package
 
 Prepared the benchmark inputs before any matrix execution: four fixed

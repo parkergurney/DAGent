@@ -339,6 +339,12 @@ not protect the host filesystem.
 
 The runnable Harbor canary is in
 [`harbor/tasks/orchestrator-canary/`](../harbor/tasks/orchestrator-canary/).
+The dependency-aware benchmark launcher at
+[`harbor/tasks/orchestrator-dag-canary/`](../harbor/tasks/orchestrator-dag-canary/)
+accepts `ORCH_GRAPH_SHAPE=serial|wide|diamond|mixed` and its benchmark runner
+defaults to the first three shapes. Shape cells use the committed Phase 5
+topologies, real-worker public artifact tasks, and the same separate verifier;
+the selected shape and graph hash are recorded in the manifest.
 It loads the installed agent by import path and uses Harbor's separate
 verifier mode. The wrapper publishes only `base_sha.txt`, `candidate.patch`,
 `result.json`, `metrics.json`, and the pre-run `run_manifest.json`; scheduler

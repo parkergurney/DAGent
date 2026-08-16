@@ -6,6 +6,7 @@ repo_root=$(CDPATH= cd -- "$task_dir/../../.." && pwd)
 policy=${1:-orchestrator}
 seed=${2:-0}
 model=${3:-qwen3-coder:30b}
+graph_shape=${ORCH_GRAPH_SHAPE:-${4:-dag}}
 backend=${ORCH_BACKEND:-ollama}
 context_length=${ORCH_CONTEXT_LENGTH:-32768}
 fault_task=${ORCH_FAULT_TASK:-}
@@ -14,16 +15,24 @@ fault_delay=${ORCH_FAULT_DELAY_S:-1.0}
 fast_crash_recovery=${ORCH_FAST_CRASH_RECOVERY:-1}
 target_reachable=${ORCH_TARGET_REACHABLE:-0}
 
+case "$graph_shape" in
+  dag) graph_source="$task_dir/graph.json" ;;
+  serial|wide|diamond|mixed) graph_source="$repo_root/benchmarks/phase5/graphs/$graph_shape.json" ;;
+  *) echo "unsupported graph shape: $graph_shape" >&2; exit 2 ;;
+esac
+[ -f "$graph_source" ] || { echo "missing graph source: $graph_source" >&2; exit 2; }
+
 # The controller computes this over the complete package, including verifier
 # sources. The digest is metadata only; verifier sources are not copied to the
 # agent environment.
 export PYTHONPATH="$repo_root/src${PYTHONPATH:+:$PYTHONPATH}"
-task_hash=$(python3 - "$task_dir" <<'PY'
+task_hash=$(python3 - "$task_dir" "$graph_source" <<'PY'
 import hashlib
 import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
+graph = pathlib.Path(sys.argv[2])
 files = sorted(
     path for path in root.rglob("*")
     if path.is_file() and path.name not in {"README.md", "run_canary.sh"}
@@ -34,10 +43,37 @@ for path in files:
     digest.update(b"\0")
     digest.update(path.read_bytes())
     digest.update(b"\0")
+if graph != root / "graph.json":
+    digest.update(f"selected-graph/{graph.name}".encode())
+    digest.update(b"\0")
+    digest.update(graph.read_bytes())
+    digest.update(b"\0")
 print(digest.hexdigest())
 PY
 )
-graph_json=$(cat "$task_dir/graph.json")
+graph_json=$(python3 - "$graph_shape" "$graph_source" <<'PY'
+import json
+import pathlib
+import sys
+
+shape, source = sys.argv[1], pathlib.Path(sys.argv[2])
+tasks = json.loads(source.read_text())
+if shape != "dag":
+    for task in tasks:
+        node_id = str(task["id"])
+        output = f"outputs/{node_id}.txt"
+        task["title"] = f"Create {output}"
+        task["brief"] = (
+            f"Create {output} containing exactly {node_id} followed by a newline. "
+            f"Run test -f {output}, then git add {output} and commit the change. "
+            "Do not modify other files."
+        )
+        task["delivery_mode"] = "local"
+        task["verify_cmd"] = f"test \"$(cat {output})\" = \"{node_id}\""
+        task["max_retries"] = 1
+print(json.dumps(tasks, separators=(",", ":")))
+PY
+)
 harbor_version=$(harbor --version 2>/dev/null || printf 'unknown')
 config=$(python3 - "$policy" "$seed" "$task_hash" "$harbor_version" "$backend" "$model" "$context_length" "$graph_json" "$fault_task" "$fault_mode" "$fault_delay" "$fast_crash_recovery" "$target_reachable" <<'PY'
 import json
@@ -51,6 +87,8 @@ payload = {
         "task_definition_sha256": task_hash,
         "harbor_version": harbor_version,
         "backend": backend,
+        "graph_id": graph_shape,
+        "graph_shape": graph_shape,
         "worker_model": model,
         "supervisor_model": model,
         "max_concurrency": 2,

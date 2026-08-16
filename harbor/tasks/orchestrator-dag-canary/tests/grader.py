@@ -10,6 +10,23 @@ from pathlib import Path
 
 def main() -> int:
     root = Path("/app")
+    generated = sorted((root / "outputs").glob("*.txt"))
+    if generated:
+        # Shape-specific cells produce ten distinct public artifacts. Infer
+        # the selected shape from those names so hidden checks do not need the
+        # agent-only launcher configuration.
+        if len(generated) != 10:
+            return 1
+        names = [path.stem for path in generated]
+        prefixes = {name.rsplit("-", 1)[0] for name in names}
+        if len(prefixes) != 1:
+            return 1
+        prefix = next(iter(prefixes))
+        if sorted(names) != [f"{prefix}-{index:02d}" for index in range(10)]:
+            return 1
+        if any(path.read_text() != f"{path.stem}\n" for path in generated):
+            return 1
+        return 0
     if (root / "schema.json").read_text() != '{"version": 1, "items": []}\n':
         return 1
     if (root / "README.md").read_text() != "# Dependency-aware canary baseline\nDAG canary documentation\n":
@@ -33,4 +50,3 @@ def main() -> int:
 
 
 raise SystemExit(main())
-

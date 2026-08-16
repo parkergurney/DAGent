@@ -11,12 +11,17 @@ The hidden verifier is under `tests/` and is transferred only to Harbor's
 separate verifier environment. The agent image contains the same clean Git
 baseline and public task instructions, but no hidden grader code.
 
-Run one canary per policy first:
+The launcher accepts `dag` (the original five-node canary) plus the Phase 5
+shapes `serial`, `wide`, `diamond`, and `mixed`. Shape cells use ten distinct
+public output artifacts, so the same hidden verifier can validate any
+selected shape.
+
+Run one canary per policy first on one shape:
 
 ```sh
-harbor/tasks/orchestrator-dag-canary/run_canary.sh sequential 0
-harbor/tasks/orchestrator-dag-canary/run_canary.sh naive-parallel 0
-harbor/tasks/orchestrator-dag-canary/run_canary.sh orchestrator 0
+ORCH_GRAPH_SHAPE=serial harbor/tasks/orchestrator-dag-canary/run_canary.sh sequential 0
+ORCH_GRAPH_SHAPE=serial harbor/tasks/orchestrator-dag-canary/run_canary.sh naive-parallel 0
+ORCH_GRAPH_SHAPE=serial harbor/tasks/orchestrator-dag-canary/run_canary.sh orchestrator 0
 ```
 
 After all three pass, run the controlled matrix with seeds 0, 1, and 2. The
@@ -29,7 +34,7 @@ For a controlled fault cell, set `ORCH_FAULT_TASK` to a root task and enable
 the reachability contract:
 
 ```sh
-ORCH_FAULT_TASK=schema ORCH_TARGET_REACHABLE=1 \
+ORCH_GRAPH_SHAPE=serial ORCH_FAULT_TASK=serial-00 ORCH_TARGET_REACHABLE=1 \
   harbor/tasks/orchestrator-dag-canary/run_canary.sh orchestrator 0
 ```
 
@@ -41,11 +46,13 @@ To run the complete fail-fast sequence—local validation, three clean policy
 cells, and three target-reachable fault cells—execute:
 
 ```sh
-ALLOW_DIRTY=1 harbor/tasks/orchestrator-dag-canary/run_benchmark.sh 0
+ORCH_BENCHMARK_GRAPHS="serial wide diamond" \
+  harbor/tasks/orchestrator-dag-canary/run_benchmark.sh 0
 ```
 
 The script stops on any local-test failure, Harbor command failure, invalid
 clean result, or fault cell that does not prove target reachability. Baseline
 fault cells are allowed to end in failure because that is the recovery outcome
 being measured. Run several paired seeds with, for example,
-`ORCH_BENCHMARK_SEEDS="0 1 2"`.
+`ORCH_BENCHMARK_SEEDS="0 1 2 3 4"`. Add `mixed` when the initial matrix is
+stable: `ORCH_BENCHMARK_GRAPHS="serial wide diamond mixed"`.
