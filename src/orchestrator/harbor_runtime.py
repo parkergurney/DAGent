@@ -12,10 +12,12 @@ import importlib.metadata
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 from orchestrator.harbor import export_patch, export_task_summary, run_instruction
 from orchestrator.metrics import export_metrics
+from orchestrator.experiment import classify_cell
 
 _AUTH_ENV_NAMES = frozenset({
     "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
@@ -23,6 +25,7 @@ _AUTH_ENV_NAMES = frozenset({
     "AWS_SESSION_TOKEN", "AWS_REGION", "AWS_DEFAULT_REGION",
 })
 _TRUE = frozenset({"1", "true", "yes", "on"})
+_SENSITIVE_CONFIG_WORDS = frozenset({"key", "token", "secret", "password", "credential"})
 
 
 def _bool(value, default=False) -> bool:
@@ -99,6 +102,17 @@ def _write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
+def _public_resource_config(value, key: str = ""):
+    """Keep resource metadata while preventing accidental credential copies."""
+    if any(word in key.lower() for word in _SENSITIVE_CONFIG_WORDS):
+        return "[REDACTED]"
+    if isinstance(value, dict):
+        return {str(name): _public_resource_config(item, str(name)) for name, item in value.items()}
+    if isinstance(value, list):
+        return [_public_resource_config(item, key) for item in value]
+    return value
+
+
 def _package_version() -> str:
     try:
         return importlib.metadata.version("agent-orchestrator")
@@ -118,6 +132,17 @@ def _manifest(settings: dict, *, instruction: str, repo_root: Path, base_sha: st
     task_hash = _value(
         settings, "task_definition_sha256", "ORCH_TASK_DEFINITION_SHA256", None
     )
+    graph_sha = task_graph.get("sha256")
+    package_sha = task_hash or hashlib.sha256(json.dumps(
+        {"instruction_sha256": instruction_sha, "task_graph_sha256": graph_sha},
+        sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")).hexdigest()
+    graph_id = str(_value(
+        settings, "graph_id", "ORCH_GRAPH_ID", graph_sha[:12] if graph_sha else "single-task"
+    ))
+    resource_config = settings.get("resource_config", {})
+    if not isinstance(resource_config, dict):
+        raise ValueError("resource_config must be an object")
     return {
         "schema_version": 1,
         "orchestrator_version": _package_version(),
@@ -125,6 +150,11 @@ def _manifest(settings: dict, *, instruction: str, repo_root: Path, base_sha: st
         "trial_id": _value(settings, "trial_id", "HARBOR_TRIAL_ID", "unknown"),
         "seed": _value(settings, "seed", "HARBOR_TRIAL_SEED", "unknown"),
         "task_definition_sha256": task_hash or "not-provided",
+        "task_package_sha256": package_sha,
+        "graph_id": graph_id,
+        "graph_shape": _value(settings, "graph_shape", "ORCH_GRAPH_SHAPE", graph_id),
+        "backend_track": _value(settings, "backend_track", "ORCH_BACKEND_TRACK", "unspecified"),
+        "fault_profile": _value(settings, "fault_profile", "ORCH_FAULT_PROFILE", "clean"),
         "task_graph": task_graph,
         "fault_injection": fault_injection,
         "fault_target_reachability": {
@@ -158,12 +188,18 @@ def _manifest(settings: dict, *, instruction: str, repo_root: Path, base_sha: st
             "verify_timeout_s": _int(settings, "verify_timeout_s", "ORCH_VERIFY_TIMEOUT_S", 600),
             "wait_ceiling_s": _int(settings, "wait_ceiling_s", "ORCH_WAIT_CEILING_S", 1800),
         },
+        "resource_config": _public_resource_config(resource_config),
         "verifier": {
             "mode": _value(settings, "verifier_mode", "ORCH_VERIFIER_MODE", "separate"),
             "visible_command": verify_cmd,
+            "identity": _value(settings, "verifier_identity", "ORCH_VERIFIER_IDENTITY", "unspecified"),
             "artifact_root": str(artifact_root),
         },
-        "authentication": {"source": "Harbor-injected environment", "values_recorded": False},
+        "authentication": {
+            "source": "Harbor-injected environment",
+            "mechanism": _value(settings, "authentication_mechanism", "ORCH_AUTH_MECHANISM", "environment"),
+            "values_recorded": False,
+        },
     }
 
 
@@ -179,6 +215,7 @@ def _safe_failure(exc: BaseException) -> dict:
 
 
 async def run_from_files(instruction_file: str | Path, config_file: str | Path | None = None) -> int:
+    started = time.monotonic()
     settings = _config(str(config_file) if config_file else None)
     task_specs = _task_specs(settings)
     task_graph = _task_graph_metadata(settings)
@@ -219,20 +256,21 @@ async def run_from_files(instruction_file: str | Path, config_file: str | Path |
     policy = str(_value(settings, "policy", "ORCH_POLICY", "orchestrator"))
     title = str(_value(settings, "title", "ORCH_TITLE", "Harbor task"))
     verify_cmd = _value(settings, "verify_cmd", "ORCH_VERIFY_CMD", "true")
+    manifest = _manifest(
+        settings, instruction=instruction, repo_root=repo_root, base_sha=base_sha,
+        policy=policy, verify_cmd=verify_cmd, artifact_root=artifact_root,
+        task_graph=task_graph, fault_injection=fault_injection,
+        deterministic_crash_recovery=deterministic_crash_recovery,
+        adaptive_scheduling=_bool(_value(settings, "adaptive_scheduling",
+                                          "ORCH_ADAPTIVE_SCHEDULING", True)),
+        protocol_recovery_v2=_bool(_value(settings, "protocol_recovery_v2",
+                                          "ORCH_PROTOCOL_RECOVERY_V2", True)),
+        evidence_ladder=_bool(_value(settings, "evidence_ladder",
+                                     "ORCH_EVIDENCE_LADDER", True)),
+    )
     _write_json(
         artifact_root / "run_manifest.json",
-        _manifest(
-            settings, instruction=instruction, repo_root=repo_root, base_sha=base_sha,
-            policy=policy, verify_cmd=verify_cmd, artifact_root=artifact_root,
-            task_graph=task_graph, fault_injection=fault_injection,
-            deterministic_crash_recovery=deterministic_crash_recovery,
-            adaptive_scheduling=_bool(_value(settings, "adaptive_scheduling",
-                                              "ORCH_ADAPTIVE_SCHEDULING", True)),
-            protocol_recovery_v2=_bool(_value(settings, "protocol_recovery_v2",
-                                              "ORCH_PROTOCOL_RECOVERY_V2", True)),
-            evidence_ladder=_bool(_value(settings, "evidence_ladder",
-                                         "ORCH_EVIDENCE_LADDER", True)),
-        ),
+        manifest,
     )
 
     result_metadata = {
@@ -287,6 +325,12 @@ async def run_from_files(instruction_file: str | Path, config_file: str | Path |
             "candidate_sha": result.candidate_sha,
             "metrics": result.metrics,
         })
+        result.metrics["wall_time_s"] = round(time.monotonic() - started, 3)
+        result.metrics.update(classify_cell(
+            manifest=manifest, metrics=result.metrics, result=result_metadata,
+            run_completed=True,
+        ))
+        result_metadata["metrics"] = result.metrics
         _write_json(artifact_root / "task_summary.json", {
             "schema_version": 1,
             "tasks": export_task_summary(db_path),
@@ -307,6 +351,11 @@ async def run_from_files(instruction_file: str | Path, config_file: str | Path |
     except BaseException as exc:
         try:
             result_metadata["metrics"] = export_metrics(db_path)
+            result_metadata["metrics"]["wall_time_s"] = round(time.monotonic() - started, 3)
+            result_metadata["metrics"].update(classify_cell(
+                manifest=manifest, metrics=result_metadata["metrics"],
+                result=result_metadata, run_completed=False,
+            ))
         except Exception:
             # The original failure is authoritative; a missing/incomplete DB
             # must not prevent Harbor from receiving failure artifacts.

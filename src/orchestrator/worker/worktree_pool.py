@@ -15,6 +15,7 @@ not a second limiter to keep in sync with the first.
 import asyncio
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 
@@ -23,10 +24,19 @@ def _git(*args, cwd) -> subprocess.CompletedProcess:
 
 
 def _git_ok(*args, cwd) -> str:
-    proc = _git(*args, cwd=cwd)
-    if proc.returncode != 0:
-        raise RuntimeError(f"git {' '.join(args)} failed: {proc.stderr}")
-    return proc.stdout.strip()
+    # Verification runs off the event loop and may be finishing a candidate
+    # checkout while the scheduler starts the next task. Git's per-worktree
+    # index lock is normally released immediately; tolerate that short,
+    # legitimate overlap instead of turning a sequential cell into a false
+    # scheduler failure. We never delete a lock file here.
+    for attempt in range(20):
+        proc = _git(*args, cwd=cwd)
+        if proc.returncode == 0:
+            return proc.stdout.strip()
+        if "index.lock" not in proc.stderr or attempt == 19:
+            raise RuntimeError(f"git {' '.join(args)} failed: {proc.stderr}")
+        time.sleep(0.025)
+    raise AssertionError("unreachable")
 
 
 class WorktreePool:

@@ -1,0 +1,12 @@
+[
+  {"id": "serial-00", "brief": "Implement the serial benchmark node 00.", "depends_on": [], "delivery_mode": "scout", "write_scopes": ["bench/serial/00.txt"]},
+  {"id": "serial-01", "brief": "Implement the serial benchmark node 01.", "depends_on": ["serial-00"], "delivery_mode": "scout", "write_scopes": ["bench/serial/01.txt"]},
+  {"id": "serial-02", "brief": "Implement the serial benchmark node 02.", "depends_on": ["serial-01"], "delivery_mode": "scout", "write_scopes": ["bench/serial/02.txt"]},
+  {"id": "serial-03", "brief": "Implement the serial benchmark node 03.", "depends_on": ["serial-02"], "delivery_mode": "scout", "write_scopes": ["bench/serial/03.txt"]},
+  {"id": "serial-04", "brief": "Implement the serial benchmark node 04.", "depends_on": ["serial-03"], "delivery_mode": "scout", "write_scopes": ["bench/serial/04.txt"]},
+  {"id": "serial-05", "brief": "Implement the serial benchmark node 05.", "depends_on": ["serial-04"], "delivery_mode": "scout", "write_scopes": ["bench/serial/05.txt"]},
+  {"id": "serial-06", "brief": "Implement the serial benchmark node 06.", "depends_on": ["serial-05"], "delivery_mode": "scout", "write_scopes": ["bench/serial/06.txt"]},
+  {"id": "serial-07", "brief": "Implement the serial benchmark node 07.", "depends_on": ["serial-06"], "delivery_mode": "scout", "write_scopes": ["bench/serial/07.txt"]},
+  {"id": "serial-08", "brief": "Implement the serial benchmark node 08.", "depends_on": ["serial-07"], "delivery_mode": "scout", "write_scopes": ["bench/serial/08.txt"]},
+  {"id": "serial-09", "brief": "Implement the serial benchmark node 09.", "depends_on": ["serial-08"], "delivery_mode": "scout", "write_scopes": ["bench/serial/09.txt"]}
+]

@@ -39,7 +39,34 @@ pip install -e ".[dev]"
 Requires `claude-agent-sdk` (real worker sessions) and a Claude Code / API
 auth setup that the SDK can pick up in your environment — same auth the
 `claude` CLI itself uses. This registers the `orchestrator`, `verify-gate`,
-and `supervisor-replay` console scripts.
+`supervisor-replay`, `orchestrator-experiment`, and `orchestrator-report`
+console scripts.
+
+## 1.5 Prepare a benchmark cell
+
+Phase 5 inputs are committed under
+[`benchmarks/phase5`](../benchmarks/phase5/README.md). Validate and enumerate
+the fixed ten-task graphs, seeded fault profiles, three policies, and separate
+cloud/local backend tracks:
+
+```bash
+orchestrator-experiment prepare --output-dir results/phase5-matrix
+```
+
+Run one free deterministic cell against a throwaway repository, then report
+saved cells. The cell writes `run_manifest.json`, `metrics.json`,
+`result.json`, `task_summary.json`, and `candidate.patch`:
+
+```bash
+orchestrator-experiment run --graph wide --policy orchestrator --seed 0 \
+  --profile clean --backend-track cloud-claude \
+  --repo-root /path/to/throwaway-repo --output-dir results/phase5/cell-01
+orchestrator-report results/phase5/cell-01 --output-dir results/phase5/summary
+```
+
+Fault profiles are deterministic FakeWorker cells. A live backend requires the
+explicit `--live` flag and a trusted Harbor/container boundary; local Ollama
+cells are reported as a separate resource-contention track.
 
 ## 2. Add a task
 
@@ -264,7 +291,17 @@ verify-gate --task <task_id> --db data/orchestrator.db --json --record
 # every invoke_supervisor call) against the CURRENT supervisor prompt/model —
 # for iterating on supervisor heuristics without paying for a live run.
 supervisor-replay data/<task_id>/packets/<seq>.json --model claude-sonnet-5
+
+# Aggregate saved benchmark cells. Outcome quality includes successful and
+# settled failed cells; runtime overhead includes successful cells only.
+orchestrator-report old/jobs/*/artifacts --output-dir results/summary
 ```
+
+`orchestrator-report` writes `report.json` and `report.md`. A cell whose fault
+target was never launched is `inconclusive`; an unsettled or interrupted cell
+is `censored`; settled unsuccessful cells remain eligible for outcome-quality
+counts but are excluded from runtime comparisons. The report therefore keeps
+verified outcome quality separate from orchestration overhead.
 
 ## 11. Harbor integration boundary
 

@@ -1,0 +1,26 @@
+{
+  "cloud-claude": {
+    "comparison_group": "cloud-claude",
+    "backend": "anthropic",
+    "worker_model": "claude-sonnet-5",
+    "supervisor_model": "claude-sonnet-5",
+    "context_length": 32768,
+    "max_concurrency": 4,
+    "stall_threshold_s": 300,
+    "wait_ceiling_s": 1800,
+    "authentication_mechanism": "environment",
+    "resource_config": {"executor": "harbor", "inference_capacity": "remote"}
+  },
+  "local-ollama": {
+    "comparison_group": "local-ollama",
+    "backend": "ollama",
+    "worker_model": "qwen3-coder",
+    "supervisor_model": "qwen3-coder",
+    "context_length": 32768,
+    "max_concurrency": 4,
+    "stall_threshold_s": 300,
+    "wait_ceiling_s": 1800,
+    "authentication_mechanism": "local",
+    "resource_config": {"executor": "harbor", "inference_capacity": "local", "contention": "reported-separately"}
+  }
+}

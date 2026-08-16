@@ -638,7 +638,7 @@ class Scheduler:
                 payload={"attempt_id": attempt_id,
                          "target": worker_task.get("_fault_injection_target", task_id),
                          "attempt": worker_task.get("_fault_injection_attempt", 1),
-                         "mode": "worker_exit"},
+                         "mode": worker_task.get("_fault_injection_mode", "worker_exit")},
             )
         session_id = str(proc.pid)
 
@@ -793,6 +793,7 @@ class Scheduler:
                      attempt_id: str, lease: execution_lease.ExecutionLease) -> None:
         claimed_or_triaged = False
         sdk_result_ok = False
+        last_result_usage = {}
         protocol_incomplete = False
         try:
             while True:
@@ -817,12 +818,15 @@ class Scheduler:
                 # session. AssistantMessage usage is retained in its payload
                 # for diagnostics, but is not put in event accounting columns;
                 # otherwise a session is double-counted.
-                usage_kwargs = {}
+                event_usage = {}
                 if etype == "result":
                     sdk_result_ok = not bool(payload.get("is_error"))
-                    usage_kwargs = dict(tokens_in=payload.get("tokens_in"),
-                                        tokens_out=payload.get("tokens_out"),
-                                        cost_usd=payload.get("cost_usd"))
+                    last_result_usage = dict(
+                        tokens_in=payload.get("tokens_in"),
+                        tokens_out=payload.get("tokens_out"),
+                        cost_usd=payload.get("cost_usd"),
+                    )
+                    event_usage = last_result_usage
                 attempt = latest_attempt(self.conn, task_id)
                 event_payload = {**payload, "attempt_id": attempt["id"] if attempt else None}
 
@@ -835,7 +839,7 @@ class Scheduler:
                         }
                     s = append_event(self.conn, source="worker", type="worker.done_claimed",
                                      task_id=task_id, session_id=str(proc.pid), payload=event_payload,
-                                     **usage_kwargs)
+                                     **last_result_usage)
                     claimed_or_triaged = True
                     # A done claim is a stream message, not proof that the
                     # SDK/Claude process has exited.  Reap it before the
@@ -852,7 +856,7 @@ class Scheduler:
                 elif etype == "asked":
                     s = append_event(self.conn, source="worker", type="worker.asked",
                                      task_id=task_id, session_id=str(proc.pid), payload=event_payload,
-                                     **usage_kwargs)
+                                     **last_result_usage)
                     keep_watching = await self._handle_triage(task_id, s, live_proc=proc)
                     if keep_watching:
                         self._last_event_ts[task_id] = time.monotonic()
@@ -869,7 +873,7 @@ class Scheduler:
                         }
                     s = append_event(self.conn, source="worker", type="worker.no_change",
                                      task_id=task_id, session_id=str(proc.pid), payload=event_payload,
-                                     **usage_kwargs)
+                                     **last_result_usage)
                     claimed_or_triaged = True
                     await self._reap_process(task_id, proc)
                     candidate = self._capture_candidate(task_id, disposition="no_change")
@@ -912,7 +916,7 @@ class Scheduler:
                 else:
                     append_event(self.conn, source="worker", type=f"worker.{etype}",
                                 task_id=task_id, session_id=str(proc.pid), payload=event_payload,
-                                **usage_kwargs)
+                                **event_usage)
 
             if not claimed_or_triaged:
                 code = await proc.wait()

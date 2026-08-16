@@ -1,0 +1,12 @@
+[
+  {"id": "diamond-00", "brief": "Implement the diamond benchmark node 00.", "depends_on": [], "delivery_mode": "scout", "write_scopes": ["bench/diamond/00.txt"]},
+  {"id": "diamond-01", "brief": "Implement the diamond benchmark node 01.", "depends_on": [], "delivery_mode": "scout", "write_scopes": ["bench/diamond/01.txt"]},
+  {"id": "diamond-02", "brief": "Implement the diamond benchmark node 02.", "depends_on": ["diamond-00"], "delivery_mode": "scout", "write_scopes": ["bench/diamond/02.txt"]},
+  {"id": "diamond-03", "brief": "Implement the diamond benchmark node 03.", "depends_on": ["diamond-01"], "delivery_mode": "scout", "write_scopes": ["bench/diamond/03.txt"]},
+  {"id": "diamond-04", "brief": "Implement the diamond benchmark node 04.", "depends_on": ["diamond-00", "diamond-01"], "delivery_mode": "scout", "write_scopes": ["bench/diamond/04.txt"]},
+  {"id": "diamond-05", "brief": "Implement the diamond benchmark node 05.", "depends_on": ["diamond-02", "diamond-03"], "delivery_mode": "scout", "write_scopes": ["bench/diamond/05.txt"]},
+  {"id": "diamond-06", "brief": "Implement the diamond benchmark node 06.", "depends_on": ["diamond-02", "diamond-03"], "delivery_mode": "scout", "write_scopes": ["bench/diamond/06.txt"]},
+  {"id": "diamond-07", "brief": "Implement the diamond benchmark node 07.", "depends_on": ["diamond-04"], "delivery_mode": "scout", "write_scopes": ["bench/diamond/07.txt"]},
+  {"id": "diamond-08", "brief": "Implement the diamond benchmark node 08.", "depends_on": ["diamond-05", "diamond-06", "diamond-07"], "delivery_mode": "scout", "write_scopes": ["bench/diamond/08.txt"]},
+  {"id": "diamond-09", "brief": "Implement the diamond benchmark node 09.", "depends_on": ["diamond-08"], "delivery_mode": "scout", "write_scopes": ["bench/diamond/09.txt"]}
+]

@@ -54,6 +54,27 @@ async def _slow_worker(task, worktree, *, model=None):
     )
 
 
+async def _sdk_result_then_done_worker(task, worktree, *, model=None):
+    del task, model
+    script = (
+        "from pathlib import Path; import json, subprocess; "
+        "Path('output.txt').write_text('done\\n'); "
+        "subprocess.run(['git','-c','user.name=t','-c','user.email=t@local','add','-A'], check=True); "
+        "subprocess.run(['git','-c','user.name=t','-c','user.email=t@local','commit','-qm','work'], check=True); "
+        "print(json.dumps({'type':'result','payload':{'subtype':'success','is_error':False,"
+        "'result':'completed','session_id':'sdk-session','cost_usd':0.123,"
+        "'tokens_in':10,'tokens_out':20}}), flush=True); "
+        "print(json.dumps({'type':'execution_started','payload':{'session_id':'sdk-session',"
+        "'subtype':'success'}}), flush=True); "
+        "print(json.dumps({'type':'done_claimed','payload':{'result':'ok'}}), flush=True)"
+    )
+    return await asyncio.create_subprocess_exec(
+        sys.executable, "-c", script, cwd=str(worktree),
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL, start_new_session=True,
+    )
+
+
 def _run(conn, repo, tmp_path, supervisor, **kwargs):
     scheduler = Scheduler(conn, repo, tmp_path / "worktrees", max_concurrency=1,
                            stall_threshold_s=2, watchdog_interval_s=.05,
@@ -73,6 +94,20 @@ def test_successful_worker_releases_slot_before_verification(tmp_path):
     verify = next(e for e in events if e["type"] == "verify.started")
     assert released["seq"] < verify["seq"]
     assert json.loads(released["payload"])["occupancy"] == 0
+
+
+def test_done_claim_preserves_usage_from_prior_sdk_result(tmp_path):
+    repo = init_repo(tmp_path)
+    conn = connect()
+    task_id = _task(conn, repo, "sdk result accounting")
+    _run(conn, repo, tmp_path, lambda packet: None,
+         spawn_worker=_sdk_result_then_done_worker)
+
+    done = _events(conn, task_id, "worker.done_claimed")
+    assert len(done) == 1
+    assert done[0]["tokens_in"] == 10
+    assert done[0]["tokens_out"] == 20
+    assert done[0]["cost_usd"] == 0.123
 
 
 def test_verification_failure_releases_slot_before_supervisor(tmp_path):

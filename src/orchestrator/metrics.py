@@ -49,6 +49,9 @@ class RunMetrics:
     evidence_stage_timing_s: dict = field(default_factory=dict)
     fault_target_reached: bool = False
     fault_target: str | None = None
+    state_counts: dict = field(default_factory=dict)
+    terminal_state_counts: dict = field(default_factory=dict)
+    wall_time_s: float = 0.0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -165,6 +168,7 @@ def metrics_for(conn: sqlite3.Connection) -> RunMetrics:
     counts = {row["state"]: row["c"] for row in conn.execute(
         "SELECT state, COUNT(*) c FROM tasks GROUP BY state"
     )}
+    event_times = [event["ts"] for event in events if event["ts"]]
     tokens = conn.execute(
         "SELECT COALESCE(SUM(tokens_in), 0) tokens_in, COALESCE(SUM(tokens_out), 0) tokens_out FROM events"
     ).fetchone()
@@ -231,6 +235,15 @@ def metrics_for(conn: sqlite3.Connection) -> RunMetrics:
         failure_classes=failure_counts,
         terminal_classifications=terminal,
         recovery_time_s=round(recovery_time, 3),
+        state_counts=counts,
+        terminal_state_counts={
+            state: counts.get(state, 0)
+            for state in ("delivered", "failed", "cancelled", "dependency_blocked")
+            if counts.get(state, 0)
+        },
+        wall_time_s=round(
+            _duration(event_times[0], event_times[-1]) if len(event_times) > 1 else 0.0, 3
+        ),
         **evidence_metrics,
     )
 

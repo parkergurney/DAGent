@@ -10,6 +10,40 @@ evaluation boundary. The current model is Harbor-supplied outer isolation,
 internal worktree isolation, public visible verification, and a separate
 Harbor verifier; historical entries are retained as design history.
 
+## 2026-08-16 - Phase 5 benchmark package
+
+Prepared the benchmark inputs before any matrix execution: four fixed
+ten-node DAG shapes, distinct write scopes, seeded crash/timeout/no-candidate/
+verification/dependency/latency profiles, and separate cloud Claude and local
+Ollama resource tracks. Added `orchestrator-experiment prepare` and `run` for
+matrix enumeration and one-cell execution, while preserving the existing
+`orchestrator-report` interface. FakeWorker is the default cell backend so the
+complete manifest/metrics/result/task-summary reporting path is free and
+deterministic; live backend execution remains an explicit trusted-boundary
+choice.
+
+## 2026-08-16 - headless Claude worker permissions
+
+The live Claude SDK worker reached authenticated sessions but stopped at every
+file edit because the default permission mode requires interactive approval.
+Since the orchestrator has no approval-prompt channel, SDK workers now use
+`permission_mode="bypassPermissions"`. This is deliberately not treated as a
+sandbox: Harbor remains the benchmark boundary, and live host runs require
+explicit trusted-development mode. The structured-tool worktree path hook
+remains enabled as an additional defense.
+
+## 2026-08-15 - Phase 3 measurement validity
+
+Added a validity-aware experiment contract. Harbor manifests now carry graph
+identity, task-package hash, base SHA, policy/seed/backend/context, limits,
+resource metadata, and authentication mechanism without credential values.
+Metrics include state counts and wall time. Cells are classified centrally as
+success, failed, censored, or inconclusive: target-unreached fault cells are
+inconclusive, unsettled runs are censored, and failed cells remain eligible for
+outcome quality but not runtime comparisons. The `orchestrator-report` command
+aggregates only eligible populations and emits separate outcome-quality and
+orchestration-overhead tables.
+
 ## 2026-08-15 - Phase 1 deterministic reliability contract
 
 Closed the Phase 1 worker-boundary gaps with deterministic FakeWorker coverage

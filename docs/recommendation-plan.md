@@ -145,6 +145,11 @@ Do not build general distributed recovery.
 Before any expensive run, make the metrics and experiment validity rules
 explicit in code and manifests.
 
+The implementation lives in `orchestrator.harbor_runtime` and
+`orchestrator.experiment`. Each cell publishes a manifest, metrics, result,
+and task summary; `orchestrator-report` aggregates saved cells while applying
+the validity rules below in code.
+
 Every cell must record:
 
 - Policy, seed, graph identifier, task-package hash, base SHA, model/backend,
@@ -171,6 +176,12 @@ Exit criteria:
 - A saved manifest and metrics file are sufficient to reproduce every table.
 - A report can separate outcome quality from orchestration overhead.
 - Invalid and censored cells are excluded by code, not editorial judgment.
+
+Example report command:
+
+```sh
+orchestrator-report old/jobs/*/artifacts --output-dir results/summary
+```
 
 ### Phase 4 — Validate real backends without benchmarking
 
@@ -202,6 +213,12 @@ Exit criteria:
 - No backend-specific failure is being misclassified as a scheduler failure.
 
 ### Phase 5 — Prepare the benchmark package, but do not run it yet
+
+Implementation: `benchmarks/phase5/` contains the fixed task package, four
+ten-node graph shapes, seeded profiles, and separate cloud/local backend
+tracks. `orchestrator-experiment prepare` validates and enumerates the matrix;
+`orchestrator-experiment run` executes one cell (FakeWorker by default), and
+`orchestrator-report` summarizes saved artifacts with comparison-input checks.
 
 Build all experiment inputs and reporting code before spending benchmark time.
 

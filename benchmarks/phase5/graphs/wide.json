@@ -1,0 +1,12 @@
+[
+  {"id": "wide-00", "brief": "Implement the wide benchmark node 00.", "depends_on": [], "delivery_mode": "scout", "write_scopes": ["bench/wide/00.txt"]},
+  {"id": "wide-01", "brief": "Implement the wide benchmark node 01.", "depends_on": [], "delivery_mode": "scout", "write_scopes": ["bench/wide/01.txt"]},
+  {"id": "wide-02", "brief": "Implement the wide benchmark node 02.", "depends_on": [], "delivery_mode": "scout", "write_scopes": ["bench/wide/02.txt"]},
+  {"id": "wide-03", "brief": "Implement the wide benchmark node 03.", "depends_on": [], "delivery_mode": "scout", "write_scopes": ["bench/wide/03.txt"]},
+  {"id": "wide-04", "brief": "Implement the wide benchmark node 04.", "depends_on": [], "delivery_mode": "scout", "write_scopes": ["bench/wide/04.txt"]},
+  {"id": "wide-05", "brief": "Implement the wide benchmark node 05.", "depends_on": [], "delivery_mode": "scout", "write_scopes": ["bench/wide/05.txt"]},
+  {"id": "wide-06", "brief": "Implement the wide benchmark node 06.", "depends_on": [], "delivery_mode": "scout", "write_scopes": ["bench/wide/06.txt"]},
+  {"id": "wide-07", "brief": "Implement the wide benchmark node 07.", "depends_on": [], "delivery_mode": "scout", "write_scopes": ["bench/wide/07.txt"]},
+  {"id": "wide-08", "brief": "Implement the wide benchmark node 08.", "depends_on": [], "delivery_mode": "scout", "write_scopes": ["bench/wide/08.txt"]},
+  {"id": "wide-09", "brief": "Implement the wide benchmark node 09.", "depends_on": [], "delivery_mode": "scout", "write_scopes": ["bench/wide/09.txt"]}
+]

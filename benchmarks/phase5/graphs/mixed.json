@@ -1,0 +1,12 @@
+[
+  {"id": "mixed-00", "brief": "Implement the mixed benchmark node 00.", "depends_on": [], "delivery_mode": "scout", "write_scopes": ["bench/mixed/00.txt"]},
+  {"id": "mixed-01", "brief": "Implement the mixed benchmark node 01.", "depends_on": [], "delivery_mode": "scout", "write_scopes": ["bench/mixed/01.txt"]},
+  {"id": "mixed-02", "brief": "Implement the mixed benchmark node 02.", "depends_on": [], "delivery_mode": "scout", "write_scopes": ["bench/mixed/02.txt"]},
+  {"id": "mixed-03", "brief": "Implement the mixed benchmark node 03.", "depends_on": ["mixed-00"], "delivery_mode": "scout", "write_scopes": ["bench/mixed/03.txt"]},
+  {"id": "mixed-04", "brief": "Implement the mixed benchmark node 04.", "depends_on": ["mixed-01"], "delivery_mode": "scout", "write_scopes": ["bench/mixed/04.txt"]},
+  {"id": "mixed-05", "brief": "Implement the mixed benchmark node 05.", "depends_on": ["mixed-02"], "delivery_mode": "scout", "write_scopes": ["bench/mixed/05.txt"]},
+  {"id": "mixed-06", "brief": "Implement the mixed benchmark node 06.", "depends_on": ["mixed-03", "mixed-04"], "delivery_mode": "scout", "write_scopes": ["bench/mixed/06.txt"]},
+  {"id": "mixed-07", "brief": "Implement the mixed benchmark node 07.", "depends_on": ["mixed-04", "mixed-05"], "delivery_mode": "scout", "write_scopes": ["bench/mixed/07.txt"]},
+  {"id": "mixed-08", "brief": "Implement the mixed benchmark node 08.", "depends_on": ["mixed-06"], "delivery_mode": "scout", "write_scopes": ["bench/mixed/08.txt"]},
+  {"id": "mixed-09", "brief": "Implement the mixed benchmark node 09.", "depends_on": ["mixed-08", "mixed-07"], "delivery_mode": "scout", "write_scopes": ["bench/mixed/09.txt"]}
+]

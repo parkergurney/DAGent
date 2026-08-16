@@ -23,6 +23,12 @@ environment variables may contain authentication material and are never
 persisted or logged. The orchestrator does not access the macOS Keychain.
 Direct live workers on the host are trusted development mode only.
 
+SDK workers use Claude Code's non-interactive `bypassPermissions` mode because
+the orchestrator has no approval-prompt channel. This setting is not an
+isolation boundary; real workers must therefore run inside Harbor or explicit
+trusted-development mode. The worker's structured-tool worktree hook remains
+active, but does not replace outer OS isolation.
+
 ## Invariants
 
 1. Only the scheduler writes `tasks.state`; every write emits
@@ -343,6 +349,11 @@ repository provides the Python boundary (`orchestrator.harbor`), the installed
 agent wrapper (`orchestrator.harbor_agent:HarborOrchestratorAgent`), an
 in-container runtime, and a separate-verifier canary under
 `harbor/tasks/orchestrator-canary/`. A live multi-seed comparison remains M7.
+The pre-benchmark package is committed under `benchmarks/phase5/`; its cell
+runner records backend track, graph shape, fault profile, fixed resource and
+verifier inputs, and publishes validity-aware cell status in the standard
+Harbor artifacts. FakeWorker is the default preparation path; it does not
+stand in for the later real-backend benchmark.
 
 ## Milestones
 

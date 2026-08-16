@@ -171,6 +171,10 @@ def _agent_options(worktree: Path, model: str | None, *, stderr=None) -> ClaudeA
     options = {
         "cwd": str(worktree),
         "model": model,
+        # Workers run without an interactive approval channel. Harbor or
+        # trusted-development mode supplies the outer isolation boundary;
+        # the worktree hook below still denies structured paths outside it.
+        "permission_mode": "bypassPermissions",
         "hooks": {
             "PreToolUse": [HookMatcher(hooks=[_make_pre_tool_use(worktree)])],
             "PostToolUse": [HookMatcher(hooks=[_post_tool_use])],
@@ -187,7 +191,6 @@ def _agent_options(worktree: Path, model: str | None, *, stderr=None) -> ClaudeA
     if os.environ.get("ORCH_BACKEND", "").strip().lower() == "ollama":
         options.update({
             "tools": list(_OLLAMA_TOOLS),
-            "permission_mode": "bypassPermissions",
             "thinking": {"type": "disabled"},
         })
     return ClaudeAgentOptions(**options)

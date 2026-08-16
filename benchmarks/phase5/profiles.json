@@ -1,0 +1,9 @@
+{
+  "clean": {"mode": "none", "description": "No injected worker fault."},
+  "worker_crash": {"mode": "crash", "fake_scenario": "crash", "description": "Target root is killed during execution."},
+  "worker_timeout": {"mode": "timeout", "fake_scenario": "stall", "description": "Target root goes silent until the watchdog fires."},
+  "no_candidate": {"mode": "no_candidate", "fake_scenario": "empty_diff", "description": "Target claims completion without a candidate diff."},
+  "verification_failure": {"mode": "verify_fail", "fake_scenario": "verify_fail", "verify_cmd": "test ! -f verification_failure.txt", "description": "Target produces a candidate rejected by visible verification."},
+  "dependency_failure": {"mode": "crash", "fake_scenario": "crash", "description": "A failed root settles descendants as dependency-blocked."},
+  "worker_latency": {"mode": "latency", "fake_scenario": "clean", "delays_s": [0.05, 0.1, 0.2], "description": "Seed selects a fixed worker startup delay."}
+}

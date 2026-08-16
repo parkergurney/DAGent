@@ -25,11 +25,11 @@ def test_ollama_uses_compact_headless_tool_profile(monkeypatch, tmp_path):
     assert options.thinking == {"type": "disabled"}
 
 
-def test_non_ollama_keeps_default_tool_profile(monkeypatch, tmp_path):
+def test_claude_uses_headless_permission_mode(monkeypatch, tmp_path):
     monkeypatch.delenv("ORCH_BACKEND", raising=False)
     options = _agent_options(tmp_path, "claude-sonnet-5")
     assert options.tools is None
-    assert options.permission_mode is None
+    assert options.permission_mode == "bypassPermissions"
 
 
 def test_prompt_appends_protocol_to_brief():

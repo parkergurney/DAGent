@@ -4,9 +4,10 @@ Talk to one process; it runs a team of Claude Code sessions — spawned in
 internal git worktrees, supervised by a deterministic state machine, and
 tracked with durable attempts, candidate lineage, and experiment metrics.
 
-Design: [docs/design.md](docs/design.md). Status: M6 Harbor boundary complete
-(worktree pool, dependencies, delivery modes, durable metrics, and CLI).
-Usage: [docs/usage.md](docs/usage.md).
+Design: [docs/design.md](docs/design.md). Status: M6 Harbor boundary complete;
+Phase 5 benchmark inputs and cell reporting are prepared. Usage:
+[docs/usage.md](docs/usage.md). Measurement/reporting: use the
+`orchestrator-experiment` and `orchestrator-report` commands described there.
 
 ## Current security model
 
@@ -84,5 +85,6 @@ only need raw commands for setup, debugging, or automation.
     src/orchestrator/harbor.py  small Harbor adapter boundary
     src/orchestrator/metrics.py durable experiment metrics
     src/orchestrator/policies.py policy selection for Harbor experiments
+    benchmarks/phase5/  fixed graphs, profiles, and backend tracks
     tests/scenarios/      FakeWorker scenario suite = regression suite
     data/                 runtime state, gitignored

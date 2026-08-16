@@ -21,7 +21,8 @@ def _fault_injecting_worker(worker, fault_injection):
     if not isinstance(fault_injection, dict):
         raise ValueError("fault_injection must be an object")
     mode = str(fault_injection.get("mode") or "worker_exit")
-    if mode != "worker_exit":
+    supported_modes = {"worker_exit", "crash", "timeout", "no_candidate", "verify_fail", "latency"}
+    if mode not in supported_modes:
         raise ValueError(f"unsupported fault injection mode {mode!r}")
     task_id = str(fault_injection.get("task_id") or "").strip()
     if not task_id:
@@ -46,16 +47,23 @@ def _fault_injecting_worker(worker, fault_injection):
             task["_fault_injection_reached"] = True
             task["_fault_injection_target"] = task_id
             task["_fault_injection_attempt"] = launches
+            task["_fault_injection_mode"] = mode
 
-            async def terminate_first_attempt():
+            if mode in {"worker_exit", "crash"}:
+                async def terminate_first_attempt():
+                    await asyncio.sleep(delay_s)
+                    if proc.returncode is None:
+                        try:
+                            os.killpg(proc.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+
+                asyncio.create_task(terminate_first_attempt())
+            elif mode == "latency":
+                # The delay is deliberately outside the worker implementation:
+                # it makes the latency profile backend-neutral and deterministic
+                # for both FakeWorker and SDK workers.
                 await asyncio.sleep(delay_s)
-                if proc.returncode is None:
-                    try:
-                        os.killpg(proc.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-
-            asyncio.create_task(terminate_first_attempt())
         return proc
 
     return spawn
