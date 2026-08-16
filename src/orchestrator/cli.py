@@ -1,5 +1,5 @@
 """`orchestrator` console script: the operator-facing CLI over the library
-described in docs/usage.md. Five subcommands, each a thin wrapper over
+described in docs/usage.md. Six subcommands, each a thin wrapper over
 existing pieces -- no new control-flow, just the plumbing to drive them
 without hand-writing a Python script per batch:
 
@@ -7,6 +7,7 @@ without hand-writing a Python script per batch:
     orchestrator run       [--fake-worker] [--fake-supervisor] ...
     orchestrator daemon    [--poll-interval S] ...   # like run, never exits
     orchestrator answer TASK_ID "message"
+    orchestrator cancel TASK_ID [--reason "why"]
     orchestrator status [TASK_ID] [--digest]
 
 `--repo` also accepts a short name from repos.toml (see docs/usage.md)
@@ -23,7 +24,7 @@ from pathlib import Path
 
 from orchestrator import config
 from orchestrator.scheduler import Scheduler
-from orchestrator.store import append_event, connect, create_task, transition
+from orchestrator.store import TERMINAL, append_event, connect, create_task, transition
 from orchestrator.supervisor import always_escalate, invoke_supervisor
 from orchestrator.worker import (
     WorkerIsolationError, spawn_cli_worker, spawn_fake_worker, spawn_sdk_worker,
@@ -175,6 +176,24 @@ def cmd_answer(args) -> int:
     new_brief = f"{task['brief']}\n\nAnswer from the manager:\n{args.message}"
     transition(conn, args.task_id, "queued", cause_seq=s, brief=new_brief)
     print(f"{args.task_id}: needs_human -> queued (answer folded into brief)")
+    return 0
+
+
+def cmd_cancel(args) -> int:
+    conn = connect(args.db)
+    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (args.task_id,)).fetchone()
+    if row is None:
+        print(f"unknown task {args.task_id!r}", file=sys.stderr)
+        return 2
+    task = dict(row)
+    if task["state"] in TERMINAL:
+        print(f"task {args.task_id} is already {task['state']!r}", file=sys.stderr)
+        return 1
+
+    s = append_event(conn, source="human", type="human.cancelled", task_id=args.task_id,
+                     payload={"reason": args.reason})
+    transition(conn, args.task_id, "cancelled", cause_seq=s)
+    print(f"{args.task_id}: {task['state']} -> cancelled")
     return 0
 
 
@@ -349,6 +368,12 @@ def main(argv=None) -> int:
     p_answer.add_argument("message")
     p_answer.add_argument("--db", default="data/orchestrator.db")
     p_answer.set_defaults(func=cmd_answer)
+
+    p_cancel = sub.add_parser("cancel", help="cancel a task that is not already terminal")
+    p_cancel.add_argument("task_id")
+    p_cancel.add_argument("--reason", default="cancelled by the manager")
+    p_cancel.add_argument("--db", default="data/orchestrator.db")
+    p_cancel.set_defaults(func=cmd_cancel)
 
     p_status = sub.add_parser("status", help="list tasks, or show one task's detail")
     p_status.add_argument("task_id", nargs="?")
