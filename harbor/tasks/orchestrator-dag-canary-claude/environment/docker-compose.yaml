@@ -1,0 +1,8 @@
+# Keep task environment variables in Harbor's container-startup override.
+#
+# Harbor 0.20 treats [environment.env] as persistent exec environment when a
+# task has no Compose file. That makes `docker compose exec -e KEY=value`
+# include credentials in the host process argument list. An otherwise-empty
+# task Compose file selects the startup-env path while the base Harbor Compose
+# file continues to provide the `main` service.
+services: {}

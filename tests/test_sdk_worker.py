@@ -184,6 +184,64 @@ def test_run_redacts_unexpected_sdk_startup_exception(tmp_path, capsys, monkeypa
     }]
 
 
+class _HangingConnectClient:
+    def __init__(self, options=None):
+        pass
+
+    async def connect(self, prompt=None):
+        await asyncio.sleep(1)
+
+
+def test_run_bounds_sdk_connect(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("ORCH_SDK_TIMEOUT_S", "0.1")
+    monkeypatch.setattr(sdk_worker, "ClaudeSDKClient", _HangingConnectClient)
+
+    assert asyncio.run(sdk_worker.run(tmp_path, "start", None)) == 1
+
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert events == [{
+        "type": "startup_failed",
+        "payload": {
+            "category": "sdk_timeout",
+            "phase": "connect",
+            "timeout_s": 0.1,
+            "reason": "Claude SDK connection exceeded its bounded timeout",
+        },
+    }]
+
+
+class _HangingTurnClient:
+    def __init__(self, options=None):
+        pass
+
+    async def connect(self, prompt=None):
+        pass
+
+    async def query(self, prompt, session_id="default"):
+        await asyncio.sleep(1)
+
+    async def disconnect(self):
+        pass
+
+
+def test_run_bounds_sdk_turn(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("ORCH_SDK_TIMEOUT_S", "0.1")
+    monkeypatch.setattr(sdk_worker, "ClaudeSDKClient", _HangingTurnClient)
+
+    assert asyncio.run(sdk_worker.run(tmp_path, "start", None)) == 1
+
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert events == [{
+        "type": "sdk_timeout",
+        "payload": {
+            "category": "sdk_timeout",
+            "phase": "turn",
+            "timeout_s": 0.1,
+            "reason": "Claude SDK turn exceeded its bounded timeout",
+        },
+    }]
+
+
 class _ResultClient:
     def __init__(self, result, assistant_text=None, options=None):
         self.result = result

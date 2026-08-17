@@ -30,6 +30,10 @@ memory_mb = 8192
 storage_mb = 4096
 
 [environment.env]
+# The launcher bind-mounts the caller's mode-600 auth file at this path. The
+# runtime parses it inside the container; no credential is passed to Harbor's
+# host environment or Docker exec arguments.
+ORCH_AUTH_ENV_FILE = "/run/secrets/orchestrator-claude-auth.env"
 ORCH_BACKEND = "anthropic"
 ORCH_BACKEND_TRACK = "practice-claude"
 ORCH_AUTH_MECHANISM = "subscription-oauth"
@@ -37,4 +41,9 @@ ORCH_WORKER_MODEL = "claude-sonnet-4-6"
 ORCH_SUPERVISOR_MODEL = "claude-sonnet-4-6"
 ORCH_MAX_CONCURRENCY = "4"
 ORCH_CONTEXT_LENGTH = "32768"
+# Timeout semantics: stall is silence without worker events; worker timeout is
+# a hard wall-clock cap per attempt; SDK/supervisor caps bound live model calls.
+ORCH_STALL_THRESHOLD_S = "300"
 ORCH_WORKER_TIMEOUT_S = "1200"
+ORCH_SDK_TIMEOUT_S = "300"
+ORCH_SUPERVISOR_TIMEOUT_S = "120"

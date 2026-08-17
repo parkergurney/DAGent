@@ -49,6 +49,8 @@ class HarborOrchestratorAgent(BaseInstalledAgent):
     SUPPORTS_ATIF = False
     SUPPORTS_CONFIG = True
     VERSION = "0.0.1"
+    _AUTH_MOUNT_PATH = "/run/secrets/orchestrator-claude-auth.env"
+    _AUTH_RUNTIME_PATH = "/tmp/orchestrator-claude-auth.env"
 
     def __init__(self, logs_dir: Path, *args, config=None, **kwargs):
         # Harbor 0.20 forwards unknown agent kwargs to BaseAgent, which
@@ -187,9 +189,24 @@ class HarborOrchestratorAgent(BaseInstalledAgent):
         await self._upload_text(environment, instruction, instruction_path)
         await self._upload_text(environment, json.dumps(settings), config_path)
 
+        # Harbor 0.20's Docker environment can put task env values into every
+        # `docker compose exec -e` invocation. The launcher therefore mounts
+        # the mode-600 auth file by path. Copy it once inside the container as
+        # root so the configured Harbor agent user can read it; the command
+        # line contains only paths, never the credential value.
+        await self.exec_as_root(
+            environment,
+            command=(
+                f"if test -f {shlex.quote(self._AUTH_MOUNT_PATH)}; then "
+                f"install -m 0644 {shlex.quote(self._AUTH_MOUNT_PATH)} "
+                f"{shlex.quote(self._AUTH_RUNTIME_PATH)}; fi"
+            ),
+        )
+
         repo_root = str(settings.get("repo_root") or self._env("ORCH_REPO_ROOT", "/app"))
         timeout = settings.get("agent_timeout_s") or self._env("ORCH_AGENT_TIMEOUT_S")
         command = (
+            f"ORCH_AUTH_ENV_FILE={shlex.quote(self._AUTH_RUNTIME_PATH)} "
             "python3 -m orchestrator.harbor_runtime "
             f"--instruction-file {shlex.quote(instruction_path)} "
             f"--config-file {shlex.quote(config_path)}"

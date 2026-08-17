@@ -31,7 +31,8 @@ def _safe_task_id(task_id: str) -> str:
 
 
 async def spawn_sdk_worker(task: dict, worktree, *, model: str | None = None,
-                           env: dict[str, str] | None = None
+                           env: dict[str, str] | None = None,
+                           sdk_timeout_s: float | None = None,
                            ) -> asyncio.subprocess.Process:
     """Return an SDK worker process in its own process group.
 
@@ -59,6 +60,8 @@ async def spawn_sdk_worker(task: dict, worktree, *, model: str | None = None,
     child_env["PYTHONPATH"] = os.pathsep.join(
         part for part in (_SRC, child_env.get("PYTHONPATH", "")) if part
     )
+    if sdk_timeout_s is not None:
+        child_env["ORCH_SDK_TIMEOUT_S"] = str(sdk_timeout_s)
     args = [sys.executable, "-m", "orchestrator.worker.sdk_worker",
             "--task-id", task["id"], "--worktree", str(worktree),
             "--brief-file", str(brief_path)]

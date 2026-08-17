@@ -19,9 +19,12 @@ hidden verifier results never enter the agent environment. Visible
 verification is public worker feedback only, uses agent-visible repository
 state, and inherits the worker environment; benchmark use therefore requires
 the same trusted outer boundary as the worker. Caller-supplied worker
-environment variables may contain authentication material and are never
-persisted or logged. The orchestrator does not access the macOS Keychain.
-Direct live workers on the host are trusted development mode only.
+environment variables may contain authentication material. The orchestrator
+does not persist or log their values, and the Claude Harbor canary transfers
+its OAuth credential through a read-only file mount and parses it inside the
+container rather than placing it in Harbor's host environment or
+`docker compose exec` arguments. The orchestrator does not access the macOS
+Keychain. Direct live workers on the host are trusted development mode only.
 
 SDK workers use Claude Code's non-interactive `bypassPermissions` mode because
 the orchestrator has no approval-prompt channel. This setting is not an
@@ -430,6 +433,9 @@ max_retries            = 2
 repeated_failure_threshold = 1  # equivalent descendant failures before deterministic escalation
 max_nudges             = 2
 stall_threshold_s      = 300      # watchdog silence before worker.stalled
+worker_timeout_s       = 1200     # hard wall-clock cap per worker attempt
+sdk_timeout_s          = 300      # cap for one Claude SDK worker turn
+supervisor_timeout_s   = 120      # cap for one supervisor response attempt
 wait_ceiling_s         = 1800
 verify_timeout_s       = 600
 transcript_tail_tokens = 3000     # revisit if escalate reasons say

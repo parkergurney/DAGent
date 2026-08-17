@@ -174,4 +174,5 @@ def test_explicit_outer_boundary_and_trusted_development_are_distinct_opt_ins(tm
             connect(), repo, tmp_path / label,
             policy="sequential", **kwargs,
         )
-        assert scheduler.spawn_worker is spawn_sdk_worker
+        assert scheduler.spawn_worker.func is spawn_sdk_worker
+        assert scheduler.spawn_worker.keywords["sdk_timeout_s"] == 300

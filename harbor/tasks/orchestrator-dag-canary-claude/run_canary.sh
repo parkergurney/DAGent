@@ -118,9 +118,17 @@ if [ "${ORCH_DRY_RUN:-0}" = "1" ]; then
 fi
 
 if [ -n "$auth_env_file" ]; then
+  if [ ! -f "$auth_env_file" ]; then
+    printf '%s\n' "OAuth env file does not exist: $auth_env_file" >&2
+    exit 2
+  fi
+  auth_mounts=$(python3 -c 'import json, sys; print(json.dumps([{"type":"bind","source":sys.argv[1],"target":"/run/secrets/orchestrator-claude-auth.env","read_only":True}]))' "$auth_env_file")
+  # The credential is supplied through the read-only bind mount. Do not let a
+  # previously exported token leak into Harbor's own environment either.
+  unset CLAUDE_CODE_OAUTH_TOKEN
   exec harbor run \
     -y \
-    --env-file "$auth_env_file" \
+    --mounts "$auth_mounts" \
     -p "$task_dir" \
     -a orchestrator.harbor_agent:HarborOrchestratorAgent \
     -m "$model" \

@@ -432,6 +432,9 @@ def build_phase5_cell(*, package_dir: str | Path | None = None, graph: str,
         "max_concurrency": track["max_concurrency"],
         "max_retries": 0 if profile in {"worker_timeout", "no_candidate", "verification_failure", "dependency_failure"} else 2,
         "stall_threshold_s": 1 if profile == "worker_timeout" else track["stall_threshold_s"],
+        "worker_timeout_s": 1 if profile == "worker_timeout" else track["worker_timeout_s"],
+        "sdk_timeout_s": track["sdk_timeout_s"],
+        "supervisor_timeout_s": track["supervisor_timeout_s"],
         "wait_ceiling_s": 1 if profile == "worker_timeout" else track["wait_ceiling_s"],
     }
     return config

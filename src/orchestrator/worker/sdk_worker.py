@@ -52,6 +52,14 @@ _SECRET_PATTERNS = (
 _OLLAMA_TOOLS = ["Bash", "Read", "Edit", "Write", "Glob", "Grep"]
 
 
+def _sdk_timeout_s() -> float:
+    try:
+        value = float(os.environ.get("ORCH_SDK_TIMEOUT_S", "300"))
+    except ValueError:
+        value = 300.0
+    return max(value, 0.1)
+
+
 def _prompt_with_protocol(brief: str) -> str:
     return f"{brief.rstrip()}\n\n{_PROTOCOL.strip()}\n"
 
@@ -198,6 +206,7 @@ def _agent_options(worktree: Path, model: str | None, *, stderr=None) -> ClaudeA
 
 async def run(worktree: Path, brief: str, model: str | None) -> int:
     sdk_stderr: list[str] = []
+    sdk_timeout_s = _sdk_timeout_s()
 
     def capture_sdk_stderr(line: str) -> None:
         if line:
@@ -206,7 +215,13 @@ async def run(worktree: Path, brief: str, model: str | None) -> int:
     try:
         options = _agent_options(worktree, model, stderr=capture_sdk_stderr)
         client = ClaudeSDKClient(options=options)
-        await client.connect()
+        async with asyncio.timeout(sdk_timeout_s):
+            await client.connect()
+    except asyncio.TimeoutError:
+        emit("startup_failed", category="sdk_timeout", phase="connect",
+             timeout_s=sdk_timeout_s,
+             reason="Claude SDK connection exceeded its bounded timeout")
+        return 1
     except Exception as exc:
         category = "authentication_failure" if any(
             marker in _redact_text(exc).lower() for marker in _AUTH_FAILURE_MARKERS
@@ -217,36 +232,55 @@ async def run(worktree: Path, brief: str, model: str | None) -> int:
         emit("startup_failed", category=category, error=error)
         return 1
 
+    execution_started = False
+    next_prompt = _prompt_with_protocol(brief)
+
+    async def receive_turn(prompt):
+        """Run one complete SDK turn while preserving streamed worker events."""
+        nonlocal execution_started
+        kind, extra, cost_usd, session_id = None, {}, None, None
+        transcript = []
+        result_snapshot = None
+        await client.query(prompt)
+        async for msg in client.receive_response():
+            if isinstance(msg, AssistantMessage):
+                text = "".join(getattr(block, "text", "") or "" for block in msg.content)
+                if text.strip():
+                    transcript.append(text)
+                    usage = msg.usage or {}
+                    emit("messaged", text=text[:500], tokens_in=usage.get("input_tokens"),
+                         tokens_out=usage.get("output_tokens"))
+            elif isinstance(msg, ResultMessage):
+                result_snapshot = _result_snapshot(msg)
+                kind, extra = _parse_terminal(msg.result)
+                cost_usd, session_id = msg.total_cost_usd, msg.session_id
+                emit("result", **result_snapshot)
+                failure = _startup_failure_category(result_snapshot, transcript)
+                if failure:
+                    category, reason = failure
+                    emit("sdk_failed" if category == "sdk_failure" else "startup_failed",
+                         category=category, reason=reason, result=result_snapshot)
+                    return False, kind, extra, cost_usd, session_id, result_snapshot
+                if not execution_started:
+                    emit("execution_started", session_id=session_id,
+                         subtype=result_snapshot.get("subtype"))
+                    execution_started = True
+        return True, kind, extra, cost_usd, session_id, result_snapshot
+
     try:
-        await client.query(_prompt_with_protocol(brief))
-        execution_started = False
         while True:
-            kind, extra, cost_usd, session_id = None, {}, None, None
-            transcript = []
-            result_snapshot = None
-            async for msg in client.receive_response():
-                if isinstance(msg, AssistantMessage):
-                    text = "".join(getattr(block, "text", "") or "" for block in msg.content)
-                    if text.strip():
-                        transcript.append(text)
-                        usage = msg.usage or {}
-                        emit("messaged", text=text[:500], tokens_in=usage.get("input_tokens"),
-                             tokens_out=usage.get("output_tokens"))
-                elif isinstance(msg, ResultMessage):
-                    result_snapshot = _result_snapshot(msg)
-                    kind, extra = _parse_terminal(msg.result)
-                    cost_usd, session_id = msg.total_cost_usd, msg.session_id
-                    emit("result", **result_snapshot)
-                    failure = _startup_failure_category(result_snapshot, transcript)
-                    if failure:
-                        category, reason = failure
-                        emit("sdk_failed" if category == "sdk_failure" else "startup_failed",
-                             category=category, reason=reason, result=result_snapshot)
-                        return 1
-                    if not execution_started:
-                        emit("execution_started", session_id=session_id,
-                             subtype=result_snapshot.get("subtype"))
-                        execution_started = True
+            try:
+                ok, kind, extra, cost_usd, session_id, result_snapshot = await asyncio.wait_for(
+                    receive_turn(next_prompt),
+                    timeout=sdk_timeout_s,
+                )
+            except asyncio.TimeoutError:
+                emit("sdk_timeout", category="sdk_timeout", phase="turn",
+                     timeout_s=sdk_timeout_s,
+                     reason="Claude SDK turn exceeded its bounded timeout")
+                return 1
+            if not ok:
+                return 1
             if result_snapshot is None:
                 emit("startup_failed", category="sdk_initialization_failure",
                      reason="Claude SDK stream ended without a ResultMessage")
@@ -256,7 +290,7 @@ async def run(worktree: Path, brief: str, model: str | None) -> int:
                 reply = sys.stdin.readline()
                 if not reply:
                     return 0
-                await client.query(reply.rstrip("\n"))
+                next_prompt = reply.rstrip("\n")
                 continue
             if kind == "no_change":
                 emit("no_change", cost_usd=cost_usd, session_id=session_id, **extra)
@@ -276,7 +310,13 @@ async def run(worktree: Path, brief: str, model: str | None) -> int:
                 )
             return 0
     finally:
-        await client.disconnect()
+        try:
+            async with asyncio.timeout(sdk_timeout_s):
+                await client.disconnect()
+        except Exception:
+            # The worker is already terminating; disconnect must not turn a
+            # bounded SDK failure into another unbounded shutdown hang.
+            pass
 
 
 def main() -> None:

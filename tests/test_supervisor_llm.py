@@ -2,12 +2,15 @@
 No network, no SDK call -- the live model call itself is opt-in only, in
 tests/integration/test_supervisor_live.py.
 """
+import asyncio
 import json
 
 import pytest
 
 from orchestrator.supervisor import llm
-from orchestrator.supervisor.llm import SupervisorResult, _dump, _parse, _schema_block
+from orchestrator.supervisor.llm import (
+    SupervisorResult, _dump, _parse, _schema_block, invoke_supervisor,
+)
 from orchestrator.supervisor.schema import ACTION_MODELS, TriagePacket, TriggerEvent
 
 
@@ -73,3 +76,23 @@ def test_dump_can_use_a_run_scoped_artifact_root(tmp_path):
 
     assert (tmp_path / "run-a" / "supervisor" / "packets" / "1.json").exists()
     assert not (tmp_path / "t1").exists()
+
+
+def test_supervisor_timeout_falls_back_to_escalation(tmp_path, monkeypatch):
+    calls = 0
+
+    async def hanging_call(prompt, model, *, timeout_s):
+        nonlocal calls
+        calls += 1
+        raise TimeoutError
+
+    monkeypatch.setattr(llm, "_one_shot", hanging_call)
+    result = asyncio.run(
+        invoke_supervisor(_packet(allowed_actions=["escalate"]),
+                          timeout_s=0.01, artifact_root=tmp_path)
+    )
+
+    assert calls == 2
+    assert result.ok is False
+    assert result.action.action == "escalate"
+    assert "timed out after 0.01s" in result.action.reason

@@ -79,13 +79,17 @@ def _build_scheduler(conn, args) -> Scheduler:
         external_isolation=args.external_isolation,
         trusted_development=args.trusted_development,
     )
+    if not args.fake_worker and not getattr(args, "direct_cli", False):
+        spawn_worker = partial(spawn_worker, sdk_timeout_s=cfg.sdk_timeout_s)
     supervisor = always_escalate if args.fake_supervisor else partial(
-        invoke_supervisor, model=args.supervisor_model or cfg.model_supervisor)
+        invoke_supervisor, model=args.supervisor_model or cfg.model_supervisor,
+        timeout_s=cfg.supervisor_timeout_s)
     return Scheduler(
         conn, args.repo_root, Path(args.worktree_root),
         max_concurrency=args.max_concurrency, spawn_worker=spawn_worker,
         worker_model=args.worker_model or cfg.model_worker, supervisor=supervisor,
         max_nudges=cfg.max_nudges, stall_threshold_s=cfg.stall_threshold_s,
+            worker_timeout_s=cfg.worker_timeout_s,
         repeated_failure_threshold=cfg.repeated_failure_threshold,
         wait_ceiling_s=cfg.wait_ceiling_s, verify_timeout_s=cfg.verify_timeout_s,
         transcript_tail_tokens=cfg.transcript_tail_tokens, yolo=args.yolo,

@@ -12,6 +12,7 @@ class FailureClass(StrEnum):
     WORKER_CRASH = "worker_crash"
     PROTOCOL_INCOMPLETE = "protocol_incomplete"
     STARTUP_FAILURE = "startup_authentication_failure"
+    SDK_TIMEOUT = "sdk_timeout"
     TIMEOUT_STALL = "timeout_stall"
     UNCOMMITTED_CHANGES = "uncommitted_changes"
     EMPTY_DIFF = "empty_diff"
@@ -43,6 +44,7 @@ _EVENT_FAILURES = {
     "worker.stalled": FailureClass.TIMEOUT_STALL,
     "worker.timeout": FailureClass.TIMEOUT_STALL,
     "worker.startup_failed": FailureClass.STARTUP_FAILURE,
+    "worker.sdk_timeout": FailureClass.SDK_TIMEOUT,
     "verify.failed": FailureClass.VISIBLE_VERIFICATION_FAILURE,
     "artifact.validation_failed": FailureClass.VISIBLE_VERIFICATION_FAILURE,
     "interface.validation_failed": FailureClass.VISIBLE_VERIFICATION_FAILURE,
@@ -76,9 +78,9 @@ def choose_recovery(failure_class: FailureClass | str, *, retries: int,
     if equivalent:
         return RecoveryDecision(failure_class, RecoveryAction.ESCALATE,
                                 reason="equivalent public failure repeated")
-    if failure_class is FailureClass.STARTUP_FAILURE:
+    if failure_class in {FailureClass.STARTUP_FAILURE, FailureClass.SDK_TIMEOUT}:
         return RecoveryDecision(failure_class, RecoveryAction.TERMINATE,
-                                reason="startup/authentication failures are infrastructure-owned")
+                                reason="SDK startup/turn timeouts are infrastructure-owned")
     if failure_class is FailureClass.DELIVERY_FAILURE:
         return RecoveryDecision(failure_class, RecoveryAction.ESCALATE,
                                 reason="delivery requires an explicit policy or human decision")

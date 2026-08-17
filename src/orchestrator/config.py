@@ -19,6 +19,14 @@ class Config:
     repeated_failure_threshold: int = 1
     max_nudges: int = 2
     stall_threshold_s: int = 300
+    # A hard wall-clock cap for one worker attempt. This is distinct from
+    # stall_threshold_s: a worker may emit events continuously and still run
+    # past this limit.
+    worker_timeout_s: int = 1200
+    # Per-request caps for live Claude SDK calls. These keep a hung backend
+    # from holding the Harbor agent open until its outer timeout.
+    sdk_timeout_s: int = 300
+    supervisor_timeout_s: int = 120
     wait_ceiling_s: int = 1800
     verify_timeout_s: int = 600
     transcript_tail_tokens: int = 3000

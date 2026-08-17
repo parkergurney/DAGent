@@ -75,6 +75,8 @@ def build_scheduler(conn, repo_root, worktree_root, *, policy="orchestrator",
                     fake_supervisor=False, external_isolation=False,
                     trusted_development=False, artifact_root=None,
                     verify_timeout_s=None, stall_threshold_s=None,
+                    worker_timeout_s=None, sdk_timeout_s=None,
+                    supervisor_timeout_s=None,
                     wait_ceiling_s=None, base_branch="main",
                     deterministic_crash_recovery=None, adaptive_scheduling=None,
                     protocol_recovery_v2=None,
@@ -97,13 +99,22 @@ def build_scheduler(conn, repo_root, worktree_root, *, policy="orchestrator",
     cfg = config.load(config_path)
     concurrency = 1 if policy == "sequential" else max_concurrency
     worker = spawn_fake_worker if fake_worker else spawn_sdk_worker
+    worker_kwargs = {}
     if worker_env and worker in (spawn_sdk_worker, spawn_cli_worker):
-        worker = partial(worker, env=dict(worker_env))
+        worker_kwargs["env"] = dict(worker_env)
+    if not fake_worker and worker is spawn_sdk_worker:
+        worker_kwargs["sdk_timeout_s"] = (
+            sdk_timeout_s if sdk_timeout_s is not None else cfg.sdk_timeout_s
+        )
+    if worker_kwargs:
+        worker = partial(worker, **worker_kwargs)
     fault_injection = kwargs.pop("fault_injection", None)
     if fault_injection is not None:
         worker = _fault_injecting_worker(worker, fault_injection)
     supervisor = always_escalate if fake_supervisor or policy != "orchestrator" else partial(
         invoke_supervisor, model=supervisor_model or cfg.model_supervisor,
+        timeout_s=(supervisor_timeout_s if supervisor_timeout_s is not None
+                   else cfg.supervisor_timeout_s),
         artifact_root=artifact_root,
     )
     return Scheduler(
@@ -112,6 +123,7 @@ def build_scheduler(conn, repo_root, worktree_root, *, policy="orchestrator",
         supervisor=supervisor, max_nudges=cfg.max_nudges,
         artifact_root=artifact_root, base_branch=base_branch,
         stall_threshold_s=stall_threshold_s or cfg.stall_threshold_s,
+        worker_timeout_s=worker_timeout_s or cfg.worker_timeout_s,
         repeated_failure_threshold=cfg.repeated_failure_threshold,
         wait_ceiling_s=wait_ceiling_s or cfg.wait_ceiling_s,
         verify_timeout_s=verify_timeout_s or cfg.verify_timeout_s,

@@ -269,7 +269,8 @@ async def _terminate_and_reap(proc, *, terminate: bool = True) -> None:
 class Scheduler:
     def __init__(self, conn, repo_root, worktree_root, *,
                 max_concurrency=4, stall_threshold_s=300, watchdog_interval_s=5,
-                verify_timeout_s=600, spawn_worker=spawn_fake_worker, worker_model=None,
+                worker_timeout_s=1200, verify_timeout_s=600,
+                spawn_worker=spawn_fake_worker, worker_model=None,
                 supervisor=always_escalate,
                 max_nudges=2, wait_ceiling_s=1800, transcript_tail_tokens=3000, yolo=False,
                 base_branch="main", artifact_root=None, run_id=None,
@@ -282,6 +283,7 @@ class Scheduler:
         self.worktree_root = worktree_root
         self.max_concurrency = max_concurrency
         self.stall_threshold_s = stall_threshold_s
+        self.worker_timeout_s = worker_timeout_s
         self.watchdog_interval_s = watchdog_interval_s
         self.verify_timeout_s = verify_timeout_s
         self.spawn_worker = spawn_worker
@@ -338,6 +340,7 @@ class Scheduler:
         self._teardown_failures: dict[tuple[str, int], BaseException] = {}
         self._worktrees: dict[str, object] = {}
         self._last_event_ts: dict[str, float] = {}
+        self._worker_started_ts: dict[str, float] = {}
         self._wait_grace: dict[str, float] = {}  # task_id -> seconds, set by a "wait" decision
         self._infrastructure_failure: WorkerStartupFailure | None = None
         self._leases: dict[str, execution_lease.ExecutionLease] = {}
@@ -663,6 +666,7 @@ class Scheduler:
         )
         self._worktrees[task_id] = wt
         self._last_event_ts[task_id] = time.monotonic()
+        self._worker_started_ts[task_id] = self._last_event_ts[task_id]
         self._watchers[task_id] = asyncio.create_task(
             self._watch(task_id, proc, attempt_id=attempt_id, lease=lease)
         )
@@ -896,6 +900,20 @@ class Scheduler:
                     self._infrastructure_failure = WorkerStartupFailure(task_id, category, reason)
                     # This is an infrastructure abort, not a worker/task
                     # failure. It must never enter the supervisor policy.
+                    await self._teardown(task_id, expect_proc=proc)
+                    break
+                elif etype == "sdk_timeout":
+                    reason = str(payload.get("reason") or "SDK turn timed out")[:500]
+                    s = append_event(self.conn, source="worker", type="worker.sdk_timeout",
+                                     task_id=task_id, session_id=str(proc.pid),
+                                     payload={**event_payload, "failure_class": "sdk_timeout",
+                                              "reason": reason})
+                    self._append_terminal_classification(task_id, "sdk_timeout", cause_seq=s)
+                    self._capture_candidate(task_id, disposition="sdk_timeout",
+                                            failure_cause="sdk_timeout")
+                    self._infrastructure_failure = WorkerStartupFailure(
+                        task_id, "sdk_timeout", reason,
+                    )
                     await self._teardown(task_id, expect_proc=proc)
                     break
                 elif etype == "sdk_failed":
@@ -1833,6 +1851,28 @@ class Scheduler:
             await asyncio.sleep(self.watchdog_interval_s)
             now = time.monotonic()
             for task_id, last in list(self._last_event_ts.items()):
+                started = self._worker_started_ts.get(task_id)
+                if (started is not None and self.worker_timeout_s is not None
+                        and now - started >= self.worker_timeout_s):
+                    proc = self._procs.get(task_id)
+                    s = self._mark_running_failure(
+                        task_id, source="watchdog", event_type="worker.timeout",
+                        payload={
+                            "timeout_kind": "worker_wall_clock",
+                            "timeout_s": self.worker_timeout_s,
+                            "elapsed_s": round(now - started, 1),
+                        },
+                    )
+                    if s is None:
+                        continue
+                    self._append_terminal_classification(task_id, "timeout", cause_seq=s)
+                    self._wait_grace.pop(task_id, None)
+                    # A hard timeout owns the process lifecycle. Kill/reap it
+                    # before triage so no supervisor action can target an
+                    # attempt that exceeded its wall-clock budget.
+                    await self._teardown(task_id, expect_proc=proc)
+                    await self._handle_triage(task_id, s, live_proc=None)
+                    continue
                 threshold = self._wait_grace.get(task_id, self.stall_threshold_s)
                 if now - last < threshold:
                     continue
@@ -1911,6 +1951,7 @@ class Scheduler:
         exit_watcher = self._exit_watchers.pop(task_id, None)
         watcher = self._watchers.pop(task_id, None)
         self._last_event_ts.pop(task_id, None)
+        self._worker_started_ts.pop(task_id, None)
         self._wait_grace.pop(task_id, None)
 
         if exit_watcher is not None and exit_watcher not in (asyncio.current_task(), owner):

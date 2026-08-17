@@ -173,6 +173,26 @@ def test_stall_detected_by_watchdog(tmp_path):
     assert stalled["source"] == "watchdog"
 
 
+def test_hard_worker_timeout_terminates_before_triage(tmp_path):
+    repo = init_repo(tmp_path)
+    conn = connect()
+    task_id = _create(conn, repo, "stall")
+    worktree_root = tmp_path / "worktrees"
+    worktree_root.mkdir()
+    sched = Scheduler(
+        conn, repo, worktree_root, max_concurrency=1,
+        stall_threshold_s=10, worker_timeout_s=0.2,
+        watchdog_interval_s=0.02, verify_timeout_s=10,
+    )
+
+    asyncio.run(asyncio.wait_for(sched.run_until_settled(), timeout=10))
+
+    types = [e["type"] for e in _events(conn, task_id)]
+    assert "worker.timeout" in types
+    assert sched._procs == {}
+    assert conn.execute("SELECT state FROM tasks WHERE id = ?", (task_id,)).fetchone()["state"] == "needs_human"
+
+
 def test_ask_routes_to_triage_on_question(tmp_path):
     repo = init_repo(tmp_path)
     conn = connect()

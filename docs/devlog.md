@@ -10,6 +10,27 @@ evaluation boundary. The current model is Harbor-supplied outer isolation,
 internal worktree isolation, public visible verification, and a separate
 Harbor verifier; historical entries are retained as design history.
 
+## 2026-08-17 - bounded live backend timeouts
+
+Separated watchdog silence from hard worker wall-clock limits and added
+bounded Claude SDK worker-turn and supervisor response calls. A hard worker
+timeout now kills/reaps the affected process before triage; SDK timeout is
+recorded as an infrastructure failure. Harbor runtime failure paths publish
+result, metrics, task-summary, and empty patch artifacts before returning the
+failure. Manifests now record each timeout class explicitly, preventing an
+unbounded live call from consuming Harbor's outer one-hour timeout.
+
+## 2026-08-17 - Harbor OAuth argument exposure
+
+Harbor 0.20 treats task environment variables as persistent exec overlays when
+a Docker task has no Compose file. That caused the Claude OAuth value to be
+placed in the host-side `docker compose exec -e` argument vector. The Claude
+canary now bind-mounts the caller's mode-600 auth file by path and parses it
+inside the container, with an empty Compose override retained to keep other
+task variables on the startup path. The token remains available to SDK
+workers without entering Harbor's host environment or per-command arguments.
+Added regression coverage and documented the boundary.
+
 ## 2026-08-16 - Harbor graph-shape launcher
 
 Extended the Harbor DAG canary launcher to select `serial`, `wide`, `diamond`,

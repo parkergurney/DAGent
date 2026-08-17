@@ -7,6 +7,9 @@
     "context_length": 32768,
     "max_concurrency": 4,
     "stall_threshold_s": 300,
+    "worker_timeout_s": 1200,
+    "sdk_timeout_s": 300,
+    "supervisor_timeout_s": 120,
     "wait_ceiling_s": 1800,
     "authentication_mechanism": "environment",
     "resource_config": {"executor": "harbor", "inference_capacity": "remote"}
@@ -19,6 +22,9 @@
     "context_length": 32768,
     "max_concurrency": 4,
     "stall_threshold_s": 300,
+    "worker_timeout_s": 1200,
+    "sdk_timeout_s": 300,
+    "supervisor_timeout_s": 120,
     "wait_ceiling_s": 1800,
     "authentication_mechanism": "local",
     "resource_config": {"executor": "harbor", "inference_capacity": "local", "contention": "reported-separately"}

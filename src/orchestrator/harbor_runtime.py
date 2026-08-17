@@ -125,6 +125,8 @@ def _manifest(settings: dict, *, instruction: str, repo_root: Path, base_sha: st
               policy: str, verify_cmd: str, artifact_root: Path,
               task_graph: dict, fault_injection: dict | None,
               deterministic_crash_recovery: bool,
+              stall_threshold_s: int, worker_timeout_s: int,
+              sdk_timeout_s: int, supervisor_timeout_s: int,
               adaptive_scheduling: bool = True,
               protocol_recovery_v2: bool = True,
               evidence_ladder: bool = True) -> dict:
@@ -185,7 +187,10 @@ def _manifest(settings: dict, *, instruction: str, repo_root: Path, base_sha: st
         "limits": {
             "max_concurrency": _int(settings, "max_concurrency", "ORCH_MAX_CONCURRENCY", 4),
             "max_retries": _int(settings, "max_retries", "ORCH_MAX_RETRIES", 2),
-            "worker_timeout_s": _int(settings, "stall_threshold_s", "ORCH_WORKER_TIMEOUT_S", 300),
+            "stall_threshold_s": stall_threshold_s,
+            "worker_timeout_s": worker_timeout_s,
+            "sdk_timeout_s": sdk_timeout_s,
+            "supervisor_timeout_s": supervisor_timeout_s,
             "verify_timeout_s": _int(settings, "verify_timeout_s", "ORCH_VERIFY_TIMEOUT_S", 600),
             "wait_ceiling_s": _int(settings, "wait_ceiling_s", "ORCH_WAIT_CEILING_S", 1800),
         },
@@ -215,9 +220,40 @@ def _safe_failure(exc: BaseException) -> dict:
     return {"type": type(exc).__name__, "message": message[:1000]}
 
 
+def _load_auth_env_file(path: str | Path | None) -> None:
+    """Load allowlisted credentials from a mounted dotenv-style file.
+
+    This intentionally implements only ``NAME=value`` lines. It never invokes
+    a shell, expands substitutions, or records the values. A missing file is
+    allowed so the same runtime remains usable for fake/local test cells.
+    """
+    if not path:
+        return
+    auth_path = Path(path)
+    try:
+        lines = auth_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        name, separator, value = line.partition("=")
+        if not separator or name.strip() not in _AUTH_ENV_NAMES:
+            continue
+        name = name.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ.setdefault(name, value)
+
+
 async def run_from_files(instruction_file: str | Path, config_file: str | Path | None = None) -> int:
     started = time.monotonic()
     settings = _config(str(config_file) if config_file else None)
+    _load_auth_env_file(os.environ.get("ORCH_AUTH_ENV_FILE"))
     task_specs = _task_specs(settings)
     task_graph = _task_graph_metadata(settings)
     fault_injection = _fault_injection(settings)
@@ -257,11 +293,19 @@ async def run_from_files(instruction_file: str | Path, config_file: str | Path |
     policy = str(_value(settings, "policy", "ORCH_POLICY", "orchestrator"))
     title = str(_value(settings, "title", "ORCH_TITLE", "Harbor task"))
     verify_cmd = _value(settings, "verify_cmd", "ORCH_VERIFY_CMD", "true")
+    stall_threshold_s = _int(settings, "stall_threshold_s", "ORCH_STALL_THRESHOLD_S", 300)
+    worker_timeout_s = _int(settings, "worker_timeout_s", "ORCH_WORKER_TIMEOUT_S", 1200)
+    sdk_timeout_s = _int(settings, "sdk_timeout_s", "ORCH_SDK_TIMEOUT_S", 300)
+    supervisor_timeout_s = _int(
+        settings, "supervisor_timeout_s", "ORCH_SUPERVISOR_TIMEOUT_S", 120,
+    )
     manifest = _manifest(
         settings, instruction=instruction, repo_root=repo_root, base_sha=base_sha,
         policy=policy, verify_cmd=verify_cmd, artifact_root=artifact_root,
         task_graph=task_graph, fault_injection=fault_injection,
         deterministic_crash_recovery=deterministic_crash_recovery,
+        stall_threshold_s=stall_threshold_s, worker_timeout_s=worker_timeout_s,
+        sdk_timeout_s=sdk_timeout_s, supervisor_timeout_s=supervisor_timeout_s,
         adaptive_scheduling=_bool(_value(settings, "adaptive_scheduling",
                                           "ORCH_ADAPTIVE_SCHEDULING", True)),
         protocol_recovery_v2=_bool(_value(settings, "protocol_recovery_v2",
@@ -301,7 +345,10 @@ async def run_from_files(instruction_file: str | Path, config_file: str | Path |
             supervisor_model=_value(settings, "supervisor_model", "ORCH_SUPERVISOR_MODEL", None),
             artifact_root=run_artifact_root,
             verify_timeout_s=_int(settings, "verify_timeout_s", "ORCH_VERIFY_TIMEOUT_S", 600),
-            stall_threshold_s=_int(settings, "stall_threshold_s", "ORCH_WORKER_TIMEOUT_S", 300),
+            stall_threshold_s=stall_threshold_s,
+            worker_timeout_s=worker_timeout_s,
+            sdk_timeout_s=sdk_timeout_s,
+            supervisor_timeout_s=supervisor_timeout_s,
             wait_ceiling_s=_int(settings, "wait_ceiling_s", "ORCH_WAIT_CEILING_S", 1800),
             config_path=_value(settings, "config_path", "ORCH_CONFIG_PATH", None),
             base_branch=str(_value(settings, "base_branch", "ORCH_BASE_BRANCH", "main")),

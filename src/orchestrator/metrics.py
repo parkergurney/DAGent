@@ -189,7 +189,8 @@ def metrics_for(conn: sqlite3.Connection) -> RunMetrics:
     for row in conn.execute("SELECT seq, type, payload FROM events ORDER BY seq"):
         payload = json.loads(row["payload"] or "{}")
         if row["type"] in {"worker.exited", "worker.protocol_incomplete", "worker.stalled",
-                            "worker.startup_failed", "worker.sdk_failure", "verify.failed",
+                            "worker.timeout", "worker.sdk_timeout", "worker.startup_failed",
+                            "worker.sdk_failure", "verify.failed",
                             "artifact.validation_failed", "interface.validation_failed",
                             "delivery.failed"}:
             value = ("sdk_failure" if row["type"] == "worker.sdk_failure"

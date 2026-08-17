@@ -1,6 +1,7 @@
 import asyncio
 import json
 import shutil
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -48,6 +49,33 @@ def test_wrapper_invokes_in_container_runtime_without_secret_in_command(tmp_path
     assert "orchestrator.harbor_runtime" in command
     assert "ANTHROPIC_API_KEY" not in command
     assert "change the file" not in command
+
+
+def test_claude_canary_uses_startup_env_for_credentials():
+    task_dir = Path(__file__).parents[1] / "harbor/tasks/orchestrator-dag-canary-claude"
+    task = tomllib.loads((task_dir / "task.toml").read_text())
+    compose = (task_dir / "environment/docker-compose.yaml").read_text()
+
+    assert task["environment"]["env"]["ORCH_AUTH_ENV_FILE"] == (
+        "/run/secrets/orchestrator-claude-auth.env"
+    )
+    assert "services: {}" in compose
+    assert "CLAUDE_CODE_OAUTH_TOKEN=" not in compose
+
+
+def test_runtime_loads_only_allowlisted_auth_file_values(tmp_path, monkeypatch):
+    token = "oauth-mounted-test-token"
+    auth_file = tmp_path / "auth.env"
+    auth_file.write_text(
+        f"CLAUDE_CODE_OAUTH_TOKEN={token}\nUNSAFE_VALUE=should-not-load\n"
+    )
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.delenv("UNSAFE_VALUE", raising=False)
+
+    harbor_runtime._load_auth_env_file(auth_file)
+
+    assert harbor_runtime.os.environ["CLAUDE_CODE_OAUTH_TOKEN"] == token
+    assert "UNSAFE_VALUE" not in harbor_runtime.os.environ
 
 
 def test_runtime_exports_patch_metrics_and_result(tmp_path):
@@ -181,6 +209,9 @@ def test_runtime_redacts_credentials_from_failure_metadata(tmp_path, monkeypatch
         ))
     metadata = json.loads((artifacts / "result.json").read_text())
     assert secret not in json.dumps(metadata)
+    assert (artifacts / "metrics.json").exists()
+    assert (artifacts / "task_summary.json").exists()
+    assert (artifacts / "candidate.patch").read_text() == ""
 
 
 def test_runtime_redacts_subscription_oauth_token_from_failure_metadata(monkeypatch):

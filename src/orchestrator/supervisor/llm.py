@@ -12,6 +12,7 @@ prompt/model offline.
 """
 import json
 import os
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -66,19 +67,21 @@ def _parse(text: str, allowed_actions: list[str]) -> SupervisorAction:
     return ACTION_MODELS[action_name].model_validate(data)
 
 
-async def _one_shot(prompt: str, model: str | None) -> tuple:
+async def _one_shot(prompt: str, model: str | None, *, timeout_s: float = 120) -> tuple:
     """A single stateless completion via the Agent SDK's query() function --
-    no tools, no session, no memory."""
+    no tools, no session, no memory. The timeout covers the complete streamed
+    response, including backend connection and shutdown."""
     options = ClaudeAgentOptions(model=model, tools=[], max_turns=1, system_prompt=SYSTEM_PROMPT)
     text_parts = []
     usage = {"tokens_in": None, "tokens_out": None, "cost_usd": None}
-    async for msg in query(prompt=prompt, options=options):
-        if isinstance(msg, AssistantMessage):
-            text_parts.append("".join(getattr(b, "text", "") or "" for b in msg.content))
-        elif isinstance(msg, ResultMessage):
-            usage = {"tokens_in": (msg.usage or {}).get("input_tokens"),
-                    "tokens_out": (msg.usage or {}).get("output_tokens"),
-                    "cost_usd": msg.total_cost_usd}
+    async with asyncio.timeout(max(float(timeout_s), 0.1)):
+        async for msg in query(prompt=prompt, options=options):
+            if isinstance(msg, AssistantMessage):
+                text_parts.append("".join(getattr(b, "text", "") or "" for b in msg.content))
+            elif isinstance(msg, ResultMessage):
+                usage = {"tokens_in": (msg.usage or {}).get("input_tokens"),
+                        "tokens_out": (msg.usage or {}).get("output_tokens"),
+                        "cost_usd": msg.total_cost_usd}
     return "".join(text_parts), usage
 
 
@@ -106,14 +109,22 @@ def _fallback_escalate(packet: TriagePacket, error: str, raw_text: str | None) -
 
 
 async def invoke_supervisor(packet: TriagePacket, *, model: str | None = None,
-                            artifact_root=None) -> SupervisorResult:
+                            artifact_root=None, timeout_s: float = 120) -> SupervisorResult:
     prompt = f"{_schema_block(packet.allowed_actions)}\n\nPacket:\n{packet.model_dump_json(indent=2)}"
     text = None
 
     for attempt in range(2):
         try:
-            text, usage = await _one_shot(prompt, model)
+            text, usage = await _one_shot(prompt, model, timeout_s=timeout_s)
             action = _parse(text, packet.allowed_actions)
+        except asyncio.TimeoutError:
+            error = f"supervisor call timed out after {timeout_s:g}s"
+            if attempt == 0:
+                prompt += f"\n\nYour previous response timed out ({error}). Respond with ONLY the corrected JSON object."
+                continue
+            result = _fallback_escalate(packet, error, text)
+            _dump(packet, result, artifact_root)
+            return result
         except Exception as e:
             # Broad on purpose: this is the explicit "when the judgment layer
             # breaks, degrade to the human, visibly" boundary (design.md
