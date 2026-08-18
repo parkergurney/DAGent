@@ -930,6 +930,16 @@ class Scheduler:
                     self._capture_candidate(task_id, disposition="sdk_failure",
                                             failure_cause="sdk_failure")
                     self._append_terminal_classification(task_id, "sdk_failure", cause_seq=s)
+                    reason = str(
+                        payload.get("reason") or "Claude Code returned an SDK error"
+                    )[:500]
+                    # An SDK ResultMessage error is an infrastructure failure,
+                    # not a recoverable task failure. Mark it before teardown
+                    # so run_until_settled raises instead of leaving the task
+                    # in `running` after its process has been removed.
+                    self._infrastructure_failure = WorkerStartupFailure(
+                        task_id, "sdk_failure", reason,
+                    )
                     await self._teardown(task_id, expect_proc=proc)
                     break
                 elif etype == "unclaimed":

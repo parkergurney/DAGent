@@ -120,6 +120,8 @@ def _result_snapshot(message: ResultMessage) -> dict:
 
 def _startup_failure_category(snapshot: dict | None, transcript: list[str]) -> tuple[str, str] | None:
     result = snapshot or {}
+    if result.get("api_error_status") == 401:
+        return "authentication_failure", "Claude backend rejected authentication (HTTP 401)"
     text = "\n".join([*transcript, str(result.get("result") or ""),
                        *[str(item) for item in result.get("errors") or []]])
     lowered = text.lower()
@@ -292,6 +294,11 @@ async def run(worktree: Path, brief: str, model: str | None, task_id: str | None
                     failure = _startup_failure_category(result_snapshot, transcript)
                     if failure:
                         category, reason = failure
+                        diagnostic(
+                            "sdk.failed", turn=turn_number, category=category,
+                            api_error_status=result_snapshot.get("api_error_status"),
+                            has_session=bool(result_snapshot.get("session_id")),
+                        )
                         emit("sdk_failed" if category == "sdk_failure" else "startup_failed",
                              category=category, reason=reason, result=result_snapshot)
                         return False, kind, extra, cost_usd, session_id, result_snapshot

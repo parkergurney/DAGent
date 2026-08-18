@@ -41,6 +41,12 @@ between a worker that never started, an SDK connection that never completed,
 and a model turn that never produced a response when Harbor cancels the outer
 agent before normal finalization.
 
+The first live diagnostic run found an additional scheduler bug: Claude
+connected, prompts were submitted, and the SDK returned errors, but the
+resulting `sdk_failed` event removed the worker without raising the recorded
+infrastructure failure. Tasks remained active until Harbor's one-hour cap.
+SDK result failures now abort the run before teardown can strand those tasks.
+
 ## 2026-08-16 - Harbor graph-shape launcher
 
 Extended the Harbor DAG canary launcher to select `serial`, `wide`, `diamond`,

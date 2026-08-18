@@ -322,3 +322,9 @@ def test_authentication_result_fails_even_with_success_exit_code(tmp_path, capsy
     assert [event["type"] for event in events] == ["messaged", "result", "startup_failed"]
     assert events[-1]["payload"]["category"] == "authentication_failure"
     assert "execution_started" not in [event["type"] for event in events]
+
+
+def test_http_401_result_is_classified_as_authentication_failure():
+    assert sdk_worker._startup_failure_category(
+        {"api_error_status": 401, "session_id": "s1"}, []
+    ) == ("authentication_failure", "Claude backend rejected authentication (HTTP 401)")

@@ -193,6 +193,36 @@ class _StartupFailureProc:
         return self.returncode
 
 
+class _SDKFailureStream:
+    def __init__(self):
+        self.lines = [
+            json.dumps({"type": "result", "payload": {
+                "subtype": "success", "is_error": True,
+                "session_id": "sdk-session", "result": "backend error",
+                "api_error_status": 502,
+            }}).encode() + b"\n",
+            json.dumps({"type": "sdk_failed", "payload": {
+                "category": "sdk_failure", "reason": "Claude backend returned an API error",
+            }}).encode() + b"\n",
+            b"",
+        ]
+
+    async def readline(self):
+        return self.lines.pop(0)
+
+
+class _SDKFailureProc:
+    pid = 7799
+    returncode = 1
+    stdin = None
+
+    def __init__(self):
+        self.stdout = _SDKFailureStream()
+
+    async def wait(self):
+        return self.returncode
+
+
 def test_startup_auth_failure_aborts_without_supervisor_or_retry(tmp_path):
     repo = init_repo(tmp_path)
     conn = connect()
@@ -223,6 +253,26 @@ def test_startup_auth_failure_aborts_without_supervisor_or_retry(tmp_path):
                            (task_id,)).fetchone()
     assert attempt["disposition"] == "startup_failed"
     assert attempt["failure_cause"] == "authentication_failure"
+
+
+def test_sdk_result_failure_aborts_before_scheduler_can_hang(tmp_path):
+    repo = init_repo(tmp_path)
+    conn = connect()
+    task_id = _create(conn, repo, "sdk failure")
+
+    async def spawn(_task, _worktree, *, model=None):
+        return _SDKFailureProc()
+
+    scheduler = Scheduler(
+        conn, repo, tmp_path / "worktrees", max_concurrency=1,
+        spawn_worker=spawn,
+    )
+    with pytest.raises(WorkerStartupFailure, match="sdk_failure"):
+        asyncio.run(asyncio.wait_for(scheduler.run_until_settled(), timeout=10))
+
+    types = [row["type"] for row in _events(conn, task_id)]
+    assert "worker.sdk_failure" in types
+    assert "worker.exited" not in types
 
 
 class _SpyProc:
