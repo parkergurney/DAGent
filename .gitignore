@@ -14,7 +14,3 @@ __pycache__/
 
 # Local operator configuration.
 /repos.toml
-
-# Local review/editor artifacts and OS metadata.
-/.lavish/
-.DS_Store
