@@ -49,14 +49,15 @@ if [ "$backend" = "ollama" ]; then
 fi
 
 latest_job() {
-  .venv/bin/python - "$repo_root/jobs" <<'PY'
+  .venv/bin/python - "$repo_root/jobs" "$(basename "$task_dir")__" <<'PY'
 import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
+job_prefix = sys.argv[2]
 candidates = [
     path for path in root.rglob("result.json")
-    if "orchestrator-dag-canary__" in str(path)
+    if any(part.startswith(job_prefix) for part in path.parts)
 ]
 if not candidates:
     raise SystemExit(1)
