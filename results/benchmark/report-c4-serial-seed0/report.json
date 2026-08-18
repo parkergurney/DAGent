@@ -1,0 +1,1383 @@
+{
+  "cells": 6,
+  "cells_detail": [
+    {
+      "adaptive_scheduling": true,
+      "attempts": 10,
+      "authentication": {
+        "mechanism": "subscription-oauth",
+        "source": "Harbor-injected environment",
+        "values_recorded": false
+      },
+      "backend": "anthropic",
+      "backend_track": "practice-claude",
+      "base_sha": "9d40c7ad5ea4dd596f9b98c82f57f6abadd8374d",
+      "cancelled": 0,
+      "candidate_sha": "5f15376bb6283d0fbb733b406e8f8b949150b4be",
+      "candidate_to_retry_s": 0.0,
+      "cell_status": "success",
+      "cell_status_reason": null,
+      "context_length": 32768,
+      "cost_usd": 1.319195,
+      "delivered": 10,
+      "dependency_blocked": 0,
+      "deterministic_crash_recovery": true,
+      "deterministic_recovery": true,
+      "eligible_for_outcome": true,
+      "evidence_ladder": true,
+      "evidence_stage_counts": {
+        "artifact_schema": 10,
+        "full_visible_verification": 10,
+        "git_candidate": 10,
+        "protocol_result": 10,
+        "targeted_checks": 10
+      },
+      "evidence_stage_timing_s": {
+        "artifact_schema": 0.0,
+        "full_visible_verification": 0.01,
+        "git_candidate": 0.053,
+        "protocol_result": 0.0,
+        "targeted_checks": 0.0
+      },
+      "executed": 10,
+      "failed": 0,
+      "failure_class": null,
+      "failure_classes": {},
+      "fault_injection": null,
+      "fault_profile": "clean",
+      "fault_target": null,
+      "fault_target_reachability": {
+        "enabled": false,
+        "requires_root": false,
+        "target": null
+      },
+      "fault_target_reached": false,
+      "first_failure_class": null,
+      "first_failure_event_seq": null,
+      "graph_id": "serial",
+      "graph_shape": "serial",
+      "harbor_version": "0.20.0",
+      "instruction_sha256": "10d02430148fe323ff404324d9c1c405a27bdd154adbcfb50d7fcb390fb2e3e7",
+      "interventions": 0,
+      "limits": {
+        "max_concurrency": 4,
+        "max_retries": 2,
+        "sdk_timeout_s": 300,
+        "stall_threshold_s": 300,
+        "supervisor_timeout_s": 120,
+        "verify_timeout_s": 600,
+        "wait_ceiling_s": 1800,
+        "worker_timeout_s": 1200
+      },
+      "model": {
+        "supervisor": "claude-sonnet-4-6",
+        "worker": "claude-sonnet-4-6"
+      },
+      "needs_human": 0,
+      "orchestrator_version": "0.0.1",
+      "peak_live_workers": 1,
+      "policy": "sequential",
+      "protocol_recovery_v2": true,
+      "queue_wait_s": 0.108,
+      "recovery_attempts": 0,
+      "recovery_failed": 0,
+      "recovery_time_s": 0,
+      "recovery_verified": 0,
+      "repository": {
+        "base_sha": "9d40c7ad5ea4dd596f9b98c82f57f6abadd8374d",
+        "root": "/app"
+      },
+      "resource_config": {},
+      "runtime_comparable": true,
+      "schema_version": 1,
+      "seed": "0",
+      "slot_occupancy_s": 141.106,
+      "state": "delivered",
+      "state_counts": {
+        "delivered": 10
+      },
+      "supervisor_cost_usd": 0.0,
+      "supervisor_s": 0,
+      "task_count": 10,
+      "task_definition_sha256": "3970c4ed6d6ad8b8b0b3538abf924356c120368fe1767a4cde6a17a5006d6c7a",
+      "task_graph": {
+        "count": 10,
+        "sha256": "f3a1ab538aa1c9ff2bacbc38ad48b0a5c241f182583d872c461304c15401826d",
+        "tasks": [
+          {
+            "depends_on": [],
+            "id": "serial-00"
+          },
+          {
+            "depends_on": [
+              "serial-00"
+            ],
+            "id": "serial-01"
+          },
+          {
+            "depends_on": [
+              "serial-01"
+            ],
+            "id": "serial-02"
+          },
+          {
+            "depends_on": [
+              "serial-02"
+            ],
+            "id": "serial-03"
+          },
+          {
+            "depends_on": [
+              "serial-03"
+            ],
+            "id": "serial-04"
+          },
+          {
+            "depends_on": [
+              "serial-04"
+            ],
+            "id": "serial-05"
+          },
+          {
+            "depends_on": [
+              "serial-05"
+            ],
+            "id": "serial-06"
+          },
+          {
+            "depends_on": [
+              "serial-06"
+            ],
+            "id": "serial-07"
+          },
+          {
+            "depends_on": [
+              "serial-07"
+            ],
+            "id": "serial-08"
+          },
+          {
+            "depends_on": [
+              "serial-08"
+            ],
+            "id": "serial-09"
+          }
+        ]
+      },
+      "task_id": "serial-00",
+      "task_ids": [
+        "serial-00",
+        "serial-01",
+        "serial-02",
+        "serial-03",
+        "serial-04",
+        "serial-05",
+        "serial-06",
+        "serial-07",
+        "serial-08",
+        "serial-09"
+      ],
+      "task_package_sha256": "3970c4ed6d6ad8b8b0b3538abf924356c120368fe1767a4cde6a17a5006d6c7a",
+      "task_states": {
+        "serial-00": "delivered",
+        "serial-01": "delivered",
+        "serial-02": "delivered",
+        "serial-03": "delivered",
+        "serial-04": "delivered",
+        "serial-05": "delivered",
+        "serial-06": "delivered",
+        "serial-07": "delivered",
+        "serial-08": "delivered",
+        "serial-09": "delivered"
+      },
+      "tasks": 10,
+      "terminal_classifications": {
+        "completed": 10
+      },
+      "terminal_state_counts": {
+        "delivered": 10
+      },
+      "tokens_in": 120,
+      "tokens_out": 10862,
+      "triage_s": 0.0,
+      "trial_id": "unknown",
+      "verification_attempts": 10,
+      "verification_recoveries": 0,
+      "verification_s": 0.216,
+      "verified_completion_rate": 1.0,
+      "verifier": {
+        "artifact_root": "/logs/artifacts",
+        "identity": "unspecified",
+        "mode": "separate",
+        "visible_command": "true"
+      },
+      "verify_failed": 0,
+      "wall_time_s": 141.84,
+      "worker_cost_usd": 1.319195,
+      "worker_execution_s": 140.993,
+      "worker_limit": 1
+    },
+    {
+      "adaptive_scheduling": true,
+      "attempts": 10,
+      "authentication": {
+        "mechanism": "subscription-oauth",
+        "source": "Harbor-injected environment",
+        "values_recorded": false
+      },
+      "backend": "anthropic",
+      "backend_track": "practice-claude",
+      "base_sha": "9d40c7ad5ea4dd596f9b98c82f57f6abadd8374d",
+      "cancelled": 0,
+      "candidate_sha": "4abd32614d5f765fdd3463bbf32075c732558384",
+      "candidate_to_retry_s": 0.0,
+      "cell_status": "success",
+      "cell_status_reason": null,
+      "context_length": 32768,
+      "cost_usd": 1.0601194,
+      "delivered": 10,
+      "dependency_blocked": 0,
+      "deterministic_crash_recovery": true,
+      "deterministic_recovery": true,
+      "eligible_for_outcome": true,
+      "evidence_ladder": true,
+      "evidence_stage_counts": {
+        "artifact_schema": 10,
+        "full_visible_verification": 10,
+        "git_candidate": 10,
+        "protocol_result": 10,
+        "targeted_checks": 10
+      },
+      "evidence_stage_timing_s": {
+        "artifact_schema": 0.0,
+        "full_visible_verification": 0.014,
+        "git_candidate": 0.063,
+        "protocol_result": 0.0,
+        "targeted_checks": 0.0
+      },
+      "executed": 10,
+      "failed": 0,
+      "failure_class": null,
+      "failure_classes": {},
+      "fault_injection": null,
+      "fault_profile": "clean",
+      "fault_target": null,
+      "fault_target_reachability": {
+        "enabled": false,
+        "requires_root": false,
+        "target": null
+      },
+      "fault_target_reached": false,
+      "first_failure_class": null,
+      "first_failure_event_seq": null,
+      "graph_id": "serial",
+      "graph_shape": "serial",
+      "harbor_version": "0.20.0",
+      "instruction_sha256": "10d02430148fe323ff404324d9c1c405a27bdd154adbcfb50d7fcb390fb2e3e7",
+      "interventions": 0,
+      "limits": {
+        "max_concurrency": 4,
+        "max_retries": 2,
+        "sdk_timeout_s": 300,
+        "stall_threshold_s": 300,
+        "supervisor_timeout_s": 120,
+        "verify_timeout_s": 600,
+        "wait_ceiling_s": 1800,
+        "worker_timeout_s": 1200
+      },
+      "model": {
+        "supervisor": "claude-sonnet-4-6",
+        "worker": "claude-sonnet-4-6"
+      },
+      "needs_human": 0,
+      "orchestrator_version": "0.0.1",
+      "peak_live_workers": 1,
+      "policy": "naive-parallel",
+      "protocol_recovery_v2": true,
+      "queue_wait_s": 0.121,
+      "recovery_attempts": 0,
+      "recovery_failed": 0,
+      "recovery_time_s": 0,
+      "recovery_verified": 0,
+      "repository": {
+        "base_sha": "9d40c7ad5ea4dd596f9b98c82f57f6abadd8374d",
+        "root": "/app"
+      },
+      "resource_config": {},
+      "runtime_comparable": true,
+      "schema_version": 1,
+      "seed": "0",
+      "slot_occupancy_s": 168.279,
+      "state": "delivered",
+      "state_counts": {
+        "delivered": 10
+      },
+      "supervisor_cost_usd": 0.0,
+      "supervisor_s": 0,
+      "task_count": 10,
+      "task_definition_sha256": "3970c4ed6d6ad8b8b0b3538abf924356c120368fe1767a4cde6a17a5006d6c7a",
+      "task_graph": {
+        "count": 10,
+        "sha256": "f3a1ab538aa1c9ff2bacbc38ad48b0a5c241f182583d872c461304c15401826d",
+        "tasks": [
+          {
+            "depends_on": [],
+            "id": "serial-00"
+          },
+          {
+            "depends_on": [
+              "serial-00"
+            ],
+            "id": "serial-01"
+          },
+          {
+            "depends_on": [
+              "serial-01"
+            ],
+            "id": "serial-02"
+          },
+          {
+            "depends_on": [
+              "serial-02"
+            ],
+            "id": "serial-03"
+          },
+          {
+            "depends_on": [
+              "serial-03"
+            ],
+            "id": "serial-04"
+          },
+          {
+            "depends_on": [
+              "serial-04"
+            ],
+            "id": "serial-05"
+          },
+          {
+            "depends_on": [
+              "serial-05"
+            ],
+            "id": "serial-06"
+          },
+          {
+            "depends_on": [
+              "serial-06"
+            ],
+            "id": "serial-07"
+          },
+          {
+            "depends_on": [
+              "serial-07"
+            ],
+            "id": "serial-08"
+          },
+          {
+            "depends_on": [
+              "serial-08"
+            ],
+            "id": "serial-09"
+          }
+        ]
+      },
+      "task_id": "serial-00",
+      "task_ids": [
+        "serial-00",
+        "serial-01",
+        "serial-02",
+        "serial-03",
+        "serial-04",
+        "serial-05",
+        "serial-06",
+        "serial-07",
+        "serial-08",
+        "serial-09"
+      ],
+      "task_package_sha256": "3970c4ed6d6ad8b8b0b3538abf924356c120368fe1767a4cde6a17a5006d6c7a",
+      "task_states": {
+        "serial-00": "delivered",
+        "serial-01": "delivered",
+        "serial-02": "delivered",
+        "serial-03": "delivered",
+        "serial-04": "delivered",
+        "serial-05": "delivered",
+        "serial-06": "delivered",
+        "serial-07": "delivered",
+        "serial-08": "delivered",
+        "serial-09": "delivered"
+      },
+      "tasks": 10,
+      "terminal_classifications": {
+        "completed": 10
+      },
+      "terminal_state_counts": {
+        "delivered": 10
+      },
+      "tokens_in": 122,
+      "tokens_out": 10832,
+      "triage_s": 0.0,
+      "trial_id": "unknown",
+      "verification_attempts": 10,
+      "verification_recoveries": 0,
+      "verification_s": 0.252,
+      "verified_completion_rate": 1.0,
+      "verifier": {
+        "artifact_root": "/logs/artifacts",
+        "identity": "unspecified",
+        "mode": "separate",
+        "visible_command": "true"
+      },
+      "verify_failed": 0,
+      "wall_time_s": 169.019,
+      "worker_cost_usd": 1.0601194,
+      "worker_execution_s": 168.157,
+      "worker_limit": 4
+    },
+    {
+      "adaptive_scheduling": true,
+      "attempts": 10,
+      "authentication": {
+        "mechanism": "subscription-oauth",
+        "source": "Harbor-injected environment",
+        "values_recorded": false
+      },
+      "backend": "anthropic",
+      "backend_track": "practice-claude",
+      "base_sha": "9d40c7ad5ea4dd596f9b98c82f57f6abadd8374d",
+      "cancelled": 0,
+      "candidate_sha": "7493ed1e707bd93bb5e6708bd182eebf195a7fd6",
+      "candidate_to_retry_s": 0.0,
+      "cell_status": "success",
+      "cell_status_reason": null,
+      "context_length": 32768,
+      "cost_usd": 0.8312906,
+      "delivered": 10,
+      "dependency_blocked": 0,
+      "deterministic_crash_recovery": true,
+      "deterministic_recovery": true,
+      "eligible_for_outcome": true,
+      "evidence_ladder": true,
+      "evidence_stage_counts": {
+        "artifact_schema": 10,
+        "full_visible_verification": 10,
+        "git_candidate": 10,
+        "protocol_result": 10,
+        "targeted_checks": 10
+      },
+      "evidence_stage_timing_s": {
+        "artifact_schema": 0.0,
+        "full_visible_verification": 0.01,
+        "git_candidate": 0.056,
+        "protocol_result": 0.0,
+        "targeted_checks": 0.0
+      },
+      "executed": 10,
+      "failed": 0,
+      "failure_class": null,
+      "failure_classes": {},
+      "fault_injection": null,
+      "fault_profile": "clean",
+      "fault_target": null,
+      "fault_target_reachability": {
+        "enabled": false,
+        "requires_root": false,
+        "target": null
+      },
+      "fault_target_reached": false,
+      "first_failure_class": null,
+      "first_failure_event_seq": null,
+      "graph_id": "serial",
+      "graph_shape": "serial",
+      "harbor_version": "0.20.0",
+      "instruction_sha256": "10d02430148fe323ff404324d9c1c405a27bdd154adbcfb50d7fcb390fb2e3e7",
+      "interventions": 0,
+      "limits": {
+        "max_concurrency": 4,
+        "max_retries": 2,
+        "sdk_timeout_s": 300,
+        "stall_threshold_s": 300,
+        "supervisor_timeout_s": 120,
+        "verify_timeout_s": 600,
+        "wait_ceiling_s": 1800,
+        "worker_timeout_s": 1200
+      },
+      "model": {
+        "supervisor": "claude-sonnet-4-6",
+        "worker": "claude-sonnet-4-6"
+      },
+      "needs_human": 0,
+      "orchestrator_version": "0.0.1",
+      "peak_live_workers": 1,
+      "policy": "orchestrator",
+      "protocol_recovery_v2": true,
+      "queue_wait_s": 0.119,
+      "recovery_attempts": 0,
+      "recovery_failed": 0,
+      "recovery_time_s": 0,
+      "recovery_verified": 0,
+      "repository": {
+        "base_sha": "9d40c7ad5ea4dd596f9b98c82f57f6abadd8374d",
+        "root": "/app"
+      },
+      "resource_config": {},
+      "runtime_comparable": true,
+      "schema_version": 1,
+      "seed": "0",
+      "slot_occupancy_s": 162.71,
+      "state": "delivered",
+      "state_counts": {
+        "delivered": 10
+      },
+      "supervisor_cost_usd": 0.0,
+      "supervisor_s": 0,
+      "task_count": 10,
+      "task_definition_sha256": "3970c4ed6d6ad8b8b0b3538abf924356c120368fe1767a4cde6a17a5006d6c7a",
+      "task_graph": {
+        "count": 10,
+        "sha256": "f3a1ab538aa1c9ff2bacbc38ad48b0a5c241f182583d872c461304c15401826d",
+        "tasks": [
+          {
+            "depends_on": [],
+            "id": "serial-00"
+          },
+          {
+            "depends_on": [
+              "serial-00"
+            ],
+            "id": "serial-01"
+          },
+          {
+            "depends_on": [
+              "serial-01"
+            ],
+            "id": "serial-02"
+          },
+          {
+            "depends_on": [
+              "serial-02"
+            ],
+            "id": "serial-03"
+          },
+          {
+            "depends_on": [
+              "serial-03"
+            ],
+            "id": "serial-04"
+          },
+          {
+            "depends_on": [
+              "serial-04"
+            ],
+            "id": "serial-05"
+          },
+          {
+            "depends_on": [
+              "serial-05"
+            ],
+            "id": "serial-06"
+          },
+          {
+            "depends_on": [
+              "serial-06"
+            ],
+            "id": "serial-07"
+          },
+          {
+            "depends_on": [
+              "serial-07"
+            ],
+            "id": "serial-08"
+          },
+          {
+            "depends_on": [
+              "serial-08"
+            ],
+            "id": "serial-09"
+          }
+        ]
+      },
+      "task_id": "serial-00",
+      "task_ids": [
+        "serial-00",
+        "serial-01",
+        "serial-02",
+        "serial-03",
+        "serial-04",
+        "serial-05",
+        "serial-06",
+        "serial-07",
+        "serial-08",
+        "serial-09"
+      ],
+      "task_package_sha256": "3970c4ed6d6ad8b8b0b3538abf924356c120368fe1767a4cde6a17a5006d6c7a",
+      "task_states": {
+        "serial-00": "delivered",
+        "serial-01": "delivered",
+        "serial-02": "delivered",
+        "serial-03": "delivered",
+        "serial-04": "delivered",
+        "serial-05": "delivered",
+        "serial-06": "delivered",
+        "serial-07": "delivered",
+        "serial-08": "delivered",
+        "serial-09": "delivered"
+      },
+      "tasks": 10,
+      "terminal_classifications": {
+        "completed": 10
+      },
+      "terminal_state_counts": {
+        "delivered": 10
+      },
+      "tokens_in": 122,
+      "tokens_out": 10538,
+      "triage_s": 0.0,
+      "trial_id": "unknown",
+      "verification_attempts": 10,
+      "verification_recoveries": 0,
+      "verification_s": 0.231,
+      "verified_completion_rate": 1.0,
+      "verifier": {
+        "artifact_root": "/logs/artifacts",
+        "identity": "unspecified",
+        "mode": "separate",
+        "visible_command": "true"
+      },
+      "verify_failed": 0,
+      "wall_time_s": 163.457,
+      "worker_cost_usd": 0.8312906,
+      "worker_execution_s": 162.593,
+      "worker_limit": 4
+    },
+    {
+      "adaptive_scheduling": true,
+      "attempts": 11,
+      "authentication": {
+        "mechanism": "subscription-oauth",
+        "source": "Harbor-injected environment",
+        "values_recorded": false
+      },
+      "backend": "anthropic",
+      "backend_track": "practice-claude",
+      "base_sha": "9d40c7ad5ea4dd596f9b98c82f57f6abadd8374d",
+      "cancelled": 0,
+      "candidate_sha": "8a14fb9aa850253b41f78cd04c019a17fca6175b",
+      "candidate_to_retry_s": 0.024,
+      "cell_status": "success",
+      "cell_status_reason": null,
+      "context_length": 32768,
+      "cost_usd": 0.8885525999999999,
+      "delivered": 10,
+      "dependency_blocked": 0,
+      "deterministic_crash_recovery": true,
+      "deterministic_recovery": true,
+      "eligible_for_outcome": true,
+      "evidence_ladder": true,
+      "evidence_stage_counts": {
+        "artifact_schema": 10,
+        "full_visible_verification": 10,
+        "git_candidate": 10,
+        "protocol_result": 10,
+        "targeted_checks": 10
+      },
+      "evidence_stage_timing_s": {
+        "artifact_schema": 0.0,
+        "full_visible_verification": 0.01,
+        "git_candidate": 0.053,
+        "protocol_result": 0.0,
+        "targeted_checks": 0.0
+      },
+      "executed": 10,
+      "failed": 0,
+      "failure_class": "worker_crash",
+      "failure_classes": {
+        "worker_crash": 1
+      },
+      "fault_injection": {
+        "delay_s": 1.0,
+        "mode": "worker_exit",
+        "target_reachable": true,
+        "task_id": "serial-00"
+      },
+      "fault_profile": "clean",
+      "fault_target": "serial-00",
+      "fault_target_reachability": {
+        "enabled": true,
+        "requires_root": true,
+        "target": "serial-00"
+      },
+      "fault_target_reached": true,
+      "first_failure_class": "worker_crash",
+      "first_failure_event_seq": 23,
+      "graph_id": "serial",
+      "graph_shape": "serial",
+      "harbor_version": "0.20.0",
+      "instruction_sha256": "10d02430148fe323ff404324d9c1c405a27bdd154adbcfb50d7fcb390fb2e3e7",
+      "interventions": 0,
+      "limits": {
+        "max_concurrency": 4,
+        "max_retries": 2,
+        "sdk_timeout_s": 300,
+        "stall_threshold_s": 300,
+        "supervisor_timeout_s": 120,
+        "verify_timeout_s": 600,
+        "wait_ceiling_s": 1800,
+        "worker_timeout_s": 1200
+      },
+      "model": {
+        "supervisor": "claude-sonnet-4-6",
+        "worker": "claude-sonnet-4-6"
+      },
+      "needs_human": 0,
+      "orchestrator_version": "0.0.1",
+      "peak_live_workers": 1,
+      "policy": "sequential",
+      "protocol_recovery_v2": true,
+      "queue_wait_s": 0.105,
+      "recovery_attempts": 1,
+      "recovery_failed": 0,
+      "recovery_time_s": 0,
+      "recovery_verified": 1,
+      "repository": {
+        "base_sha": "9d40c7ad5ea4dd596f9b98c82f57f6abadd8374d",
+        "root": "/app"
+      },
+      "resource_config": {},
+      "runtime_comparable": true,
+      "schema_version": 1,
+      "seed": "0",
+      "slot_occupancy_s": 160.296,
+      "state": "delivered",
+      "state_counts": {
+        "delivered": 10
+      },
+      "supervisor_cost_usd": 0.0,
+      "supervisor_s": 0,
+      "task_count": 10,
+      "task_definition_sha256": "3970c4ed6d6ad8b8b0b3538abf924356c120368fe1767a4cde6a17a5006d6c7a",
+      "task_graph": {
+        "count": 10,
+        "sha256": "f3a1ab538aa1c9ff2bacbc38ad48b0a5c241f182583d872c461304c15401826d",
+        "tasks": [
+          {
+            "depends_on": [],
+            "id": "serial-00"
+          },
+          {
+            "depends_on": [
+              "serial-00"
+            ],
+            "id": "serial-01"
+          },
+          {
+            "depends_on": [
+              "serial-01"
+            ],
+            "id": "serial-02"
+          },
+          {
+            "depends_on": [
+              "serial-02"
+            ],
+            "id": "serial-03"
+          },
+          {
+            "depends_on": [
+              "serial-03"
+            ],
+            "id": "serial-04"
+          },
+          {
+            "depends_on": [
+              "serial-04"
+            ],
+            "id": "serial-05"
+          },
+          {
+            "depends_on": [
+              "serial-05"
+            ],
+            "id": "serial-06"
+          },
+          {
+            "depends_on": [
+              "serial-06"
+            ],
+            "id": "serial-07"
+          },
+          {
+            "depends_on": [
+              "serial-07"
+            ],
+            "id": "serial-08"
+          },
+          {
+            "depends_on": [
+              "serial-08"
+            ],
+            "id": "serial-09"
+          }
+        ]
+      },
+      "task_id": "serial-00",
+      "task_ids": [
+        "serial-00",
+        "serial-01",
+        "serial-02",
+        "serial-03",
+        "serial-04",
+        "serial-05",
+        "serial-06",
+        "serial-07",
+        "serial-08",
+        "serial-09"
+      ],
+      "task_package_sha256": "3970c4ed6d6ad8b8b0b3538abf924356c120368fe1767a4cde6a17a5006d6c7a",
+      "task_states": {
+        "serial-00": "delivered",
+        "serial-01": "delivered",
+        "serial-02": "delivered",
+        "serial-03": "delivered",
+        "serial-04": "delivered",
+        "serial-05": "delivered",
+        "serial-06": "delivered",
+        "serial-07": "delivered",
+        "serial-08": "delivered",
+        "serial-09": "delivered"
+      },
+      "tasks": 10,
+      "terminal_classifications": {
+        "completed": 10,
+        "worker_crash": 1
+      },
+      "terminal_state_counts": {
+        "delivered": 10
+      },
+      "tokens_in": 124,
+      "tokens_out": 11138,
+      "triage_s": 0.023,
+      "trial_id": "unknown",
+      "verification_attempts": 10,
+      "verification_recoveries": 0,
+      "verification_s": 0.218,
+      "verified_completion_rate": 1.0,
+      "verifier": {
+        "artifact_root": "/logs/artifacts",
+        "identity": "unspecified",
+        "mode": "separate",
+        "visible_command": "true"
+      },
+      "verify_failed": 0,
+      "wall_time_s": 161.011,
+      "worker_cost_usd": 0.8885525999999999,
+      "worker_execution_s": 160.174,
+      "worker_limit": 1
+    },
+    {
+      "adaptive_scheduling": true,
+      "attempts": 11,
+      "authentication": {
+        "mechanism": "subscription-oauth",
+        "source": "Harbor-injected environment",
+        "values_recorded": false
+      },
+      "backend": "anthropic",
+      "backend_track": "practice-claude",
+      "base_sha": "9d40c7ad5ea4dd596f9b98c82f57f6abadd8374d",
+      "cancelled": 0,
+      "candidate_sha": "5ff1796592fc1cd6eed6d0193d8d58e5c5bd0c58",
+      "candidate_to_retry_s": 0.026,
+      "cell_status": "success",
+      "cell_status_reason": null,
+      "context_length": 32768,
+      "cost_usd": 1.1256298,
+      "delivered": 10,
+      "dependency_blocked": 0,
+      "deterministic_crash_recovery": true,
+      "deterministic_recovery": true,
+      "eligible_for_outcome": true,
+      "evidence_ladder": true,
+      "evidence_stage_counts": {
+        "artifact_schema": 10,
+        "full_visible_verification": 10,
+        "git_candidate": 10,
+        "protocol_result": 10,
+        "targeted_checks": 10
+      },
+      "evidence_stage_timing_s": {
+        "artifact_schema": 0.0,
+        "full_visible_verification": 0.01,
+        "git_candidate": 0.056,
+        "protocol_result": 0.0,
+        "targeted_checks": 0.0
+      },
+      "executed": 10,
+      "failed": 0,
+      "failure_class": "worker_crash",
+      "failure_classes": {
+        "worker_crash": 1
+      },
+      "fault_injection": {
+        "delay_s": 1.0,
+        "mode": "worker_exit",
+        "target_reachable": true,
+        "task_id": "serial-00"
+      },
+      "fault_profile": "clean",
+      "fault_target": "serial-00",
+      "fault_target_reachability": {
+        "enabled": true,
+        "requires_root": true,
+        "target": "serial-00"
+      },
+      "fault_target_reached": true,
+      "first_failure_class": "worker_crash",
+      "first_failure_event_seq": 23,
+      "graph_id": "serial",
+      "graph_shape": "serial",
+      "harbor_version": "0.20.0",
+      "instruction_sha256": "10d02430148fe323ff404324d9c1c405a27bdd154adbcfb50d7fcb390fb2e3e7",
+      "interventions": 0,
+      "limits": {
+        "max_concurrency": 4,
+        "max_retries": 2,
+        "sdk_timeout_s": 300,
+        "stall_threshold_s": 300,
+        "supervisor_timeout_s": 120,
+        "verify_timeout_s": 600,
+        "wait_ceiling_s": 1800,
+        "worker_timeout_s": 1200
+      },
+      "model": {
+        "supervisor": "claude-sonnet-4-6",
+        "worker": "claude-sonnet-4-6"
+      },
+      "needs_human": 0,
+      "orchestrator_version": "0.0.1",
+      "peak_live_workers": 1,
+      "policy": "naive-parallel",
+      "protocol_recovery_v2": true,
+      "queue_wait_s": 0.107,
+      "recovery_attempts": 1,
+      "recovery_failed": 0,
+      "recovery_time_s": 0,
+      "recovery_verified": 1,
+      "repository": {
+        "base_sha": "9d40c7ad5ea4dd596f9b98c82f57f6abadd8374d",
+        "root": "/app"
+      },
+      "resource_config": {},
+      "runtime_comparable": true,
+      "schema_version": 1,
+      "seed": "0",
+      "slot_occupancy_s": 174.823,
+      "state": "delivered",
+      "state_counts": {
+        "delivered": 10
+      },
+      "supervisor_cost_usd": 0.0,
+      "supervisor_s": 0,
+      "task_count": 10,
+      "task_definition_sha256": "3970c4ed6d6ad8b8b0b3538abf924356c120368fe1767a4cde6a17a5006d6c7a",
+      "task_graph": {
+        "count": 10,
+        "sha256": "f3a1ab538aa1c9ff2bacbc38ad48b0a5c241f182583d872c461304c15401826d",
+        "tasks": [
+          {
+            "depends_on": [],
+            "id": "serial-00"
+          },
+          {
+            "depends_on": [
+              "serial-00"
+            ],
+            "id": "serial-01"
+          },
+          {
+            "depends_on": [
+              "serial-01"
+            ],
+            "id": "serial-02"
+          },
+          {
+            "depends_on": [
+              "serial-02"
+            ],
+            "id": "serial-03"
+          },
+          {
+            "depends_on": [
+              "serial-03"
+            ],
+            "id": "serial-04"
+          },
+          {
+            "depends_on": [
+              "serial-04"
+            ],
+            "id": "serial-05"
+          },
+          {
+            "depends_on": [
+              "serial-05"
+            ],
+            "id": "serial-06"
+          },
+          {
+            "depends_on": [
+              "serial-06"
+            ],
+            "id": "serial-07"
+          },
+          {
+            "depends_on": [
+              "serial-07"
+            ],
+            "id": "serial-08"
+          },
+          {
+            "depends_on": [
+              "serial-08"
+            ],
+            "id": "serial-09"
+          }
+        ]
+      },
+      "task_id": "serial-00",
+      "task_ids": [
+        "serial-00",
+        "serial-01",
+        "serial-02",
+        "serial-03",
+        "serial-04",
+        "serial-05",
+        "serial-06",
+        "serial-07",
+        "serial-08",
+        "serial-09"
+      ],
+      "task_package_sha256": "3970c4ed6d6ad8b8b0b3538abf924356c120368fe1767a4cde6a17a5006d6c7a",
+      "task_states": {
+        "serial-00": "delivered",
+        "serial-01": "delivered",
+        "serial-02": "delivered",
+        "serial-03": "delivered",
+        "serial-04": "delivered",
+        "serial-05": "delivered",
+        "serial-06": "delivered",
+        "serial-07": "delivered",
+        "serial-08": "delivered",
+        "serial-09": "delivered"
+      },
+      "tasks": 10,
+      "terminal_classifications": {
+        "completed": 10,
+        "worker_crash": 1
+      },
+      "terminal_state_counts": {
+        "delivered": 10
+      },
+      "tokens_in": 126,
+      "tokens_out": 11164,
+      "triage_s": 0.025,
+      "trial_id": "unknown",
+      "verification_attempts": 10,
+      "verification_recoveries": 0,
+      "verification_s": 0.215,
+      "verified_completion_rate": 1.0,
+      "verifier": {
+        "artifact_root": "/logs/artifacts",
+        "identity": "unspecified",
+        "mode": "separate",
+        "visible_command": "true"
+      },
+      "verify_failed": 0,
+      "wall_time_s": 175.514,
+      "worker_cost_usd": 1.1256298,
+      "worker_execution_s": 174.701,
+      "worker_limit": 4
+    },
+    {
+      "adaptive_scheduling": true,
+      "attempts": 11,
+      "authentication": {
+        "mechanism": "subscription-oauth",
+        "source": "Harbor-injected environment",
+        "values_recorded": false
+      },
+      "backend": "anthropic",
+      "backend_track": "practice-claude",
+      "base_sha": "9d40c7ad5ea4dd596f9b98c82f57f6abadd8374d",
+      "cancelled": 0,
+      "candidate_sha": "697bbcbc76abff834ed52f7487dd88aa1c453ce6",
+      "candidate_to_retry_s": 0.025,
+      "cell_status": "success",
+      "cell_status_reason": null,
+      "context_length": 32768,
+      "cost_usd": 0.8399038,
+      "delivered": 10,
+      "dependency_blocked": 0,
+      "deterministic_crash_recovery": true,
+      "deterministic_recovery": true,
+      "eligible_for_outcome": true,
+      "evidence_ladder": true,
+      "evidence_stage_counts": {
+        "artifact_schema": 10,
+        "full_visible_verification": 10,
+        "git_candidate": 10,
+        "protocol_result": 10,
+        "targeted_checks": 10
+      },
+      "evidence_stage_timing_s": {
+        "artifact_schema": 0.0,
+        "full_visible_verification": 0.011,
+        "git_candidate": 0.056,
+        "protocol_result": 0.0,
+        "targeted_checks": 0.0
+      },
+      "executed": 10,
+      "failed": 0,
+      "failure_class": "worker_crash",
+      "failure_classes": {
+        "worker_crash": 1
+      },
+      "fault_injection": {
+        "delay_s": 1.0,
+        "mode": "worker_exit",
+        "target_reachable": true,
+        "task_id": "serial-00"
+      },
+      "fault_profile": "clean",
+      "fault_target": "serial-00",
+      "fault_target_reachability": {
+        "enabled": true,
+        "requires_root": true,
+        "target": "serial-00"
+      },
+      "fault_target_reached": true,
+      "first_failure_class": "worker_crash",
+      "first_failure_event_seq": 23,
+      "graph_id": "serial",
+      "graph_shape": "serial",
+      "harbor_version": "0.20.0",
+      "instruction_sha256": "10d02430148fe323ff404324d9c1c405a27bdd154adbcfb50d7fcb390fb2e3e7",
+      "interventions": 0,
+      "limits": {
+        "max_concurrency": 4,
+        "max_retries": 2,
+        "sdk_timeout_s": 300,
+        "stall_threshold_s": 300,
+        "supervisor_timeout_s": 120,
+        "verify_timeout_s": 600,
+        "wait_ceiling_s": 1800,
+        "worker_timeout_s": 1200
+      },
+      "model": {
+        "supervisor": "claude-sonnet-4-6",
+        "worker": "claude-sonnet-4-6"
+      },
+      "needs_human": 0,
+      "orchestrator_version": "0.0.1",
+      "peak_live_workers": 1,
+      "policy": "orchestrator",
+      "protocol_recovery_v2": true,
+      "queue_wait_s": 0.115,
+      "recovery_attempts": 1,
+      "recovery_failed": 0,
+      "recovery_time_s": 0,
+      "recovery_verified": 1,
+      "repository": {
+        "base_sha": "9d40c7ad5ea4dd596f9b98c82f57f6abadd8374d",
+        "root": "/app"
+      },
+      "resource_config": {},
+      "runtime_comparable": true,
+      "schema_version": 1,
+      "seed": "0",
+      "slot_occupancy_s": 155.328,
+      "state": "delivered",
+      "state_counts": {
+        "delivered": 10
+      },
+      "supervisor_cost_usd": 0.0,
+      "supervisor_s": 0,
+      "task_count": 10,
+      "task_definition_sha256": "3970c4ed6d6ad8b8b0b3538abf924356c120368fe1767a4cde6a17a5006d6c7a",
+      "task_graph": {
+        "count": 10,
+        "sha256": "f3a1ab538aa1c9ff2bacbc38ad48b0a5c241f182583d872c461304c15401826d",
+        "tasks": [
+          {
+            "depends_on": [],
+            "id": "serial-00"
+          },
+          {
+            "depends_on": [
+              "serial-00"
+            ],
+            "id": "serial-01"
+          },
+          {
+            "depends_on": [
+              "serial-01"
+            ],
+            "id": "serial-02"
+          },
+          {
+            "depends_on": [
+              "serial-02"
+            ],
+            "id": "serial-03"
+          },
+          {
+            "depends_on": [
+              "serial-03"
+            ],
+            "id": "serial-04"
+          },
+          {
+            "depends_on": [
+              "serial-04"
+            ],
+            "id": "serial-05"
+          },
+          {
+            "depends_on": [
+              "serial-05"
+            ],
+            "id": "serial-06"
+          },
+          {
+            "depends_on": [
+              "serial-06"
+            ],
+            "id": "serial-07"
+          },
+          {
+            "depends_on": [
+              "serial-07"
+            ],
+            "id": "serial-08"
+          },
+          {
+            "depends_on": [
+              "serial-08"
+            ],
+            "id": "serial-09"
+          }
+        ]
+      },
+      "task_id": "serial-00",
+      "task_ids": [
+        "serial-00",
+        "serial-01",
+        "serial-02",
+        "serial-03",
+        "serial-04",
+        "serial-05",
+        "serial-06",
+        "serial-07",
+        "serial-08",
+        "serial-09"
+      ],
+      "task_package_sha256": "3970c4ed6d6ad8b8b0b3538abf924356c120368fe1767a4cde6a17a5006d6c7a",
+      "task_states": {
+        "serial-00": "delivered",
+        "serial-01": "delivered",
+        "serial-02": "delivered",
+        "serial-03": "delivered",
+        "serial-04": "delivered",
+        "serial-05": "delivered",
+        "serial-06": "delivered",
+        "serial-07": "delivered",
+        "serial-08": "delivered",
+        "serial-09": "delivered"
+      },
+      "tasks": 10,
+      "terminal_classifications": {
+        "completed": 10,
+        "worker_crash": 1
+      },
+      "terminal_state_counts": {
+        "delivered": 10
+      },
+      "tokens_in": 122,
+      "tokens_out": 10958,
+      "triage_s": 0.023,
+      "trial_id": "unknown",
+      "verification_attempts": 10,
+      "verification_recoveries": 0,
+      "verification_s": 0.227,
+      "verified_completion_rate": 1.0,
+      "verifier": {
+        "artifact_root": "/logs/artifacts",
+        "identity": "unspecified",
+        "mode": "separate",
+        "visible_command": "true"
+      },
+      "verify_failed": 0,
+      "wall_time_s": 156.058,
+      "worker_cost_usd": 0.8399038,
+      "worker_execution_s": 155.204,
+      "worker_limit": 4
+    }
+  ],
+  "comparison_violations": [],
+  "excluded_cells": [],
+  "included_for_outcome": 6,
+  "included_for_runtime": 6,
+  "orchestration_overhead": {
+    "successful_cells_by_policy": {
+      "naive-parallel": {
+        "cells": 2,
+        "mean_cost_usd": 1.092875,
+        "mean_queue_wait_s": 0.114,
+        "mean_supervisor_s": 0,
+        "mean_verification_s": 0.2335,
+        "mean_wall_time_s": 172.2665,
+        "mean_worker_execution_s": 171.429
+      },
+      "orchestrator": {
+        "cells": 2,
+        "mean_cost_usd": 0.835597,
+        "mean_queue_wait_s": 0.117,
+        "mean_supervisor_s": 0,
+        "mean_verification_s": 0.229,
+        "mean_wall_time_s": 159.7575,
+        "mean_worker_execution_s": 158.8985
+      },
+      "sequential": {
+        "cells": 2,
+        "mean_cost_usd": 1.103874,
+        "mean_queue_wait_s": 0.1065,
+        "mean_supervisor_s": 0,
+        "mean_verification_s": 0.217,
+        "mean_wall_time_s": 151.4255,
+        "mean_worker_execution_s": 150.5835
+      }
+    }
+  },
+  "outcome_quality": {
+    "by_policy": {
+      "naive-parallel": {
+        "cells": 2,
+        "mean_verified_completion_rate": 1.0,
+        "successes": 2,
+        "verified_completion_probability": 1.0
+      },
+      "orchestrator": {
+        "cells": 2,
+        "mean_verified_completion_rate": 1.0,
+        "successes": 2,
+        "verified_completion_probability": 1.0
+      },
+      "sequential": {
+        "cells": 2,
+        "mean_verified_completion_rate": 1.0,
+        "successes": 2,
+        "verified_completion_probability": 1.0
+      }
+    }
+  },
+  "schema_version": 1
+}
