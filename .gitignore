@@ -2,6 +2,7 @@
 /data/
 /jobs/
 /old/
+/results/benchmark/
 *.db
 
 # Python tooling and build artifacts.
