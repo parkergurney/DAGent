@@ -325,6 +325,14 @@ or verify a sandbox. Direct host execution is trusted development mode only.
 transfers that patch to its separate verifier; no hidden evaluator material or
 verifier result enters the agent environment.
 
+The Harbor runtime also writes a credential-free `live_diagnostics.jsonl` and
+latest `live_status.json` directly under the published artifact directory.
+These records cover runtime startup, worker spawn/stall/timeout, SDK connect,
+prompt submission, first response, result, and shutdown phases. They are
+best-effort observability only and never include prompts, model responses, or
+authentication values; writing them outside the private scheduler directory
+ensures an outer Harbor cancellation leaves useful evidence.
+
 ## Core v2 execution shape
 
 ```text

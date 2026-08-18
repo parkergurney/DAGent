@@ -31,6 +31,7 @@ import time
 from pathlib import Path
 
 from orchestrator import delivery
+from orchestrator.diagnostics import live_diagnostic
 from orchestrator import execution_lease
 from orchestrator.interfaces import (
     run_node_verification, validate_dependency_interfaces, validate_output_artifacts,
@@ -626,6 +627,7 @@ class Scheduler:
         worker_task = {**task, "execution_contract": contract,
                        "_fake_scenario": task.get("_fake_scenario", task["brief"])}
         try:
+            live_diagnostic("scheduler.worker_starting", task_id=task_id, attempt=attempt_no)
             proc = await self.spawn_worker(worker_task, wt, model=self.worker_model)
         except BaseException:
             execution_lease.recover(
@@ -669,6 +671,10 @@ class Scheduler:
         self._worker_started_ts[task_id] = self._last_event_ts[task_id]
         self._watchers[task_id] = asyncio.create_task(
             self._watch(task_id, proc, attempt_id=attempt_id, lease=lease)
+        )
+        live_diagnostic(
+            "scheduler.worker_spawned", task_id=task_id, attempt=attempt_no,
+            pid=proc.pid,
         )
         self._append_timing_event(
             task_id, "worker.started", attempt_id=attempt_id,
@@ -1855,6 +1861,11 @@ class Scheduler:
                 if (started is not None and self.worker_timeout_s is not None
                         and now - started >= self.worker_timeout_s):
                     proc = self._procs.get(task_id)
+                    live_diagnostic(
+                        "scheduler.worker_timeout", task_id=task_id,
+                        timeout_kind="worker_wall_clock", timeout_s=self.worker_timeout_s,
+                        elapsed_s=round(now - started, 1),
+                    )
                     s = self._mark_running_failure(
                         task_id, source="watchdog", event_type="worker.timeout",
                         payload={
@@ -1877,6 +1888,10 @@ class Scheduler:
                 if now - last < threshold:
                     continue
                 proc = self._procs.get(task_id)
+                live_diagnostic(
+                    "scheduler.worker_stalled", task_id=task_id,
+                    silent_for_s=round(now - last, 1),
+                )
                 s = self._mark_running_failure(
                     task_id, source="watchdog", event_type="worker.stalled",
                     payload={"silent_for_s": round(now - last, 1)})

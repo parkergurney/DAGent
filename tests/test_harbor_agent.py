@@ -108,6 +108,17 @@ def test_runtime_exports_patch_metrics_and_result(tmp_path):
     assert manifest["authentication"]["values_recorded"] is False
     assert manifest["fault_target_reachability"]["enabled"] is False
     assert "output.txt" in (artifacts / "candidate.patch").read_text()
+    live_events = [
+        json.loads(line)["event"]
+        for line in (artifacts / "live_diagnostics.jsonl").read_text().splitlines()
+    ]
+    assert live_events[:3] == [
+        "runtime.started", "runtime.manifest_written", "runtime.scheduler_starting",
+    ]
+    assert "runtime.scheduler_finished" in live_events
+    assert json.loads((artifacts / "live_status.json").read_text())["event"] == (
+        "runtime.artifacts_finalized"
+    )
 
 
 def test_runtime_records_dependency_graph_manifest_and_result(tmp_path):

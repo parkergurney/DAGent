@@ -31,6 +31,16 @@ task variables on the startup path. The token remains available to SDK
 workers without entering Harbor's host environment or per-command arguments.
 Added regression coverage and documented the boundary.
 
+## 2026-08-17 - live phase diagnostics
+
+Added a credential-free append-only diagnostics journal and latest-status
+snapshot in Harbor's published artifact directory. Runtime, scheduler, and SDK
+workers now record spawn, connect, prompt submission, first response, result,
+heartbeat, timeout, and shutdown phases. This preserves the distinction
+between a worker that never started, an SDK connection that never completed,
+and a model turn that never produced a response when Harbor cancels the outer
+agent before normal finalization.
+
 ## 2026-08-16 - Harbor graph-shape launcher
 
 Extended the Harbor DAG canary launcher to select `serial`, `wide`, `diamond`,

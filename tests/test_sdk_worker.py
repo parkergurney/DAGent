@@ -118,6 +118,7 @@ class _FakeClient:
 
 def test_run_resumes_the_same_session_after_a_stdin_reply(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(sdk_worker.sys, "stdin", io.StringIO("use port 8080\n"))
+    monkeypatch.setenv("ORCH_LIVE_DIAGNOSTICS_PATH", str(tmp_path / "live.jsonl"))
     fake = _FakeClient()
     monkeypatch.setattr(sdk_worker, "ClaudeSDKClient", lambda options=None: fake)
 
@@ -133,6 +134,15 @@ def test_run_resumes_the_same_session_after_a_stdin_reply(tmp_path, capsys, monk
         "result", "done_claimed",
     ]
     assert events[-1]["payload"]["result"] == "used port 8080"
+    diagnostics = [
+        json.loads(line)["event"]
+        for line in (tmp_path / "live.jsonl").read_text().splitlines()
+    ]
+    assert {
+        "sdk.worker_started", "sdk.connect_started", "sdk.connect_succeeded",
+        "sdk.turn_started", "sdk.prompt_submitted", "sdk.result_received",
+        "sdk.turn_stream_ended", "sdk.disconnect_started", "sdk.worker_finished",
+    } <= set(diagnostics)
 
 
 def test_run_exits_without_resuming_when_stdin_closes(tmp_path, capsys, monkeypatch):

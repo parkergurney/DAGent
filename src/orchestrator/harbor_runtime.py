@@ -18,6 +18,7 @@ from pathlib import Path
 from orchestrator.harbor import export_patch, export_task_summary, run_instruction
 from orchestrator.metrics import export_metrics
 from orchestrator.experiment import classify_cell
+from orchestrator.diagnostics import live_diagnostic
 
 _AUTH_ENV_NAMES = frozenset({
     "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
@@ -273,6 +274,8 @@ async def run_from_files(instruction_file: str | Path, config_file: str | Path |
     ))
     artifact_root.mkdir(parents=True, exist_ok=True)
     run_artifact_root.mkdir(parents=True, exist_ok=True)
+    os.environ["ORCH_LIVE_DIAGNOSTICS_PATH"] = str(artifact_root / "live_diagnostics.jsonl")
+    live_diagnostic("runtime.started")
     base_sha = _repo_sha(repo_root)
     (artifact_root / "base_sha.txt").write_text(base_sha + "\n")
 
@@ -317,6 +320,12 @@ async def run_from_files(instruction_file: str | Path, config_file: str | Path |
         artifact_root / "run_manifest.json",
         manifest,
     )
+    live_diagnostic(
+        "runtime.manifest_written",
+        graph_shape=str(manifest.get("graph_shape")),
+        task_count=task_graph["count"],
+        max_concurrency=manifest["limits"]["max_concurrency"],
+    )
 
     result_metadata = {
         "schema_version": 1,
@@ -327,6 +336,7 @@ async def run_from_files(instruction_file: str | Path, config_file: str | Path |
         "metrics": {},
     }
     try:
+        live_diagnostic("runtime.scheduler_starting")
         result = await run_instruction(
             instruction=instruction,
             repo_root=repo_root,
@@ -373,6 +383,7 @@ async def run_from_files(instruction_file: str | Path, config_file: str | Path |
             "candidate_sha": result.candidate_sha,
             "metrics": result.metrics,
         })
+        live_diagnostic("runtime.scheduler_finished", state=result.state)
         result.metrics["wall_time_s"] = round(time.monotonic() - started, 3)
         result.metrics.update(classify_cell(
             manifest=manifest, metrics=result.metrics, result=result_metadata,
@@ -395,8 +406,10 @@ async def run_from_files(instruction_file: str | Path, config_file: str | Path |
             json.dumps(result.metrics, indent=2, sort_keys=True) + "\n"
         )
         _write_json(artifact_root / "result.json", result_metadata)
+        live_diagnostic("runtime.artifacts_finalized", state=result.state)
         return 0
     except BaseException as exc:
+        live_diagnostic("runtime.failed", failure_type=type(exc).__name__)
         try:
             result_metadata["metrics"] = export_metrics(db_path)
             result_metadata["metrics"]["wall_time_s"] = round(time.monotonic() - started, 3)

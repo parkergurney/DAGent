@@ -16,6 +16,7 @@ from claude_agent_sdk import (
     AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient,
     HookMatcher, ResultMessage,
 )
+from orchestrator.diagnostics import live_diagnostic
 
 _PROTOCOL = """
 You must perform the requested work in the worktree using the available coding
@@ -204,25 +205,48 @@ def _agent_options(worktree: Path, model: str | None, *, stderr=None) -> ClaudeA
     return ClaudeAgentOptions(**options)
 
 
-async def run(worktree: Path, brief: str, model: str | None) -> int:
+async def run(worktree: Path, brief: str, model: str | None, task_id: str | None = None) -> int:
     sdk_stderr: list[str] = []
     sdk_timeout_s = _sdk_timeout_s()
+
+    def diagnostic(event: str, **payload) -> None:
+        if task_id is not None:
+            payload["task_id"] = task_id
+        live_diagnostic(event, **payload)
+
+    async def phase_heartbeat(phase: str, **payload) -> None:
+        while True:
+            diagnostic("sdk.heartbeat", phase=phase, **payload)
+            await asyncio.sleep(15)
+
+    async def with_heartbeat(awaitable, phase: str, **payload):
+        heartbeat = asyncio.create_task(phase_heartbeat(phase, **payload))
+        try:
+            return await awaitable
+        finally:
+            heartbeat.cancel()
+            await asyncio.gather(heartbeat, return_exceptions=True)
 
     def capture_sdk_stderr(line: str) -> None:
         if line:
             sdk_stderr.append(_redact_text(line, limit=1000))
 
     try:
+        diagnostic("sdk.worker_started")
         options = _agent_options(worktree, model, stderr=capture_sdk_stderr)
         client = ClaudeSDKClient(options=options)
+        diagnostic("sdk.connect_started", timeout_s=sdk_timeout_s)
         async with asyncio.timeout(sdk_timeout_s):
-            await client.connect()
+            await with_heartbeat(client.connect(), "connect")
+        diagnostic("sdk.connect_succeeded")
     except asyncio.TimeoutError:
+        diagnostic("sdk.timeout", phase="connect", timeout_s=sdk_timeout_s)
         emit("startup_failed", category="sdk_timeout", phase="connect",
              timeout_s=sdk_timeout_s,
              reason="Claude SDK connection exceeded its bounded timeout")
         return 1
     except Exception as exc:
+        diagnostic("sdk.connect_failed", failure_type=type(exc).__name__)
         category = "authentication_failure" if any(
             marker in _redact_text(exc).lower() for marker in _AUTH_FAILURE_MARKERS
         ) else "sdk_initialization_failure"
@@ -237,36 +261,51 @@ async def run(worktree: Path, brief: str, model: str | None) -> int:
 
     async def receive_turn(prompt):
         """Run one complete SDK turn while preserving streamed worker events."""
-        nonlocal execution_started
+        nonlocal execution_started, turn_number
+        turn_number += 1
+        diagnostic("sdk.turn_started", turn=turn_number, timeout_s=sdk_timeout_s)
+        heartbeat = asyncio.create_task(phase_heartbeat("turn", turn=turn_number))
         kind, extra, cost_usd, session_id = None, {}, None, None
         transcript = []
         result_snapshot = None
-        await client.query(prompt)
-        async for msg in client.receive_response():
-            if isinstance(msg, AssistantMessage):
-                text = "".join(getattr(block, "text", "") or "" for block in msg.content)
-                if text.strip():
-                    transcript.append(text)
-                    usage = msg.usage or {}
-                    emit("messaged", text=text[:500], tokens_in=usage.get("input_tokens"),
-                         tokens_out=usage.get("output_tokens"))
-            elif isinstance(msg, ResultMessage):
-                result_snapshot = _result_snapshot(msg)
-                kind, extra = _parse_terminal(msg.result)
-                cost_usd, session_id = msg.total_cost_usd, msg.session_id
-                emit("result", **result_snapshot)
-                failure = _startup_failure_category(result_snapshot, transcript)
-                if failure:
-                    category, reason = failure
-                    emit("sdk_failed" if category == "sdk_failure" else "startup_failed",
-                         category=category, reason=reason, result=result_snapshot)
-                    return False, kind, extra, cost_usd, session_id, result_snapshot
-                if not execution_started:
-                    emit("execution_started", session_id=session_id,
-                         subtype=result_snapshot.get("subtype"))
-                    execution_started = True
-        return True, kind, extra, cost_usd, session_id, result_snapshot
+        first_response = False
+        try:
+            await client.query(prompt)
+            diagnostic("sdk.prompt_submitted", turn=turn_number)
+            async for msg in client.receive_response():
+                if isinstance(msg, AssistantMessage):
+                    if not first_response:
+                        diagnostic("sdk.first_response", turn=turn_number)
+                        first_response = True
+                    text = "".join(getattr(block, "text", "") or "" for block in msg.content)
+                    if text.strip():
+                        transcript.append(text)
+                        usage = msg.usage or {}
+                        emit("messaged", text=text[:500], tokens_in=usage.get("input_tokens"),
+                             tokens_out=usage.get("output_tokens"))
+                elif isinstance(msg, ResultMessage):
+                    result_snapshot = _result_snapshot(msg)
+                    kind, extra = _parse_terminal(msg.result)
+                    cost_usd, session_id = msg.total_cost_usd, msg.session_id
+                    diagnostic("sdk.result_received", turn=turn_number, is_error=bool(msg.is_error))
+                    emit("result", **result_snapshot)
+                    failure = _startup_failure_category(result_snapshot, transcript)
+                    if failure:
+                        category, reason = failure
+                        emit("sdk_failed" if category == "sdk_failure" else "startup_failed",
+                             category=category, reason=reason, result=result_snapshot)
+                        return False, kind, extra, cost_usd, session_id, result_snapshot
+                    if not execution_started:
+                        emit("execution_started", session_id=session_id,
+                             subtype=result_snapshot.get("subtype"))
+                        execution_started = True
+            diagnostic("sdk.turn_stream_ended", turn=turn_number)
+            return True, kind, extra, cost_usd, session_id, result_snapshot
+        finally:
+            heartbeat.cancel()
+            await asyncio.gather(heartbeat, return_exceptions=True)
 
+    turn_number = 0
     try:
         while True:
             try:
@@ -275,6 +314,7 @@ async def run(worktree: Path, brief: str, model: str | None) -> int:
                     timeout=sdk_timeout_s,
                 )
             except asyncio.TimeoutError:
+                diagnostic("sdk.timeout", phase="turn", turn=turn_number, timeout_s=sdk_timeout_s)
                 emit("sdk_timeout", category="sdk_timeout", phase="turn",
                      timeout_s=sdk_timeout_s,
                      reason="Claude SDK turn exceeded its bounded timeout")
@@ -310,13 +350,15 @@ async def run(worktree: Path, brief: str, model: str | None) -> int:
                 )
             return 0
     finally:
+        diagnostic("sdk.disconnect_started")
         try:
             async with asyncio.timeout(sdk_timeout_s):
-                await client.disconnect()
+                await with_heartbeat(client.disconnect(), "disconnect")
         except Exception:
             # The worker is already terminating; disconnect must not turn a
             # bounded SDK failure into another unbounded shutdown hang.
             pass
+        diagnostic("sdk.worker_finished")
 
 
 def main() -> None:
@@ -329,7 +371,7 @@ def main() -> None:
     brief_path = Path(args.brief_file)
     brief = brief_path.read_text()
     brief_path.unlink(missing_ok=True)
-    raise SystemExit(asyncio.run(run(Path(args.worktree), brief, args.model)))
+    raise SystemExit(asyncio.run(run(Path(args.worktree), brief, args.model, args.task_id)))
 
 
 if __name__ == "__main__":

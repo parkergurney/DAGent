@@ -29,6 +29,10 @@ env file or pass the token as a command-line argument.
 Timeouts are recorded separately in each run manifest: the stall threshold is
 silence without worker events, the worker timeout is a hard wall-clock cap per
 attempt, and the SDK/supervisor timeouts cap individual live model calls.
+During execution, `live_diagnostics.jsonl` and `live_status.json` are updated
+under the published artifact directory with credential-free runtime, scheduler,
+and SDK phases. They remain useful when Harbor cancels the outer agent before
+normal result finalization.
 
 Run one canary per policy first on one shape:
 
