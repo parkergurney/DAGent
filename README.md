@@ -5,7 +5,8 @@ internal git worktrees, supervised by a deterministic state machine, and
 tracked with durable attempts, candidate lineage, and experiment metrics.
 
 Design: [docs/design.md](docs/design.md). Status: M6 Harbor boundary complete;
-Phase 5 benchmark inputs and cell reporting are prepared. Usage:
+benchmark inputs and cell reporting are prepared; the benchmark gate is in
+progress. Usage:
 [docs/usage.md](docs/usage.md). Measurement/reporting: use the
 `orchestrator-experiment` and `orchestrator-report` commands described there.
 

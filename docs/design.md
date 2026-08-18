@@ -359,7 +359,8 @@ and outer filesystem isolation remain outside this flow in Harbor. The
 repository provides the Python boundary (`orchestrator.harbor`), the installed
 agent wrapper (`orchestrator.harbor_agent:HarborOrchestratorAgent`), an
 in-container runtime, and a separate-verifier canary under
-`harbor/tasks/orchestrator-canary/`. A live multi-seed comparison remains M7.
+`harbor/tasks/orchestrator-dag-canary-claude/`. A live multi-seed comparison
+remains M7.
 The pre-benchmark package is committed under `benchmarks/phase5/`; its cell
 runner records backend track, graph shape, fault profile, fixed resource and
 verifier inputs, and publishes validity-aware cell status in the standard

@@ -63,7 +63,7 @@ the reachability contract:
 
 ```sh
 ORCH_GRAPH_SHAPE=serial ORCH_FAULT_TASK=serial-00 ORCH_TARGET_REACHABLE=1 \
-  harbor/tasks/orchestrator-dag-canary/run_canary.sh orchestrator 0
+  harbor/tasks/orchestrator-dag-canary-claude/run_canary.sh orchestrator 0
 ```
 
 The resulting manifest records the contract and the metrics must contain
@@ -75,7 +75,7 @@ cells, and three target-reachable fault cells—execute:
 
 ```sh
 ORCH_BENCHMARK_GRAPHS="serial wide diamond" \
-  harbor/tasks/orchestrator-dag-canary/run_benchmark.sh 0
+  harbor/tasks/orchestrator-dag-canary-claude/run_benchmark.sh 0
 ```
 
 The script stops on any local-test failure, Harbor command failure, invalid

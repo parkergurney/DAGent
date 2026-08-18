@@ -337,10 +337,10 @@ caller has supplied Harbor/container isolation. Use `--trusted-development`
 for an intentional live host run; that mode is not a benchmark path and does
 not protect the host filesystem.
 
-The runnable Harbor canary is in
+The legacy local-Ollama canary is in
 [`harbor/tasks/orchestrator-canary/`](../harbor/tasks/orchestrator-canary/).
-The dependency-aware benchmark launcher at
-[`harbor/tasks/orchestrator-dag-canary/`](../harbor/tasks/orchestrator-dag-canary/)
+The dependency-aware Claude benchmark launcher is in
+[`harbor/tasks/orchestrator-dag-canary-claude/`](../harbor/tasks/orchestrator-dag-canary-claude/)
 accepts `ORCH_GRAPH_SHAPE=serial|wide|diamond|mixed` and its benchmark runner
 defaults to the first three shapes. Shape cells use the committed Phase 5
 topologies, real-worker public artifact tasks, and the same separate verifier;

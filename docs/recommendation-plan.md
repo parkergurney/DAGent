@@ -303,9 +303,9 @@ Exit criteria:
 - The benchmark protocol states the primary metric and exclusion rules before
   any real cells are launched.
 
-### Phase 6 — Final benchmark gate
+### Benchmark — Final benchmark gate
 
-Only start this phase after Phases 0–5 are complete and the repository is on a
+Only start this benchmark after Phases 0–5 are complete and the repository is on a
 clean, committed snapshot.
 
 Run in this order:
