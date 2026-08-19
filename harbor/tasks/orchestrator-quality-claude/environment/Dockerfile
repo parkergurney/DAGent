@@ -22,6 +22,7 @@ COPY quality_tasks.json /tmp/quality_tasks.json
 
 RUN python3 -m pip install --no-cache-dir pytest python-dateutil 'attrs>=22.2.0' \
        'jsonschema-specifications>=2023.03.6' 'referencing>=0.25.3' 'rpds-py>=0.7.1' \
+       fqdn pytz simplejson \
     && git init -q -b main \
     && git add repos \
     && GIT_AUTHOR_DATE='2000-01-01T00:00:00Z' \

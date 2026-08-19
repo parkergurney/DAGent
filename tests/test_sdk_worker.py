@@ -11,7 +11,7 @@ from claude_agent_sdk import AssistantMessage, ClaudeSDKError, ResultMessage, Te
 
 from orchestrator.worker import sdk_worker
 from orchestrator.worker.sdk_worker import (
-    _agent_options, _audit_tool, _parse_terminal,
+    _agent_options, _audit_tool, _make_pre_tool_use, _parse_terminal,
     _path_escapes_worktree,
     _prompt_with_protocol,
 )
@@ -34,6 +34,33 @@ def test_tool_audit_redacts_credentials_and_flags_network_commands(monkeypatch, 
     assert "https://example.test" in record["target"]
     assert "Bearer [REDACTED]" in record["target"]
     assert "secret" not in record["target"]
+
+
+def test_pre_tool_hook_denies_package_install_and_records_reason(monkeypatch, tmp_path):
+    audit = tmp_path / "tool_audit.jsonl"
+    monkeypatch.setenv("ORCH_TOOL_AUDIT_PATH", str(audit))
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    hook = _make_pre_tool_use(worktree, "task-1")
+    decision = asyncio.run(hook({
+        "tool_name": "Bash",
+        "tool_input": {"command": "cd repo && pip install fqdn"},
+    }, "tool-1", None))
+    assert decision["hookSpecificOutput"]["permissionDecision"] == "deny"
+    record = json.loads(audit.read_text())
+    assert record["decision"] == "denied"
+    assert "preinstalled" in record["reason"]
+
+
+def test_pre_tool_hook_allows_local_git_commit(tmp_path):
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    hook = _make_pre_tool_use(worktree, "task-1")
+    decision = asyncio.run(hook({
+        "tool_name": "Bash",
+        "tool_input": {"command": "git add arrow.py && git commit -m 'fix'"},
+    }, "tool-1", None))
+    assert decision == {}
 
 
 def test_ollama_uses_compact_headless_tool_profile(monkeypatch, tmp_path):

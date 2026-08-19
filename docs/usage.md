@@ -107,7 +107,9 @@ Each Harbor quality job also publishes a credential-redacted
 `artifacts/logs/artifacts/tool_audit.jsonl`. It records tool calls and marks
 commands that look like web, package-install, or Git-history access. This is
 an audit trail, not network enforcement: `network_mode = "public"` still
-allows such access. Inspect it with:
+allows arbitrary network access outside the denied tool patterns. The quality
+worker now preinstalls its known dependencies and denies common package,
+download, and remote-Git commands. Inspect it with:
 
 ```bash
 jq -r 'select(.likely_network_or_history_attempt) |

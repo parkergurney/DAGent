@@ -57,6 +57,13 @@ _NETWORK_ATTEMPT = re.compile(
     r"pip\s+install|uv\s+(pip\s+)?install|npm\s+install|yarn\s+add|"
     r"requests|urllib|socket|nc\s|ssh\s)"
 )
+_BLOCKED_COMMAND = re.compile(
+    r"(?i)(?:\b(?:curl|wget)\b|"
+    r"\b(?:pip3?|python(?:3)?\s+-m\s+pip)\s+install\b|"
+    r"\buv\s+(?:pip\s+)?install\b|"
+    r"\b(?:npm\s+install|pnpm\s+add|yarn\s+add)\b|"
+    r"\bgit(?:\s+-[A-Za-z]+\s+\S+)*\s+(?:clone|fetch|pull|remote|submodule)\b)"
+)
 
 
 def _sdk_timeout_s() -> float:
@@ -159,7 +166,7 @@ def emit(type_, **payload) -> None:
 
 
 def _audit_tool(*, phase: str, input_data: dict, task_id: str | None,
-                decision: str, error: object = None) -> None:
+                decision: str, error: object = None, reason: str | None = None) -> None:
     """Persist a small, credential-redacted tool-use audit when configured."""
     audit_path = os.environ.get("ORCH_TOOL_AUDIT_PATH")
     if not audit_path:
@@ -180,6 +187,8 @@ def _audit_tool(*, phase: str, input_data: dict, task_id: str | None,
     }
     if error is not None:
         record["error"] = _redact_text(error, limit=1000)
+    if reason is not None:
+        record["reason"] = _redact_text(reason, limit=1000)
     path = Path(audit_path)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -195,7 +204,23 @@ def _audit_tool(*, phase: str, input_data: dict, task_id: str | None,
 def _make_pre_tool_use(worktree: Path, task_id: str | None = None):
     async def hook(input_data, tool_use_id, context):
         del tool_use_id, context
-        path = input_data.get("tool_input", {}).get("file_path")
+        tool_input = input_data.get("tool_input", {}) or {}
+        tool_name = str(input_data.get("tool_name") or "")
+        command = str(tool_input.get("command") or "")
+        if tool_name == "Bash" and _BLOCKED_COMMAND.search(command):
+            reason = (
+                "network, package-install, or remote-Git commands are disabled "
+                "for this benchmark; use the preinstalled dependencies and local sources"
+            )
+            _audit_tool(
+                phase="pre", input_data=input_data, task_id=task_id,
+                decision="denied", reason=reason,
+            )
+            return {"hookSpecificOutput": {
+                "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                "permissionDecisionReason": reason,
+            }}
+        path = tool_input.get("file_path")
         if path and _path_escapes_worktree(path, worktree):
             _audit_tool(phase="pre", input_data=input_data, task_id=task_id, decision="denied")
             return {"hookSpecificOutput": {

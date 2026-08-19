@@ -82,6 +82,8 @@ def _graph(tasks: list[dict], shape: str) -> list[dict]:
             "brief": (
                 f"Work on the {task['repository']} project in repos/{task['repository']}. "
                 f"{task['brief']} Run the relevant public tests, inspect the result, "
+                "Dependencies are preinstalled; do not install packages, access the "
+                "network, or use remote Git commands. "
                 "then git add and commit only the requested fix. Do not inspect, "
                 "recreate, or modify anything under /tests."
             ),

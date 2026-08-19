@@ -16,3 +16,9 @@ be used after task-level calibration and write-scope review.
 The verifier writes a fractional `verifier/quality_metrics.json` and uses its
 `quality_score` as `verifier/reward.txt`. A task that passes only some hidden
 checks is therefore distinguishable from a complete solution.
+
+The worker image preinstalls the task dependencies. The worker hook denies
+common package-install, network-download, and remote-Git commands and records
+those denials in `tool_audit.jsonl`. This is practical tool-level control, not
+absolute OS-level network isolation: Claude still requires network access for
+the subscription API.
