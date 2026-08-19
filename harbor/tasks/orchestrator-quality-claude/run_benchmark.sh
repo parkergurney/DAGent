@@ -30,11 +30,15 @@ latest_job() {
   .venv/bin/python - "$repo_root/jobs" <<'PY'
 import pathlib, sys
 root = pathlib.Path(sys.argv[1])
-prefix = "orchestrator-quality-claude__"
-candidates = [path for path in root.rglob("result.json") if any(part.startswith(prefix) for part in path.parts)]
+artifact_results = root.glob("*/package__*/artifacts/logs/artifacts/result.json")
+candidates = []
+for result_path in artifact_results:
+    package_root = result_path.parents[3]
+    if (package_root / "verifier/quality_metrics.json").is_file():
+        candidates.append(package_root)
 if not candidates:
     raise SystemExit(1)
-print(max(candidates, key=lambda path: path.stat().st_mtime).parent)
+print(max(candidates, key=lambda path: (path / "artifacts/logs/artifacts/result.json").stat().st_mtime))
 PY
 }
 
