@@ -40,6 +40,10 @@ esac
 
 [ -x "$repo_root/.venv/bin/python" ] || { echo "missing $repo_root/.venv/bin/python" >&2; exit 2; }
 [ -f "$builder" ] || { echo "missing quality package builder: $builder" >&2; exit 2; }
+# Harbor imports the installed agent in its host process before launching the
+# task container. Make the local src layout importable just like the working
+# execution benchmark launchers do.
+export PYTHONPATH="$repo_root/src${PYTHONPATH:+:$PYTHONPATH}"
 
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-quality.XXXXXX")
 package_dir="$work_dir/package"
