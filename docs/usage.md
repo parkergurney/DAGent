@@ -68,6 +68,59 @@ Fault profiles are deterministic FakeWorker cells. A live backend requires the
 explicit `--live` flag and a trusted Harbor/container boundary; local Ollama
 cells are reported as a separate resource-contention track.
 
+## 1.6 Run the semantic-quality track
+
+The execution canary uses exact-file tasks. The separate quality track runs
+real Arrow, JSONSchema, and TinyDB maintenance tasks against pinned source
+fixtures. Workers receive source code and public tests; recovered hidden tests
+are copied only into Harbor's separate verifier.
+
+The source repositories must be present at `../bench-dirs` relative to this
+checkout, or set `ORCH_QUALITY_SOURCE_ROOT` to their parent directory. The
+builder verifies the pinned commits and refuses dirty or mismatched fixtures.
+
+Run one task-level canary first:
+
+```bash
+ORCH_AUTH_ENV_FILE="$AUTH_FILE" \
+ORCH_QUALITY_TASK=arrow-shift-check-imaginary \
+harbor/tasks/orchestrator-quality-claude/run_canary.sh \
+  orchestrator 0 claude-sonnet-4-6 task
+```
+
+Run the small three-task calibration matrix:
+
+```bash
+ORCH_AUTH_ENV_FILE="$AUTH_FILE" \
+ORCH_QUALITY_TASKS="arrow-shift-check-imaginary jsonschema-hostname-single-label tinydb-lru-cache-set-update" \
+harbor/tasks/orchestrator-quality-claude/run_benchmark.sh 0
+```
+
+Use `ORCH_QUALITY_SUITE=original` to reproduce the original 20-file hidden
+suite. The default `latest` suite uses the latest pre-Harbor TinyDB revisions.
+Each job stores `verifier/quality_metrics.json`; its fractional
+`quality_score` is also written to `verifier/reward.txt`. Reports include a
+separate semantic-quality table and do not confuse hidden-test score with
+orchestrator completion or latency.
+
+Each Harbor quality job also publishes a credential-redacted
+`artifacts/logs/artifacts/tool_audit.jsonl`. It records tool calls and marks
+commands that look like web, package-install, or Git-history access. This is
+an audit trail, not network enforcement: `network_mode = "public"` still
+allows such access. Inspect it with:
+
+```bash
+jq -r 'select(.likely_network_or_history_attempt) |
+  [.timestamp, .task_id, .tool, .target, .decision] | @tsv' \
+  jobs/<job>/artifacts/logs/artifacts/tool_audit.jsonl
+```
+
+The multi-task graph modes (`serial`, `wide`, `diamond`, and `mixed`) are
+available through `ORCH_QUALITY_GRAPH_SHAPE` and explicit
+`ORCH_QUALITY_TASKS`. Start with task-level cells: wide graphs are rejected
+when their declared write scopes overlap unless
+`ORCH_QUALITY_ALLOW_UNSAFE_WIDE=1` is explicitly set.
+
 ## 2. Add a task
 
 ```bash
@@ -350,6 +403,11 @@ verifier mode. The wrapper publishes only `base_sha.txt`, `candidate.patch`,
 `result.json`, `metrics.json`, and the pre-run `run_manifest.json`; scheduler
 packets and verification logs stay in the container's private runtime
 directory.
+
+The semantic-quality Claude launcher is in
+[`harbor/tasks/orchestrator-quality-claude/`](../harbor/tasks/orchestrator-quality-claude/).
+It materializes a temporary package from `bench/quality/`, so hidden tests and
+source fixtures do not make the worker-visible checkout dirty.
 
 ## 12. Security model
 

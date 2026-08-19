@@ -114,7 +114,20 @@ def _cell_paths(path: str | Path) -> tuple[Path, Path, Path]:
         if root.name == "metrics.json":
             return root.with_name("run_manifest.json"), root, root.with_name("result.json")
         return root.with_name("run_manifest.json"), root, root.with_name("result.json")
+    nested = root / "artifacts" / "logs" / "artifacts"
+    if (nested / "run_manifest.json").is_file():
+        root = nested
     return root / "run_manifest.json", root / "metrics.json", root / "result.json"
+
+
+def _quality_metrics_path(cell_root: Path) -> Path | None:
+    """Find verifier quality evidence next to a Harbor artifact directory."""
+    candidates = [cell_root / "quality_metrics.json"]
+    for parent in [cell_root, *cell_root.parents]:
+        if (parent / "verifier").is_dir():
+            candidates.append(parent / "verifier" / "quality_metrics.json")
+            break
+    return next((candidate for candidate in candidates if candidate.is_file()), None)
 
 
 def load_cell(path: str | Path) -> dict:
@@ -126,6 +139,14 @@ def load_cell(path: str | Path) -> dict:
     cell = dict(manifest)
     cell.update(metrics)
     cell.update({key: value for key, value in result.items() if key != "metrics"})
+    quality_path = _quality_metrics_path(metrics_path.parent)
+    if quality_path is not None:
+        quality = json.loads(quality_path.read_text())
+        if isinstance(quality, dict):
+            cell["quality"] = quality
+            cell["quality_score"] = float(quality.get("quality_score", 0.0))
+            cell["quality_tasks_passed"] = int(quality.get("tasks_passed", 0))
+            cell["quality_tasks_total"] = int(quality.get("tasks_total", 0))
     cell.setdefault("cell_status", metrics.get("cell_status"))
     return cell
 
@@ -168,6 +189,20 @@ def summarize_cells(paths: list[str | Path]) -> dict:
             "mean_supervisor_s": round(mean(row.get("supervisor_s", 0.0) for row in rows), 6),
         }
 
+    quality_cells = [cell for cell in cells if "quality_score" in cell]
+    quality_by_policy: dict[str, list[dict]] = {}
+    for cell in quality_cells:
+        quality_by_policy.setdefault(str(cell.get("policy", "unknown")), []).append(cell)
+    quality_summary = {}
+    for policy, rows in sorted(quality_by_policy.items()):
+        quality_summary[policy] = {
+            "cells": len(rows),
+            "complete_scores": sum(row.get("quality_score", 0.0) >= 1.0 for row in rows),
+            "mean_quality_score": round(mean(row.get("quality_score", 0.0) for row in rows), 6),
+            "tasks_passed": sum(row.get("quality_tasks_passed", 0) for row in rows),
+            "tasks_total": sum(row.get("quality_tasks_total", 0) for row in rows),
+        }
+
     return {
         "schema_version": 1,
         "cells": len(cells),
@@ -184,6 +219,7 @@ def summarize_cells(paths: list[str | Path]) -> dict:
             if not cell.get("eligible_for_outcome")
         ],
         "outcome_quality": {"by_policy": policy_summary},
+        "semantic_quality": {"by_policy": quality_summary},
         "orchestration_overhead": {"successful_cells_by_policy": overhead},
         "comparison_violations": comparison_violations,
         "cells_detail": cells,
@@ -258,6 +294,19 @@ def render_markdown(summary: dict) -> str:
             f"{row['verified_completion_probability']:.6f} | "
             f"{row['mean_verified_completion_rate']:.6f} |"
         )
+    quality_rows = summary.get("semantic_quality", {}).get("by_policy", {})
+    if quality_rows:
+        lines += [
+            "", "## Semantic quality (verifier hidden tests)", "",
+            "| Policy | Cells | Complete scores | Mean quality score | Hidden tests passed |",
+            "|---|---:|---:|---:|---:|",
+        ]
+        for policy, row in quality_rows.items():
+            lines.append(
+                f"| {policy} | {row['cells']} | {row['complete_scores']} | "
+                f"{row['mean_quality_score']:.6f} | "
+                f"{row['tasks_passed']}/{row['tasks_total']} |"
+            )
     lines += [
         "", "## Orchestration overhead (successful cells only)", "",
         "| Policy | Cells | Mean wall s | Mean cost USD | Mean queue s | Mean worker s | Mean verify s | Mean supervisor s |",

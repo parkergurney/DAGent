@@ -11,10 +11,29 @@ from claude_agent_sdk import AssistantMessage, ClaudeSDKError, ResultMessage, Te
 
 from orchestrator.worker import sdk_worker
 from orchestrator.worker.sdk_worker import (
-    _agent_options, _parse_terminal,
+    _agent_options, _audit_tool, _parse_terminal,
     _path_escapes_worktree,
     _prompt_with_protocol,
 )
+
+
+def test_tool_audit_redacts_credentials_and_flags_network_commands(monkeypatch, tmp_path):
+    audit = tmp_path / "tool_audit.jsonl"
+    monkeypatch.setenv("ORCH_TOOL_AUDIT_PATH", str(audit))
+    _audit_tool(
+        phase="pre",
+        input_data={
+            "tool_name": "Bash",
+            "tool_input": {"command": "curl https://example.test -H 'Authorization: Bearer secret'"},
+        },
+        task_id="task-1",
+        decision="allowed",
+    )
+    record = json.loads(audit.read_text())
+    assert record["likely_network_or_history_attempt"] is True
+    assert "https://example.test" in record["target"]
+    assert "Bearer [REDACTED]" in record["target"]
+    assert "secret" not in record["target"]
 
 
 def test_ollama_uses_compact_headless_tool_profile(monkeypatch, tmp_path):

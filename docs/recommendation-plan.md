@@ -325,6 +325,33 @@ Run in this order:
 7. Repeat the selected matrix on the separate controlled-cloud or local
    backend track when comparing inference environments.
 
+### Quality track — Semantic task validation
+
+The execution benchmark alone uses exact-file tasks and therefore cannot
+establish that one policy produces better software changes. The separate
+quality track is implemented under `bench/quality/` and
+`harbor/tasks/orchestrator-quality-claude/`.
+
+1. Preserve the original and latest pre-Harbor hidden-test snapshots by commit
+   and manifest; do not mix the TinyDB revisions silently.
+2. Materialize pinned Arrow, JSONSchema, and TinyDB source fixtures from the
+   local `bench-dirs` repositories. Fail closed on a dirty or mismatched
+   source checkout.
+3. Give workers only source code and public tests. Copy recovered hidden tests
+   only into Harbor's separate verifier image.
+4. Run task-level cells first so semantic quality is measured independently of
+   graph merge conflicts.
+5. Use serial, wide, diamond, and mixed quality graphs only after their write
+   scopes have been reviewed. Unsafe wide selections require an explicit
+   override because they measure patch collisions as well as agent quality.
+6. Report fractional hidden-test quality separately from delivery state,
+   latency, cost, and resource contention.
+
+The quality verifier records per-task pass/fail evidence and writes a
+fractional score to `verifier/reward.txt`. A complete score is not required for
+an observation to be useful; partial scores are retained rather than being
+collapsed into a binary success.
+
 Do not launch the large matrix if the canary is invalid, the target is not
 reachable, the resource profile changes, or the local suite fails.
 

@@ -275,6 +275,10 @@ async def run_from_files(instruction_file: str | Path, config_file: str | Path |
     artifact_root.mkdir(parents=True, exist_ok=True)
     run_artifact_root.mkdir(parents=True, exist_ok=True)
     os.environ["ORCH_LIVE_DIAGNOSTICS_PATH"] = str(artifact_root / "live_diagnostics.jsonl")
+    # Publish only credential-redacted tool metadata. The full scheduler DB
+    # remains private, while this audit lets benchmark operators inspect
+    # likely web/history attempts after the Harbor trial.
+    os.environ["ORCH_TOOL_AUDIT_PATH"] = str(artifact_root / "tool_audit.jsonl")
     live_diagnostic("runtime.started")
     base_sha = _repo_sha(repo_root)
     (artifact_root / "base_sha.txt").write_text(base_sha + "\n")

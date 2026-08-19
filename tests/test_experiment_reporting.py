@@ -129,6 +129,32 @@ def test_summary_separates_outcome_from_successful_runtime(tmp_path):
     assert "Excluded cells" in render_markdown(summary)
 
 
+def test_summary_includes_fractional_verifier_quality(tmp_path):
+    cell_dir = tmp_path / "cell"
+    cell_dir.mkdir()
+    (cell_dir / "run_manifest.json").write_text(json.dumps(_manifest()))
+    (cell_dir / "metrics.json").write_text(json.dumps(_metrics(
+        cell_status="success", eligible_for_outcome=True, runtime_comparable=True,
+    )))
+    job_root = tmp_path / "job"
+    verifier = job_root / "verifier"
+    verifier.mkdir(parents=True)
+    (verifier / "quality_metrics.json").write_text(json.dumps({
+        "quality_score": 0.5, "tasks_passed": 1, "tasks_total": 2,
+    }))
+    # Mirror Harbor's artifact path so the report can locate sibling verifier data.
+    artifact = job_root / "artifacts" / "logs" / "artifacts"
+    artifact.mkdir(parents=True)
+    for name in ("run_manifest.json", "metrics.json"):
+        (artifact / name).write_text((cell_dir / name).read_text())
+
+    summary = summarize_cells([artifact])
+    quality = summary["semantic_quality"]["by_policy"]["orchestrator"]
+    assert quality["mean_quality_score"] == 0.5
+    assert quality["tasks_passed"] == 1
+    assert "Semantic quality" in render_markdown(summary)
+
+
 def test_comparison_inputs_must_stay_fixed_within_track_graph_and_profile():
     first = _manifest(backend_track="cloud-claude", graph_id="wide", fault_profile="clean",
                       model={"worker": "model-a", "supervisor": "model-a"})

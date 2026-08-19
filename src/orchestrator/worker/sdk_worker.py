@@ -10,6 +10,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from claude_agent_sdk import (
@@ -51,6 +52,11 @@ _SECRET_PATTERNS = (
      r"\1=[REDACTED]"),
 )
 _OLLAMA_TOOLS = ["Bash", "Read", "Edit", "Write", "Glob", "Grep"]
+_NETWORK_ATTEMPT = re.compile(
+    r"(?i)(curl|wget|fetch|http://|https://|git\s+(clone|fetch|pull|remote)|"
+    r"pip\s+install|uv\s+(pip\s+)?install|npm\s+install|yarn\s+add|"
+    r"requests|urllib|socket|nc\s|ssh\s)"
+)
 
 
 def _sdk_timeout_s() -> float:
@@ -152,33 +158,84 @@ def emit(type_, **payload) -> None:
     print(json.dumps({"type": type_, "payload": payload}), flush=True)
 
 
-def _make_pre_tool_use(worktree: Path):
+def _audit_tool(*, phase: str, input_data: dict, task_id: str | None,
+                decision: str, error: object = None) -> None:
+    """Persist a small, credential-redacted tool-use audit when configured."""
+    audit_path = os.environ.get("ORCH_TOOL_AUDIT_PATH")
+    if not audit_path:
+        return
+    tool_input = input_data.get("tool_input", {}) or {}
+    tool = _redact_text(input_data.get("tool_name"), limit=100)
+    target = _redact_text(
+        tool_input.get("file_path") or tool_input.get("command") or "", limit=2000,
+    )
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "task_id": _redact_text(task_id, limit=100),
+        "phase": phase,
+        "tool": tool,
+        "target": target,
+        "decision": decision,
+        "likely_network_or_history_attempt": bool(_NETWORK_ATTEMPT.search(target)),
+    }
+    if error is not None:
+        record["error"] = _redact_text(error, limit=1000)
+    path = Path(audit_path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+    except OSError:
+        # Auditing must never change the worker's execution result.
+        return
+
+
+def _make_pre_tool_use(worktree: Path, task_id: str | None = None):
     async def hook(input_data, tool_use_id, context):
+        del tool_use_id, context
         path = input_data.get("tool_input", {}).get("file_path")
         if path and _path_escapes_worktree(path, worktree):
+            _audit_tool(phase="pre", input_data=input_data, task_id=task_id, decision="denied")
             return {"hookSpecificOutput": {
                 "hookEventName": "PreToolUse", "permissionDecision": "deny",
                 "permissionDecisionReason": f"path {path!r} escapes the task worktree",
             }}
+        _audit_tool(phase="pre", input_data=input_data, task_id=task_id, decision="allowed")
         return {}
     return hook
 
 
-async def _post_tool_use(input_data, tool_use_id, context):
+async def _post_tool_use(input_data, tool_use_id, context, task_id=None):
+    del tool_use_id, context
     tool_input = input_data.get("tool_input", {}) or {}
+    target = _redact_text(tool_input.get("file_path") or tool_input.get("command") or "")
+    _audit_tool(phase="post", input_data=input_data, task_id=task_id, decision="completed")
     emit("tool_used", tool=input_data.get("tool_name"),
-         target=tool_input.get("file_path") or tool_input.get("command") or "",
+         target=target,
          agent_id=input_data.get("agent_id"))
     return {}
 
 
-async def _post_tool_use_failure(input_data, tool_use_id, context):
-    emit("tool_used", tool=input_data.get("tool_name"), error=input_data.get("error"),
+async def _post_tool_use_failure(input_data, tool_use_id, context, task_id=None):
+    del tool_use_id, context
+    error = _redact_text(input_data.get("error"), limit=1000)
+    _audit_tool(phase="post", input_data=input_data, task_id=task_id,
+                decision="failed", error=error)
+    emit("tool_used", tool=input_data.get("tool_name"), error=error,
          agent_id=input_data.get("agent_id"))
     return {}
 
 
-def _agent_options(worktree: Path, model: str | None, *, stderr=None) -> ClaudeAgentOptions:
+def _agent_options(worktree: Path, model: str | None, *, stderr=None,
+                   task_id: str | None = None) -> ClaudeAgentOptions:
+    async def post_tool_use(input_data, tool_use_id, context):
+        return await _post_tool_use(input_data, tool_use_id, context, task_id)
+
+    async def post_tool_use_failure(input_data, tool_use_id, context):
+        return await _post_tool_use_failure(input_data, tool_use_id, context, task_id)
+
     options = {
         "cwd": str(worktree),
         "model": model,
@@ -187,9 +244,9 @@ def _agent_options(worktree: Path, model: str | None, *, stderr=None) -> ClaudeA
         # the worktree hook below still denies structured paths outside it.
         "permission_mode": "bypassPermissions",
         "hooks": {
-            "PreToolUse": [HookMatcher(hooks=[_make_pre_tool_use(worktree)])],
-            "PostToolUse": [HookMatcher(hooks=[_post_tool_use])],
-            "PostToolUseFailure": [HookMatcher(hooks=[_post_tool_use_failure])],
+            "PreToolUse": [HookMatcher(hooks=[_make_pre_tool_use(worktree, task_id)])],
+            "PostToolUse": [HookMatcher(hooks=[post_tool_use])],
+            "PostToolUseFailure": [HookMatcher(hooks=[post_tool_use_failure])],
         },
     }
     if stderr is not None:
@@ -235,7 +292,7 @@ async def run(worktree: Path, brief: str, model: str | None, task_id: str | None
 
     try:
         diagnostic("sdk.worker_started")
-        options = _agent_options(worktree, model, stderr=capture_sdk_stderr)
+        options = _agent_options(worktree, model, stderr=capture_sdk_stderr, task_id=task_id)
         client = ClaudeSDKClient(options=options)
         diagnostic("sdk.connect_started", timeout_s=sdk_timeout_s)
         async with asyncio.timeout(sdk_timeout_s):

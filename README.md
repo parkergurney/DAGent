@@ -86,6 +86,8 @@ only need raw commands for setup, debugging, or automation.
     src/orchestrator/harbor.py  small Harbor adapter boundary
     src/orchestrator/metrics.py durable experiment metrics
     src/orchestrator/policies.py policy selection for Harbor experiments
+    bench/quality/            pinned semantic-quality inputs and builder
+    harbor/tasks/orchestrator-quality-claude/  quality benchmark track
     benchmarks/phase5/  fixed graphs, profiles, and backend tracks
     tests/scenarios/      FakeWorker scenario suite = regression suite
     data/                 runtime state, gitignored

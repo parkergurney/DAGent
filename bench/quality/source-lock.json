@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "repositories": {
+    "arrow": {
+      "source_dir": "arrow",
+      "commit": "50e0444132135096e581498329a7c59a20814bb4",
+      "base_commit": "6321d81485566cfe5878834e01b5e17cbe4a815b"
+    },
+    "jsonschema": {
+      "source_dir": "jsonschema",
+      "commit": "cf1f6b02ab6fcf32f46f039720fa0add728f236f",
+      "base_commit": "cf1f6b02ab6fcf32f46f039720fa0add728f236f"
+    },
+    "tinydb": {
+      "source_dir": "tinydb",
+      "commit": "71283fd738f03b06f0347a1515bc34c96de575ae",
+      "base_commit": "71283fd738f03b06f0347a1515bc34c96de575ae"
+    }
+  },
+  "hidden_suites": {
+    "original": {
+      "commit": "86b5be6cb1a80b38cbfe7d449176097a456d5936",
+      "file_count": 20
+    },
+    "latest": {
+      "commit": "016ae283acac1beb2281d65e3243880af10ae0e2",
+      "file_count": 19
+    }
+  }
+}
