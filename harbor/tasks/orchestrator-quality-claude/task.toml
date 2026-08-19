@@ -38,7 +38,10 @@ ORCH_WORKER_MODEL = "claude-sonnet-4-6"
 ORCH_SUPERVISOR_MODEL = "claude-sonnet-4-6"
 ORCH_MAX_CONCURRENCY = "4"
 ORCH_CONTEXT_LENGTH = "32768"
-ORCH_STALL_THRESHOLD_S = "300"
+# Complex semantic tasks can spend several minutes in one SDK turn while
+# reading and reasoning. Keep the watchdog above the SDK turn cap so it does
+# not preempt that work first.
+ORCH_STALL_THRESHOLD_S = "720"
 ORCH_WORKER_TIMEOUT_S = "1500"
-ORCH_SDK_TIMEOUT_S = "300"
+ORCH_SDK_TIMEOUT_S = "600"
 ORCH_SUPERVISOR_TIMEOUT_S = "120"

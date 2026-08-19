@@ -21,4 +21,5 @@ The worker image preinstalls the task dependencies. The worker hook denies
 common package-install, network-download, and remote-Git commands and records
 those denials in `tool_audit.jsonl`. This is practical tool-level control, not
 absolute OS-level network isolation: Claude still requires network access for
-the subscription API.
+the subscription API. Quality workers have a 600-second SDK turn limit and a
+720-second stall threshold for complex maintenance tasks.
