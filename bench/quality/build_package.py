@@ -156,6 +156,13 @@ def build(args: argparse.Namespace) -> dict:
     (output / "tests" / "selection.json").write_text(
         json.dumps(selection, indent=2, sort_keys=True) + "\n"
     )
+    # Harbor builds each environment Dockerfile with that directory as its
+    # build context. Keep the worker and verifier inputs in their respective
+    # contexts rather than relying on Docker COPY paths outside the context.
+    for context_name in ("environment", "tests"):
+        context = output / context_name
+        shutil.copytree(output / "fixtures", context / "fixtures")
+        shutil.copy2(output / "quality_tasks.json", context / "quality_tasks.json")
     package_files = sorted(
         path for path in output.rglob("*") if path.is_file() and ".git" not in path.parts
     )

@@ -38,10 +38,14 @@ def test_quality_builder_separates_worker_sources_and_hidden_tests(tmp_path):
     assert selection["hidden_commit"] == "016ae283acac1beb2281d65e3243880af10ae0e2"
     assert [task["id"] for task in selection["tasks"]] == ["arrow-shift-check-imaginary"]
     assert (package / "fixtures/arrow/arrow/arrow.py").is_file()
+    assert (package / "environment/fixtures/arrow/arrow/arrow.py").is_file()
+    assert (package / "environment/quality_tasks.json").is_file()
+    assert (package / "tests/fixtures/arrow/arrow/arrow.py").is_file()
+    assert (package / "tests/quality_tasks.json").is_file()
     assert len(list((package / "tests/hidden").rglob("test_*.py"))) == 18
     assert "COPY fixtures" in (package / "environment/Dockerfile").read_text()
     assert "COPY tests/hidden" not in (package / "environment/Dockerfile").read_text()
-    assert "COPY tests/hidden" in (package / "tests/Dockerfile").read_text()
+    assert "COPY hidden" in (package / "tests/Dockerfile").read_text()
 
 
 def test_original_quality_builder_restores_original_hidden_file_count(tmp_path):

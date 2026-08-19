@@ -13,10 +13,10 @@ RUN apt-get update \
 WORKDIR /app
 COPY fixtures /app/repos
 COPY quality_tasks.json /tests/quality_tasks.json
-COPY tests/selection.json /tests/selection.json
-COPY tests/hidden /tests/hidden
-COPY tests/test.sh /tests/test.sh
-COPY tests/grader.py /tests/grader.py
+COPY selection.json /tests/selection.json
+COPY hidden /tests/hidden
+COPY test.sh /tests/test.sh
+COPY grader.py /tests/grader.py
 
 RUN python3 -m pip install --no-cache-dir pytest python-dateutil 'attrs>=22.2.0' \
        'jsonschema-specifications>=2023.03.6' 'referencing>=0.25.3' 'rpds-py>=0.7.1' \
