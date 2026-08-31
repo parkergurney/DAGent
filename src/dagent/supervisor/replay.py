@@ -1,10 +1,9 @@
 """supervisor-replay: re-run a saved packet (data/<task_id>/packets/<seq>.json,
 written by supervisor/llm.py on every invocation) against the CURRENT
-supervisor prompt/model. Design.md's M4 milestone calls for building this
-BEFORE any prompt tuning starts, so heuristic changes get judged against real
-saved packets, not vibes.
+supervisor prompt/model. This exists so heuristic changes get judged against
+real saved packets rather than vibes, without paying for a live run.
 
-    supervisor-replay data/<task_id>/packets/<seq>.json [--model <model>]
+    dagent-supervisor-replay data/<task_id>/packets/<seq>.json [--model <model>]
 """
 import argparse
 import asyncio

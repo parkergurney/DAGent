@@ -1,8 +1,8 @@
-"""Raw `git worktree`, no treehouse dependency (design.md section 8).
+"""Raw `git worktree`, no treehouse dependency (see README.md).
 
-M2 creates one throwaway worktree per task and removes it on teardown; a
-pooled/reused worktree set is M5's job, once parallel batches make the
-create/destroy cost worth avoiding.
+This creates one throwaway worktree and removes it on teardown, for
+standalone use outside the scheduler. Concurrent batches use
+worktree_pool.py instead, which reuses a fixed set of slots.
 """
 import subprocess
 from pathlib import Path
@@ -16,7 +16,7 @@ def _git(*args, cwd) -> str:
 def create_worktree(repo_root, worktree_root, task_id, base_branch="main") -> tuple[Path, str]:
     """Create a worktree for task_id off base_branch. Returns (path, base_sha).
 
-    Idempotent across a restart (M4): removing a worktree at teardown doesn't
+    Idempotent across a restart: removing a worktree at teardown doesn't
     delete the branch it was on, so a restart reusing the same task_id would
     otherwise hit "branch already exists" on `-b`. Deleting it first makes a
     restart start genuinely fresh from base_branch, not from wherever the

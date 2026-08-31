@@ -1,4 +1,4 @@
-"""Core control loop (design.md sections 2, 4, 6, 8, 11 / M2-M5).
+"""Core control loop (see README.md).
 
 Deterministic asyncio scheduler: promotes blocked -> queued -> running,
 watches each spawned worker's event stream, runs the verify gate on a
@@ -315,7 +315,7 @@ class Scheduler:
         self.artifact_root = Path(artifact_root).resolve() if artifact_root else None
 
         # Pool size == max_concurrency: never a reason for more slots than
-        # tasks that can be running at once (design.md section 8 / M5).
+        # tasks that can be running at once (see README.md).
         self._pool = WorktreePool(repo_root, worktree_root, max_concurrency)
         # `_procs` is the live-process registry used by the watchdog and
         # operator tooling. `_worker_slots` is the capacity lease registry.
@@ -357,7 +357,7 @@ class Scheduler:
 
         With forever=True this never returns on its own: once the team
         settles it keeps polling (every poll_interval_s) for newly added
-        tasks instead of exiting, so a separate `orchestrator add-task`
+        tasks instead of exiting, so a separate `dagent add-task`
         process writing to the same SQLite file gets picked up without
         restarting this one. That's the whole of daemon mode; cancel the
         awaiting task (e.g. on Ctrl-C) to stop it -- the `finally` below
@@ -1511,7 +1511,7 @@ class Scheduler:
             result = SupervisorResult(action=action, ok=True, tokens_in=0, tokens_out=0,
                                       cost_usd=0, raw_text=None)
         if action.action not in packet.allowed_actions:
-            # Enforcement is an orchestrator responsibility (design.md section
+            # Enforcement is an orchestrator responsibility (README.md section
             # 6, "an out-of-menu response is rejected"), not something to
             # trust any one supervisor implementation -- real or a test
             # double -- to have already gotten right.

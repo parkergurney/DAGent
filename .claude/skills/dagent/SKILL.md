@@ -8,7 +8,7 @@ allowed-tools:
 
 # dagent
 
-Natural-language front end for the `dagent` CLI (`src/dagent/cli.py`
+Natural-language front end for DAGent's `dagent` CLI (`src/dagent/cli.py`
 in this repo). Translate what the user says into the right subcommand below,
 run it via Bash, and read the result back to them in plain language - don't
 just dump raw CLI output.
@@ -33,18 +33,10 @@ file exist because one Bash approval for `run`/`daemon` unlocks a lot of
 unattended, hard-to-interrupt activity - keep them, don't route around them
 just because a request seems simple.
 
-The orchestrator is not a host security sandbox. For live workers, require
+DAGent is not a host security sandbox. For live workers, require
 `--external-isolation` only when Harbor or another trusted outer environment
 already supplies containment. `--trusted-development` is an explicit direct
 host mode and is never benchmark isolation. Fake workers need neither flag.
-
-## Opinions
-
-If `OPINIONS.md` exists at the repo root, read it before acting. It holds the
-user's working preferences (deterministic-first, minimal moving parts,
-terse-by-default status, honest escalation) layered on top of the guardrails
-below - honor it the same way you'd honor an explicit instruction from the
-user. Don't wait to be asked; check for it once per session.
 
 ## Prereq check
 
@@ -149,7 +141,7 @@ batch, reuse that batch's db path.
 
 Less common flags (`--max-concurrency`, `--worker-model`, `--supervisor-model`,
 `--worktree-root`, `--max-retries`, `--config`) aren't listed above - run
-`orchestrator <command> --help` if the user asks for something not covered
+`dagent <command> --help` if the user asks for something not covered
 here, rather than guessing a flag name.
 
 ## Translating status into plain language
@@ -197,7 +189,7 @@ scheduler. Use delivered artifacts instead:
 - Any delivered task with a `patch:` line has an event-specific saved patch.
   `data/<task_id>/review.patch` is also kept as the latest convenience copy.
 
-When the user asks whether the orchestrator cleaned up after itself, check:
+When the user asks whether DAGent cleaned up after itself, check:
 
 ```
 git -C <repo-root> worktree list

@@ -1,6 +1,6 @@
-"""WorktreePool (design.md section 8 / M5): fixed-size slot reuse instead of
+"""WorktreePool (see README.md): fixed-size slot reuse instead of
 create/destroy per task attempt, and the crash-recovery interaction with
-design.md section 4's reconciliation pass -- a fresh process must get clean
+README.md's reconciliation pass -- a fresh process must get clean
 slots even if a previous one crashed mid-run and left a live worktree behind.
 """
 import asyncio
@@ -113,7 +113,7 @@ def test_acquire_blocks_until_a_slot_is_released(tmp_path):
 
 
 def test_open_recovers_from_a_stale_slot_left_by_a_crashed_process(tmp_path):
-    """Simulates the design.md section 4 crash-recovery scenario for
+    """Simulates the README.md crash-recovery scenario for
     worktrees: a previous orchestrator process died with a slot still
     checked out and dirty. A fresh process's pool.open() must not choke on
     it -- every slot starts clean unconditionally, no special code path."""

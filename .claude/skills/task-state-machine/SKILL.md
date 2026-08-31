@@ -5,7 +5,6 @@ description: Task states, transitions, dependency blocking, and crash recovery f
 
 # Task state machine
 
-<!-- sync:task-states -->
 States: `blocked, queued, running, verifying, triage, needs_human, delivering,
 delivered, failed, cancelled, dependency_blocked`. Terminal: delivered, failed,
 cancelled, dependency_blocked. `needs_human` is a settled resting state for a
@@ -55,4 +54,3 @@ Design notes:
   verification result advances to delivery, and a persisted delivery result
   advances to delivered without repeating the handoff. This is process-restart
   recovery for one trusted host, not distributed failover.
-<!-- /sync:task-states -->

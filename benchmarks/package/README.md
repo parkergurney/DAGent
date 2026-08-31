@@ -1,7 +1,7 @@
-# Phase 5 benchmark package
+# Benchmark input package
 
-This is the fixed input package for the recommendation plan's benchmark
-preparation phase. Every graph has ten nodes and distinct write scopes:
+This is the fixed input package for benchmark runs.
+Every graph has ten nodes and distinct write scopes:
 
 - `serial`: one long dependency chain;
 - `wide`: ten independent roots;
@@ -17,7 +17,7 @@ resource metadata; they must not be pooled into one comparison.
 Validate and enumerate the matrix without running workers:
 
 ```sh
-dagent-experiment prepare --output-dir results/phase5-matrix
+dagent-experiment prepare --output-dir results/benchmark-matrix
 ```
 
 Run one free deterministic cell against a throwaway repository:
@@ -25,7 +25,7 @@ Run one free deterministic cell against a throwaway repository:
 ```sh
 dagent-experiment run --graph wide --policy orchestrator --seed 0 \
   --profile clean --backend-track cloud-claude \
-  --repo-root /path/to/throwaway-repo --output-dir results/phase5/cell-01
+  --repo-root /path/to/throwaway-repo --output-dir results/benchmark/cell-01
 ```
 
 Summarize saved cells with `dagent-experiment report ...` or the

@@ -1,5 +1,5 @@
-"""M3 exit criterion (design.md section 11): "real workers: SDK sessions on a
-toy repo with 3-4 seeded issues." Drives the full M2 scheduler with real
+"""Live check that real workers work: SDK sessions on a toy repo with 3-4
+seeded issues. Drives the full scheduler with real
 Agent SDK sessions (worker/sdk_worker.py) against three seeded issues in a
 throwaway repo -- no FakeWorker, no mocks.
 
@@ -8,7 +8,7 @@ never runs by accident or in CI. Set ORCH_LIVE_SDK_TESTS=1 to run it:
 
     ORCH_LIVE_SDK_TESTS=1 pytest tests/integration -q
 
-design.md section 1: "Never debug the orchestrator through paid
+README.md: "Never debug the orchestrator through paid
 nondeterministic workers." The deterministic contract (state machine, verify
 gate, watchdog, reconcile) is already proven by tests/scenarios/ against
 FakeWorker; this file only proves the real SDK backend plugs into that same
@@ -31,7 +31,7 @@ pytestmark = pytest.mark.skipif(
     reason="live SDK integration test: costs real API money, set ORCH_LIVE_SDK_TESTS=1 to run",
 )
 
-MODEL = "claude-haiku-4-5"  # cheap, matches the M1 spike's model choice
+MODEL = "claude-haiku-4-5"  # cheap, and enough for the protocol path
 
 
 def _seed_greet_bug(repo):
@@ -93,9 +93,9 @@ def test_three_seeded_issues_delivered_by_real_sdk_workers(tmp_path):
     # Every state reached must be a valid resting state -- the scheduler must
     # never hang or crash on a real session. Full 3/3 success is NOT asserted:
     # a cheap model occasionally forgets the exact DONE_CLAIM sentinel, which
-    # is not an orchestrator bug -- it's exactly the case M2's no-supervisor
+    # is not a scheduler bug -- it's exactly the case the no-supervisor
     # policy is built to fail safe on (unclaimed exit -> needs_human), and
-    # design.md section 1 is explicit that real workers are nondeterministic
+    # README.md is explicit that real workers are nondeterministic
     # and this suite isn't where that gets debugged. Observed in practice:
     # 5/6 seeded-issue runs across two live runs delivered; the other landed
     # in needs_human via exactly that path.
@@ -104,7 +104,7 @@ def test_three_seeded_issues_delivered_by_real_sdk_workers(tmp_path):
     assert delivered >= 2, f"only {delivered}/3 delivered: {states}"
 
     # every worker.done_claimed event should carry real cost/token data --
-    # this is the M3-specific bit FakeWorker never exercises.
+    # this is the SDK-specific bit FakeWorker never exercises.
     done_claims = conn.execute(
         "SELECT cost_usd FROM events WHERE type = 'worker.done_claimed'"
     ).fetchall()

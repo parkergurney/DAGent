@@ -1,5 +1,5 @@
-"""Shared git-repo scaffolding for M2 tests (scheduler + verify gate), plus a
-scripted supervisor double for M4 scheduler-dispatch tests."""
+"""Shared git-repo scaffolding for scheduler and verify-gate tests, plus a
+scripted supervisor double for scheduler-dispatch tests."""
 import subprocess
 from pathlib import Path
 

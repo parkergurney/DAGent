@@ -1,4 +1,4 @@
-"""One-shot, stateless supervisor call (design.md section 6): "A single
+"""One-shot, stateless supervisor call (see README.md): "A single
 Messages API call -- no tools, no session, no memory. Stateless and
 therefore replayable." claude_agent_sdk.query() in single-shot mode is what
 this environment can actually authenticate through (Claude Code CLI auth;
@@ -6,7 +6,7 @@ no ANTHROPIC_API_KEY is configured here) -- tools=[] and max_turns=1 keep it
 a pure completion rather than an agentic session.
 
 Every invocation is dumped to disk (packet + raw response + final action)
-BEFORE any prompt tuning happens, per M4's milestone note -- see
+BEFORE any prompt tuning happens -- see
 supervisor/replay.py for re-running a saved packet against the current
 prompt/model offline.
 """
@@ -127,7 +127,7 @@ async def invoke_supervisor(packet: TriagePacket, *, model: str | None = None,
             return result
         except Exception as e:
             # Broad on purpose: this is the explicit "when the judgment layer
-            # breaks, degrade to the human, visibly" boundary (design.md
+            # breaks, degrade to the human, visibly" boundary (README.md
             # section 6, enforcement rule 3) -- a malformed response and a
             # transport-level SDK failure both end the same way, a synthetic
             # Escalate, never a crash.

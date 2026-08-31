@@ -1,7 +1,7 @@
 """Scripted subprocess impersonating a Claude Code worker session
-(design.md section 11, "FakeWorker (build first, in M2)").
+(see README.md)").
 
-Speaks the wire protocol real workers will speak once M3 wires up the SDK:
+Speaks the same wire protocol real SDK workers speak:
 one JSON object per stdout line, {"type": "tool_used"|"messaged"|"asked"|
 "done_claimed", "payload": {...}}. Exiting after done_claimed is a clean
 finish; exiting (any code, any reason) without one is exactly what an
@@ -166,7 +166,7 @@ def _stall(wt):
 @scenario("ask")
 def _ask(wt):
     emit("asked", question="which logging library should I use?")
-    sys.stdin.readline()  # a real reply would land here; M2 has no supervisor to send one
+    sys.stdin.readline()  # a real reply would land here; the fake harness sends none
     (wt / "output.txt").write_text("done\n")
     _commit(wt)
     emit("done_claimed", result="DONE_CLAIM: ok")
@@ -181,7 +181,7 @@ def _crash(wt):
 @scenario("wait")
 def _wait(wt):
     """Declares an external wait, then goes silent like stall -- distinct
-    event shape, same fate under M2's no-supervisor policy."""
+    event shape, same fate when no supervisor is wired up."""
     emit("messaged", text="waiting on external CI to finish")
     time.sleep(60)
 

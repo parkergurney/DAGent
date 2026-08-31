@@ -20,7 +20,7 @@ target_reachable=${ORCH_TARGET_REACHABLE:-0}
 
 case "$graph_shape" in
   dag) graph_source="$task_dir/graph.json" ;;
-  serial|wide|diamond|mixed) graph_source="$repo_root/benchmarks/phase5/graphs/$graph_shape.json" ;;
+  serial|wide|diamond|mixed) graph_source="$repo_root/benchmarks/package/graphs/$graph_shape.json" ;;
   *) echo "unsupported graph shape: $graph_shape" >&2; exit 2 ;;
 esac
 [ -f "$graph_source" ] || { echo "missing graph source: $graph_source" >&2; exit 2; }

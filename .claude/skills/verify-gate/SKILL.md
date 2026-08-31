@@ -5,7 +5,6 @@ description: The deterministic visible verification contract and failure-signatu
 
 # Verify gate contract
 
-<!-- sync:verify-gate -->
 The verify gate is deterministic and contains no LLM or evaluator-only logic.
 Harbor owns hidden tests and scoring. The gate turns a worker's committed
 candidate into public evidence, a normalized failure signature, and a patch.
@@ -59,4 +58,3 @@ afterward. Timeout cleanup kills the check's process group.
 Events are `verify.started`, then `verify.passed` or `verify.failed` with the
 cause, duration, output/patch paths, and failure signature. Verification attempt
 counts remain available to generic experiment metrics.
-<!-- /sync:verify-gate -->

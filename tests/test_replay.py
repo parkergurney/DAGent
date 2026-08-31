@@ -1,4 +1,4 @@
-"""Invariant tests for the event-sourced store (design.md section 3).
+"""Invariant tests for the event-sourced store (see README.md).
 
 The headline invariant (3): tasks is rebuildable from events -- replay(events)
 must equal the live tasks table after any lifecycle. This test drives a

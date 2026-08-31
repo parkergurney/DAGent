@@ -1,9 +1,8 @@
-"""Orchestrator config: defaults from design.md section 12, with optional TOML
-overrides.
+"""DAGent config: defaults in this module, with optional TOML overrides.
 
 Frozen dataclass, single flat namespace. No env-var layering, no validation
 framework -- unknown TOML keys are ignored so a config file can carry comments
-or future keys without breaking M0.
+or future keys without breaking older builds.
 """
 import tomllib
 from dataclasses import dataclass, fields

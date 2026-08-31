@@ -101,7 +101,7 @@ async def run_instruction(*, instruction: str, repo_root: str | Path,
 
     Real workers require ``external_isolation=True``.  This is an explicit
     declaration by the Harbor caller, not a local sandbox switch; the
-    orchestrator cannot verify or supply the outer OS boundary.
+    DAGent cannot verify or supply the outer OS boundary.
     """
     base_sha_result = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=repo_root, check=True,

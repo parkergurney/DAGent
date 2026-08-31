@@ -1,16 +1,16 @@
-"""`orchestrator` console script: the operator-facing CLI over the library
-described in docs/usage.md. Six subcommands, each a thin wrapper over
+"""`dagent` console script: the operator-facing CLI over the library
+described in README.md. Six subcommands, each a thin wrapper over
 existing pieces -- no new control-flow, just the plumbing to drive them
 without hand-writing a Python script per batch:
 
-    orchestrator add-task --repo R --title T --brief B --delivery-mode M [...]
-    orchestrator run       [--fake-worker] [--fake-supervisor] ...
-    orchestrator daemon    [--poll-interval S] ...   # like run, never exits
-    orchestrator answer TASK_ID "message"
-    orchestrator cancel TASK_ID [--reason "why"]
-    orchestrator status [TASK_ID] [--digest]
+    dagent add-task --repo R --title T --brief B --delivery-mode M [...]
+    dagent run       [--fake-worker] [--fake-supervisor] ...
+    dagent daemon    [--poll-interval S] ...   # like run, never exits
+    dagent answer TASK_ID "message"
+    dagent cancel TASK_ID [--reason "why"]
+    dagent status [TASK_ID] [--digest]
 
-`--repo` also accepts a short name from repos.toml (see docs/usage.md)
+`--repo` also accepts a short name from repos.toml (see README.md)
 instead of a full path.
 """
 import argparse
@@ -36,12 +36,12 @@ from dagent.worker import (
 # streams these so the calling session can watch this process's stdout
 # (e.g. the Monitor tool) instead of polling `status` -- the event-driven
 # wake firstmate's watcher gives its user, built on the events table
-# that's already this system's source of truth (design.md section 3).
+# that's already this system's source of truth (see README.md).
 _NOTIFY_STATES = ("needs_human", "delivered", "failed", "dependency_blocked")
 
 
 def _load_repo_registry(path: str = "repos.toml") -> dict:
-    """Flat name -> path lookup, see repos.toml and docs/usage.md. Missing
+    """Flat name -> path lookup, see repos.toml and README.md. Missing
     file just means no registry is in use; not an error."""
     p = Path(path)
     if not p.exists():
@@ -233,7 +233,7 @@ def _print_task_detail(conn, task_id: str) -> int:
             for i, opt in enumerate(payload.get("options", [])):
                 marker = " (recommended)" if payload.get("recommended") == i else ""
                 print(f"    [{i}] {opt}{marker}")
-            print(f'  resolve with:  orchestrator answer {task_id} "..."')
+            print(f'  resolve with:  dagent answer {task_id} "..."')
     elif task["state"] == "delivered":
         delivery_event = conn.execute(
             "SELECT type, payload FROM events WHERE task_id = ? AND source = 'delivery' "
@@ -270,7 +270,7 @@ def _print_task_detail(conn, task_id: str) -> int:
 def _print_status_digest(conn) -> None:
     """One-shot, terser summary: state counts, needs_human questions, session
     count. Pull-only read of current state -- no loop, no polling, no
-    supervision (design.md's non-goals rule out a chat liaison front-end)."""
+    supervision (README.md's non-goals rule out a chat liaison front-end)."""
     rows = conn.execute("SELECT state FROM tasks").fetchall()
     if not rows:
         print("no tasks")
@@ -334,7 +334,7 @@ def _add_scheduler_args(p) -> None:
         help="explicitly allow direct host execution; not benchmark isolation",
     )
     p.add_argument("--yolo", action="store_true")
-    p.add_argument("--config", help="TOML overriding config defaults (design.md section 12)")
+    p.add_argument("--config", help="TOML overriding config defaults (see README.md)")
 
 
 def main(argv=None) -> int:

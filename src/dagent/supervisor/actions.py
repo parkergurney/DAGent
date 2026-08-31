@@ -1,5 +1,4 @@
-"""Deterministic, orchestrator-side menu computation (design.md section 6,
-"Enforcement"): "allowed_actions computed deterministically pre-call ... an
+"""Deterministic, orchestrator-side menu computation (see README.md): "allowed_actions computed deterministically pre-call ... an
 out-of-menu response is rejected." The LLM never decides what it's allowed
 to choose from -- this does, before the call is even made.
 """
@@ -27,7 +26,7 @@ def compute_allowed_actions(trigger_type: str, *, nudges_remaining: int,
             # fake_worker.py/sdk_worker.py block on stdin right after
             # emitting "asked", specifically for this. A silently-stalled
             # session has no such channel without a concurrent stdin-listener
-            # rework of sdk_worker.py, and design.md's own heuristics favor
+            # rework of sdk_worker.py, and README.md's heuristics favor
             # wait/restart for stalls anyway, never nudge -- so it's left off
             # the menu here rather than offered and silently dropped.
             actions.append("nudge")

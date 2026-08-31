@@ -1,6 +1,6 @@
-"""Spawns fake_worker.py as a real subprocess -- the M2 stand-in for the
-Agent SDK session M3 will spawn instead. Same call shape (task, worktree) ->
-Process, so the scheduler doesn't change when M3 swaps this out.
+"""Spawns fake_worker.py as a real subprocess -- the deterministic stand-in
+for an Agent SDK session. Same call shape (task, worktree) -> Process, so the
+scheduler does not change when one is swapped for the other.
 """
 import asyncio
 import os
@@ -9,7 +9,7 @@ from pathlib import Path
 
 # src/dagent/worker/fake.py -> src/. The subprocess isn't launched
 # through an installed console entry point, so it needs this on PYTHONPATH
-# to import `orchestrator` at all -- pytest's `pythonpath` ini setting only
+# to import `dagent` at all -- pytest's `pythonpath` ini setting only
 # reaches this (parent) process, not children.
 _SRC = str(Path(__file__).resolve().parents[2])
 

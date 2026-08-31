@@ -1,4 +1,4 @@
-"""TriagePacket -> single LLM call -> closed action enum (design.md section 6)."""
+"""TriagePacket -> single LLM call -> closed action enum (see README.md)."""
 from dagent.supervisor.actions import compute_allowed_actions
 from dagent.supervisor.fake import always_escalate
 from dagent.supervisor.llm import SupervisorResult, invoke_supervisor

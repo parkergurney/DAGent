@@ -1,12 +1,11 @@
-"""Crash recovery (design.md section 4): "a reconciliation pass at startup:
+"""Crash recovery (see README.md): "a reconciliation pass at startup:
 for every task in running, check whether session_id is a live session; dead
 ones get a synthetic worker.exited event and route through triage like any
 other crash. No special recovery code path."
 
 reconcile() does exactly that and nothing more -- it does not resolve triage
-itself. Whatever normally drains triage (Scheduler, in M2 always straight to
-needs_human -- see scheduler.core) picks these tasks up the same way it would
-a live crash.
+itself. Whatever normally drains triage (see scheduler.core) picks these
+tasks up the same way it would a live crash.
 """
 import os
 import subprocess

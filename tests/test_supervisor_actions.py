@@ -1,4 +1,4 @@
-"""Deterministic menu enforcement (design.md section 6). Pure function, no
+"""Deterministic menu enforcement (see README.md). Pure function, no
 LLM, no DB -- this is the layer that makes an out-of-menu response
 impossible regardless of what any supervisor implementation returns.
 """

@@ -1,6 +1,6 @@
 """Standalone visible verification CLI for a durable task candidate.
 
-    verify-gate --task <id> [--db data/dagent.db] [--json] [--record]
+    dagent-verify-gate --task <id> [--db data/dagent.db] [--json] [--record]
 """
 import argparse
 import sys

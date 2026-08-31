@@ -1,4 +1,4 @@
-"""Harbor installed-agent adapter for the orchestrator.
+"""Harbor installed-agent adapter for DAGent.
 
 The adapter is deliberately an installed agent rather than a Harbor external
 agent: the scheduler must be able to create several local Claude SDK workers
@@ -44,7 +44,7 @@ except ImportError:  # pragma: no cover - Harbor supplies these in a trial image
 
 
 class HarborOrchestratorAgent(BaseInstalledAgent):
-    """Run the existing orchestrator scheduler inside a Harbor trial."""
+    """Run the DAGent scheduler inside a Harbor trial."""
 
     SUPPORTS_ATIF = False
     SUPPORTS_CONFIG = True
@@ -101,7 +101,7 @@ class HarborOrchestratorAgent(BaseInstalledAgent):
         for parent in [current.parent, *current.parents]:
             if (parent / "pyproject.toml").is_file() and (parent / "src/dagent").is_dir():
                 return parent
-        raise RuntimeError("cannot locate the orchestrator source tree for Harbor install")
+        raise RuntimeError("cannot locate the dagent source tree for Harbor install")
 
     def _source_archive(self) -> Path:
         root = self._source_root()
@@ -184,8 +184,8 @@ class HarborOrchestratorAgent(BaseInstalledAgent):
     async def run(self, instruction: str, environment, context) -> None:
         """Invoke the scheduler in the task container and publish its artifacts."""
         settings = self._settings()
-        instruction_path = self._remote_file_name("orchestrator-instruction", ".md")
-        config_path = self._remote_file_name("orchestrator-config", ".json")
+        instruction_path = self._remote_file_name("dagent-instruction", ".md")
+        config_path = self._remote_file_name("dagent-config", ".json")
         await self._upload_text(environment, instruction, instruction_path)
         await self._upload_text(environment, json.dumps(settings), config_path)
 
@@ -219,7 +219,7 @@ class HarborOrchestratorAgent(BaseInstalledAgent):
         )
 
     def populate_context_post_run(self, context) -> None:
-        """Expose final orchestrator state without exposing runtime secrets."""
+        """Expose final DAGent state without exposing runtime secrets."""
         artifact_dir = self.logs_dir / "artifacts"
         result_path = artifact_dir / "result.json"
         metrics_path = artifact_dir / "metrics.json"

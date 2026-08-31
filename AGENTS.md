@@ -1,105 +1,19 @@
-# DAGent: design notes for agent sessions
+# DAGent: repo context for agent sessions
 
-Status: M6 Harbor boundary complete (worktree pool, dependency settlement, all
-three delivery modes, durable metrics, policy selection, and an `dagent`
-CLI). Harbor owns outer task isolation, hidden evaluation, and scoring.
+Read [README.md](README.md) first - it is the source of truth for the thesis,
+architecture, state machine, supervisor contract, verify gate, worker
+lifecycle, delivery modes, and security model.
+[BENCHMARK.md](BENCHMARK.md) covers evaluation methodology and results.
+This file holds only what those two don't: the invariants that must never be
+violated, and where the deeper reference lives.
 
-This file carries the always-relevant core: thesis, architecture, and the
-invariants that must never be violated. The full design doc lives in
-docs/design.md and is the source of truth for architecture decisions; the
-rest of it (task state machine, storage schema, supervisor contract, verify
-gate, worker lifecycle, delivery modes, milestones, config,
-open questions) is split into topic skills under `.claude/skills/` (see
-"Deep reference" below) so a session only loads what its task actually
-touches. Update docs/design.md when decisions change; log the change and
-rationale in devlog.md.
+`repos.toml` (repo root) is a flat, manually-edited short-name -> path registry
+that `add-task --repo` can resolve.
+`OPINIONS.md` (repo root), when present, holds the user's working preferences
+for how the `dagent` CLI/skill should behave.
+Neither changes anything under `src/dagent/`.
 
-Working name: DAGent.
-
-`OPINIONS.md` (repo root) holds the user's working preferences for how the
-`dagent` CLI/skill should behave - lighter-weight than this file,
-user-owned, edited freely. `repos.toml` (repo root) is a flat, manually-
-edited short-name -> path registry that `add-task --repo` can resolve; see
-docs/usage.md. Neither changes anything under `src/dagent/`.
-
----
-
-## 1. Thesis
-
-A deterministic orchestration daemon — real code, real state machine,
-event-driven — that runs a team of Claude Code sessions in parallel, using LLM
-judgment only at the edges (triage decisions), built natively on the Claude
-Agent SDK. Harbor supplies evaluation and baseline comparisons.
-
-Prior art: kunchenguid/firstmate (AGENTS.md prompt + bash toolbelt + tmux
-scraping). Ideas kept from it: event-driven wake instead of polling, worktree
-isolation, explicit per-project delivery modes, "delivered = PR open, merge is
-the manager's call", restart-proof state on disk. Ideas rejected: pane-scraping
-transport (we use SDK hooks + structured streams), LLM-in-the-control-loop for
-scheduling (deterministic code), harness-agnosticism (we commit to Claude Code
-and take the SDK's structured integration).
-
-### Non-goals (v1)
-
-- Multi-machine / multi-user. Single manager, single box.
-- The orchestrator does not provide host security isolation. Harbor or another
-  explicitly trusted outer environment must isolate benchmark workers; direct
-  host execution is trusted development mode only.
-- Chat liaison front-end. A TUI tailing the events table is the operator UI.
-- Adversarial LLM reviewer in the verify gate. Slots in later as optional
-  stage 5; the gate ships fully deterministic.
-- LangGraph / Temporal / Celery. Workers are jobs, not graph nodes. asyncio +
-  SQLite + a topological sort. "Why not X" gets a section in the writeup.
-
----
-
-## 2. Architecture overview
-
-```
- manager (TUI / CLI)
-      │
-      ▼
- ┌──────────────────────────────────────────────┐
- │ dagent daemon (python, asyncio)        │
- │                                              │
- │  scheduler ── state machine ── watchdog      │
- │      │              │                        │
- │      │        events + tasks (SQLite)        │
- │      │              │                        │
- │  supervisor ─── verify gate ─── delivery     │
- │  (one LLM call) (deterministic) (git/gh)     │
- └──────┬───────────────────────────────────────┘
-        │ spawn / inject / observe (Agent SDK)
-        ▼
-  worker sessions, one per task, each in its own git worktree
-```
-
-Control plane is deterministic. The only LLM calls in the control plane are
-single-shot supervisor invocations. Workers are full Claude Code sessions and
-are the only things that write project code.
-
-### Current security boundary
-
-Harbor supplies OS-level isolation, hidden evaluation, and scoring. Workers in
-one Harbor trial share that trial's container resources. The orchestrator adds
-scheduling, process ownership, retries, persistence, metrics, and internal Git
-worktrees; worktrees isolate concurrent edits, not the host from a worker.
-Visible verification uses only public worker-visible repository state and
-inherits the worker environment. Hidden verifier results never enter the
-agent environment. Caller-supplied worker environment variables are never
-persisted or logged, and the orchestrator never accesses the macOS Keychain.
-Direct live workers on the host require explicit trusted-development mode and
-are not benchmark isolation.
-
----
-
-## 3. Core principle: event-sourced state
-
-`events` is an append-only table of facts. `tasks.state` is a derived cache.
-The scheduler is the only writer of state transitions, and every transition is
-itself an event, written in the same SQLite transaction.
-
-### Invariants (the contract — enforce in tests from M0)
+## Invariants (the contract - enforced in tests)
 
 1. Only the scheduler writes `tasks.state`; every write emits
    `task.state_changed` atomically with it.
@@ -107,36 +21,44 @@ itself an event, written in the same SQLite transaction.
    database.
 3. `tasks` is rebuildable from `events`: `replay(events) == tasks` is asserted
    in CI.
-4. `task.state_changed` payloads carry `{from, to, cause_seq}` — the seq of the
+4. `task.state_changed` payloads carry `{from, to, cause_seq}` - the seq of the
    event that caused the transition. Full causality chain.
 5. Stall is never self-reported. The watchdog derives `worker.stalled` from the
    absence of events past a threshold.
 6. Retry/nudge caps are orchestrator config, never prompt suggestions.
 
----
+The control plane is deterministic. The only LLM calls in it are single-shot
+supervisor invocations. Workers are full Claude Code sessions and are the only
+things that write project code.
+
+## Security boundary
+
+DAGent does not provide host isolation. A trusted outer environment
+must isolate benchmark workers; direct host execution is trusted development
+mode only. Visible verification uses only public worker-visible repository
+state. Hidden verifier results never enter the agent environment.
+Caller-supplied worker environment variables are never persisted or logged, and
+DAGent never accesses the macOS Keychain.
 
 ## Deep reference: topic skills
 
-Full detail for each area below lives in docs/design.md and is split into a
-Claude Code skill so it loads only when relevant, instead of on every task:
+Detail for each area is split into a Claude Code skill under `.claude/skills/`
+so it loads only when relevant, instead of on every task:
 
-- `task-state-machine` — states, transition table, crash recovery. Relevant
-  when touching scheduler/state-machine code or task transitions.
-- `storage-schema` — SQLite schema, event taxonomy. Relevant when touching
-  persistence code or adding a new event type.
-- `supervisor-contract` — TriagePacket, actions, enforcement, prompt
-  heuristics. Relevant when touching supervisor/triage code.
-- `verify-gate` — VerifyRequest/Result, execution order, cause→heuristic
-  table. Relevant when touching verify-gate code or debugging a verify
-  failure.
-- `worker-lifecycle-delivery` — Agent SDK session lifecycle, delivery modes.
-  Relevant when touching worker spawning or delivery/git-push code.
-- `milestones` — M0-M7 roadmap, FakeWorker suite, config defaults, open
-  questions. Relevant when planning work or checking project scope/status.
+- `task-state-machine` - states, transition table, crash recovery. For
+  scheduler/state-machine code or task transitions.
+- `storage-schema` - SQLite schema, event taxonomy. For persistence code or a
+  new event type.
+- `supervisor-contract` - TriagePacket, actions, enforcement, prompt
+  heuristics. For supervisor/triage code.
+- `verify-gate` - VerifyRequest/Result, execution order, cause -> heuristic
+  table. For verify-gate code or debugging a verify failure.
+- `worker-lifecycle-delivery` - Agent SDK session lifecycle, delivery modes.
+  For worker spawning or delivery/git code.
 
 ## Maintaining this file
 
-Keep this file for knowledge useful to almost every future agent session in this project.
-Do not repeat what the codebase already shows; point to the authoritative file or command instead.
-Prefer rewriting or pruning existing entries over appending new ones.
-When updating this file, preserve this bar for all agents and keep entries concise.
+Keep this file for knowledge useful to almost every future agent session in
+this project. Do not repeat what README.md, BENCHMARK.md, or the codebase
+already shows; point to the authoritative file or command instead. Prefer
+rewriting or pruning existing entries over appending new ones.

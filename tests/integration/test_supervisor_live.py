@@ -1,4 +1,4 @@
-"""M4 exit criterion (design.md section 6, 11): the real supervisor -- one
+"""Live check on the real supervisor -- one
 live Messages-API-equivalent call, closed-enum response -- making an actual
 decision. Paired with FakeWorker (free, deterministic) rather than a real SDK
 worker, so this only pays for the supervisor call itself, not also a worker
@@ -66,7 +66,7 @@ def test_real_supervisor_restarts_or_escalates_a_recoverable_failure(tmp_path):
 
 def test_real_supervisor_escalates_an_unanswerable_question(tmp_path):
     """ask -> worker.asked with a brief that says nothing about the
-    question. design.md's own heuristic: never guess on the manager's
+    question. README.md's heuristic: never guess on the manager's
     behalf. A live session IS available here, so nudge is on the menu --
     the point of this test is that a competent supervisor declines it."""
     repo = init_repo(tmp_path)

@@ -1,8 +1,8 @@
-"""FakeWorker scenario suite = M2's regression suite (design.md section 11):
+"""FakeWorker scenario suite = the regression suite (see README.md):
 "fault injection is a test case, not a prayer." Each scenario proves the
 scheduler drives one exact transition sequence end-to-end -- real git
 worktree, real (unmocked) verify gate, real subprocess -- with no supervisor
-in the loop (M2 has none; every triage entry resolves to needs_human).
+in the loop (there is none here; every triage entry resolves to needs_human).
 """
 import asyncio
 import json
@@ -69,7 +69,7 @@ def test_all_scenarios_reach_correct_states(tmp_path):
     assert dirty_attempt["failure_cause"] == "worker.exited"
     assert "crash-draft.txt" in dirty_attempt["worker_dirty"]
 
-    # design.md invariant 3, exercised across a whole fault-injection run:
+    # README.md invariant 3, exercised across a whole fault-injection run:
     # replay(events) must still equal the live tasks table.
     live = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM tasks").fetchall()}
     rebuilt = replay(conn.execute("SELECT * FROM events ORDER BY seq").fetchall())
@@ -84,7 +84,7 @@ def test_clean_delivers_via_scout_report(tmp_path):
     _run_batch(conn, repo, tmp_path)
 
     types = [e["type"] for e in _events(conn, task_id)]
-    # design.md section 4's happy path, in order: dep resolution, spawn,
+    # README.md's happy path, in order: dep resolution, spawn,
     # done-claim, a passing verify, and a scout report -- one state_changed
     # per hop, cause-chained back to the event that triggered it.
     milestones = ["task.created", "dep.satisfied", "worker.spawned",

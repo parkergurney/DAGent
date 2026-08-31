@@ -1,4 +1,4 @@
-"""pr delivery mode (design.md section 9): "push branch, open PR via gh.
+"""pr delivery mode (see README.md): "push branch, open PR via gh.
 Delivered = PR open." The push half is real and tested against a local
 bare-repo remote; opening the PR is injected (open_pr) so this suite never
 needs gh or network -- the default `_gh_pr_create` is exercised live in

@@ -1,5 +1,5 @@
-"""M2 exit criterion: "kill -9 the orchestrator at arbitrary points -> clean
-reconcile on restart" (design.md section 11). We can't literally SIGKILL the
+"""Crash recovery: kill -9 the scheduler at arbitrary points -> clean
+reconcile on restart" (see README.md). We can't literally SIGKILL the
 test process, so we reproduce what that leaves behind: a task stuck in
 'running' whose session_id (pid) is no longer a live process, on a real
 on-disk db a fresh connection reopens -- exactly what a restarted orchestrator

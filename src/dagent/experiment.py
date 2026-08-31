@@ -347,11 +347,11 @@ def _read_json(path: Path) -> dict | list:
     return value
 
 
-def phase5_package_dir(path: str | Path | None = None) -> Path:
-    return Path(path) if path is not None else Path(__file__).resolve().parents[2] / "benchmarks" / "phase5"
+def benchmark_package_dir(path: str | Path | None = None) -> Path:
+    return Path(path) if path is not None else Path(__file__).resolve().parents[2] / "benchmarks" / "package"
 
 
-def _phase5_files(package_dir: Path) -> dict:
+def _benchmark_files(package_dir: Path) -> dict:
     package = _read_json(package_dir / "task-package.json")
     if not isinstance(package, dict):
         raise ValueError("task-package.json must contain an object")
@@ -368,20 +368,20 @@ def _phase5_files(package_dir: Path) -> dict:
     return {"package": package, "graphs": graphs, "profiles": profiles, "tracks": tracks}
 
 
-def validate_phase5_package(package_dir: str | Path | None = None) -> dict:
-    """Validate the committed Phase 5 inputs without touching a repository."""
-    root = phase5_package_dir(package_dir)
-    data = _phase5_files(root)
+def validate_benchmark_package(package_dir: str | Path | None = None) -> dict:
+    """Validate the committed benchmark inputs without touching a repository."""
+    root = benchmark_package_dir(package_dir)
+    data = _benchmark_files(root)
     expected_graphs = {"serial", "wide", "diamond", "mixed"}
     if set(data["graphs"]) != expected_graphs:
-        raise ValueError(f"Phase 5 graphs must be {sorted(expected_graphs)}")
+        raise ValueError(f"benchmark graphs must be {sorted(expected_graphs)}")
     for name, graph in data["graphs"].items():
         if len(graph) != 10:
-            raise ValueError(f"Phase 5 graph {name!r} must contain ten tasks")
+            raise ValueError(f"benchmark graph {name!r} must contain ten tasks")
     if set(data["profiles"]) != set(_PHASE5_PROFILES):
-        raise ValueError("Phase 5 profile set is incomplete")
+        raise ValueError("benchmark profile set is incomplete")
     if set(data["tracks"]) != set(_PHASE5_TRACKS):
-        raise ValueError("Phase 5 backend tracks are incomplete")
+        raise ValueError("benchmark backend tracks are incomplete")
     for track, value in data["tracks"].items():
         if value.get("comparison_group") != track:
             raise ValueError(f"backend track {track!r} needs its own comparison_group")
@@ -399,13 +399,13 @@ def _root_task_id(tasks: list[dict]) -> str:
     return sorted(roots)[0]
 
 
-def build_phase5_cell(*, package_dir: str | Path | None = None, graph: str,
+def build_benchmark_cell(*, package_dir: str | Path | None = None, graph: str,
                       policy: str, seed: int, profile: str = "clean",
                       backend_track: str = "cloud-claude",
                       repo_root: str | Path, artifact_root: str | Path,
                       fake_worker: bool = True) -> dict:
     """Build one reproducible Harbor-runtime config from committed inputs."""
-    data = validate_phase5_package(package_dir)
+    data = validate_benchmark_package(package_dir)
     if policy not in _PHASE5_POLICIES:
         raise ValueError(f"unsupported policy {policy!r}")
     if graph not in data["graphs"]:
@@ -489,7 +489,7 @@ def build_phase5_cell(*, package_dir: str | Path | None = None, graph: str,
     return config
 
 
-async def run_phase5_cell(*, package_dir: str | Path | None = None, graph: str,
+async def run_benchmark_cell(*, package_dir: str | Path | None = None, graph: str,
                           policy: str, seed: int, profile: str = "clean",
                           backend_track: str = "cloud-claude",
                           repo_root: str | Path, artifact_root: str | Path,
@@ -499,26 +499,26 @@ async def run_phase5_cell(*, package_dir: str | Path | None = None, graph: str,
 
     output = Path(artifact_root)
     output.mkdir(parents=True, exist_ok=True)
-    config = build_phase5_cell(
+    config = build_benchmark_cell(
         package_dir=package_dir, graph=graph, policy=policy, seed=seed,
         profile=profile, backend_track=backend_track, repo_root=repo_root,
         artifact_root=output, fake_worker=fake_worker,
     )
     instruction = output / ".instruction.md"
-    instruction.write_text("Execute the fixed Phase 5 benchmark task graph.\n")
+    instruction.write_text("Execute the fixed benchmark task graph.\n")
     config_path = output / ".config.json"
     config_path.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n")
     await run_from_files(instruction, config_path)
     return load_cell(output)
 
 
-def _phase5_main(argv: list[str]) -> int:
+def _benchmark_main(argv: list[str]) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(prog="dagent-experiment")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    prepare = subparsers.add_parser("prepare", help="validate inputs and write the Phase 5 matrix")
+    prepare = subparsers.add_parser("prepare", help="validate inputs and write the benchmark matrix")
     prepare.add_argument("--package", dest="package_dir")
     prepare.add_argument("--output-dir", required=True)
     prepare.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2])
@@ -527,7 +527,7 @@ def _phase5_main(argv: list[str]) -> int:
     prepare.add_argument("--tracks", nargs="+", choices=_PHASE5_TRACKS,
                          default=list(_PHASE5_TRACKS))
 
-    run = subparsers.add_parser("run", help="run one Phase 5 cell")
+    run = subparsers.add_parser("run", help="run one benchmark cell")
     run.add_argument("--package", dest="package_dir")
     run.add_argument("--graph", required=True, choices=("serial", "wide", "diamond", "mixed"))
     run.add_argument("--policy", required=True, choices=_PHASE5_POLICIES)
@@ -545,7 +545,7 @@ def _phase5_main(argv: list[str]) -> int:
 
     args = parser.parse_args(argv)
     if args.command == "prepare":
-        data = validate_phase5_package(args.package_dir)
+        data = validate_benchmark_package(args.package_dir)
         cells = []
         for track in args.tracks:
             for graph in sorted(data["graphs"]):
@@ -559,7 +559,7 @@ def _phase5_main(argv: list[str]) -> int:
         output = Path(args.output_dir)
         output.mkdir(parents=True, exist_ok=True)
         payload = {
-            "schema_version": 1, "package": str(phase5_package_dir(args.package_dir)),
+            "schema_version": 1, "package": str(benchmark_package_dir(args.package_dir)),
             "graphs": sorted(data["graphs"]), "profiles": args.profiles,
             "tracks": args.tracks, "policies": list(_PHASE5_POLICIES),
             "seeds": args.seeds, "cells": cells,
@@ -572,7 +572,7 @@ def _phase5_main(argv: list[str]) -> int:
             fake_worker = True
         else:
             fake_worker = False
-        result = asyncio.run(run_phase5_cell(
+        result = asyncio.run(run_benchmark_cell(
             package_dir=args.package_dir, graph=args.graph, policy=args.policy,
             seed=args.seed, profile=args.profile, backend_track=args.backend_track,
             repo_root=args.repo_root, artifact_root=args.output_dir,
@@ -601,7 +601,7 @@ def main(argv: list[str] | None = None) -> int:
         import sys
         argv = sys.argv[1:]
     if argv and argv[0] in {"prepare", "run", "report"}:
-        return _phase5_main(argv)
+        return _benchmark_main(argv)
 
     parser = argparse.ArgumentParser(prog="dagent-report")
     parser.add_argument("cells", nargs="+", help="cell artifact directories or metrics.json files")

@@ -3,7 +3,7 @@
 This module deliberately has no scheduler or database dependency.  Its output
 is a plain JSON-compatible dictionary that can be copied into a run manifest.
 Conflict recommendations are observations for the orchestrator policy; this
-milestone does not change scheduling behavior.
+preflight pass does not change scheduling behavior.
 """
 
 from __future__ import annotations

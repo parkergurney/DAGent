@@ -1,7 +1,7 @@
-"""Dependency resolution and parallel batches (design.md section 11, M5):
+"""Dependency resolution and parallel batches (see README.md):
 "worktree pool, concurrency limits, dep resolution ... Test 10-task parallel
 batches with fakes." All against the real Scheduler and real FakeWorker
-subprocesses -- the DAG logic (_advance_deps) existed since M2, but nothing
+subprocesses -- the DAG logic (_advance_deps) came early, but nothing
 before this exercised it through a live scheduler run with real dependent
 tasks; test_replay.py's dep chain only ever drove it by hand-applying events.
 """

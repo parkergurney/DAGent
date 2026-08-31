@@ -1,12 +1,11 @@
 [project]
 name = "dagent"
 version = "0.0.1"
-description = "Deterministic orchestration daemon for Claude Code worker sessions. Working name."
+description = "Deterministic orchestration daemon that runs a team of Claude Code sessions over a task DAG."
 requires-python = ">=3.12"
-# M3 added claude-agent-sdk for real Agent SDK worker sessions. M4 adds
-# pydantic for the supervisor's closed-enum action schema (design.md section
-# 6 specs these as pydantic BaseModels directly) -- everything else, control
-# loop through verify gate, is still sqlite3/tomllib/dataclasses/asyncio.
+# claude-agent-sdk drives real worker sessions; pydantic gives the supervisor
+# its closed-enum action schema. Everything else - control loop through verify
+# gate - is sqlite3, tomllib, dataclasses, and asyncio.
 dependencies = ["claude-agent-sdk>=0.2.123", "pydantic>=2"]
 
 [project.optional-dependencies]

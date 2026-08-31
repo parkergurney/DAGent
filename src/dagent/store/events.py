@@ -1,7 +1,7 @@
 """Event store: the append-only facts, the one privileged state-write path, and
 replay.
 
-Invariants enforced here (design.md section 3):
+Invariants enforced here (see README.md):
   1. Only transition() writes tasks.state, and it always emits task.state_changed
      in the SAME transaction.
   4. task.state_changed payloads carry {from, to, cause_seq}.
@@ -33,7 +33,7 @@ def ulid() -> str:
     return "".join(chars)
 
 
-# --- state machine (design.md section 4) ------------------------------------
+# --- state machine (see README.md) ------------------------------------
 STATES = {
     "blocked", "queued", "running", "verifying", "triage", "needs_human",
     "delivering", "delivered", "failed", "cancelled", "dependency_blocked",
@@ -214,7 +214,7 @@ def replay(events) -> dict:
     replay(all events) must equal the live tasks table.
 
     task_deps is intentionally NOT rebuilt here; the invariant is over the tasks
-    table only. Deps ride in the task.created payload if a future milestone wants
+    table only. Deps ride in the task.created payload if something later wants
     to rebuild them too.
     """
     tasks: dict = {}

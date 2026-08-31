@@ -1,8 +1,8 @@
-"""Pooled git worktrees (design.md section 8 / M5): "raw git worktree, no
-treehouse dependency." M2 through M4 created and destroyed a worktree per
-task attempt via worktree.create_worktree/remove_worktree -- fine for one
-task at a time, wasteful once parallel batches make `git worktree add`'s
-metadata churn worth avoiding.
+"""Pooled git worktrees (see README.md): "raw git worktree, no
+treehouse dependency." Creating and destroying a worktree per task attempt
+via worktree.create_worktree/remove_worktree is fine for one task at a time,
+but wasteful once parallel batches make `git worktree add`'s metadata churn
+worth avoiding.
 
 This pool pre-creates a fixed number of worktree directories once and resets
 a slot to a clean checkout of the task's own branch on each acquire, instead
@@ -56,8 +56,7 @@ class WorktreePool:
     def open(self) -> None:
         """Pre-create every slot, each on its own scratch branch. Wipes
         anything already sitting at a slot path first -- a prior orchestrator
-        process that crashed mid-run (design.md section 4's reconciliation
-        pass) can leave a live worktree there; every fresh process gets clean
+        process that crashed mid-run (see README.md) can leave a live worktree there; every fresh process gets clean
         slots unconditionally, no special recovery path to keep correct.
         """
         _git("worktree", "prune", cwd=self.repo_root)

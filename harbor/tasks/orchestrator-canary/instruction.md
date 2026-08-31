@@ -1,6 +1,6 @@
 # Update the canary output
 
-This is a small Harbor canary for the agent orchestrator. In the repository
+This is a small Harbor canary for DAGent. In the repository
 working directory, update `output.txt` so that its complete contents are exactly
 the single line:
 

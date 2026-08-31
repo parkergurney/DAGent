@@ -1,4 +1,4 @@
-"""Closed-enum action schema validation (design.md section 6)."""
+"""Closed-enum action schema validation (see README.md)."""
 import pytest
 from pydantic import ValidationError
 

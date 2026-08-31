@@ -1,4 +1,4 @@
-"""Focused local proof cases for the reliability/proof milestone."""
+"""Focused local proof cases for the reliability guarantees."""
 import asyncio
 import json
 

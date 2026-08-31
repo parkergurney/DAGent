@@ -1,4 +1,4 @@
-"""local delivery mode (design.md section 9): ff-only merge into main, with a
+"""local delivery mode (see README.md): ff-only merge into main, with a
 rebase-and-retry when main has moved on but the rebase is textually clean."""
 import subprocess
 from pathlib import Path

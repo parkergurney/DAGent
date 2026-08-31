@@ -1,4 +1,4 @@
-"""Unit tests for sdk_worker.py's pure logic (design.md section 8, M3) --
+"""Unit tests for sdk_worker.py's pure logic (see README.md) --
 sentinel parsing and the worktree-escape guard. No SDK client, no network, no
 API cost: this is the deterministic part of the real-worker integration, kept
 testable the same way FakeWorker keeps the scheduler testable.
@@ -136,7 +136,7 @@ def test_path_traversal_out_of_worktree_is_denied(tmp_path):
 class _FakeClient:
     """Stands in for ClaudeSDKClient: turn 1 asks a question, turn 2 (after
     whatever run() queries back in) claims done. Lets the stdin-nudge path
-    (design.md section 6's live intervention) be tested without a live SDK
+    (see README.md) be tested without a live SDK
     session or API cost."""
 
     def __init__(self, options=None):

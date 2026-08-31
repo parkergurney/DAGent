@@ -1,4 +1,4 @@
-"""The `orchestrator` console script (cli.py): add-task, run, daemon, answer,
+"""The `dagent` console script (cli.py): add-task, run, daemon, answer,
 status. Each subcommand is a thin wrapper over pieces already covered
 elsewhere (create_task, Scheduler, transition) -- these tests exercise the
 CLI wiring itself (argument parsing, DB path plumbing, output), calling
@@ -137,7 +137,7 @@ def test_status_detail_shows_escalation_and_answer_hint(tmp_path, capsys):
     assert "worker asked something odd" in out
     assert "which config?" in out
     assert "[1] dev (recommended)" in out
-    assert f"orchestrator answer {task_id}" in out
+    assert f"dagent answer {task_id}" in out
 
 
 def test_status_detail_shows_local_delivery_review_commands(tmp_path, capsys):
@@ -211,7 +211,7 @@ def test_live_cli_run_requires_an_explicit_boundary(tmp_path, capsys):
 def test_notify_loop_prints_only_states_a_human_should_hear_about(tmp_path, capsys):
     """The event-driven wake the orchestrator Skill relies on to Monitor a
     backgrounded run/daemon instead of polling `status` -- a second reader
-    connection over the same events-are-truth table (design.md section 3),
+    connection over the same events-are-truth table (see README.md),
     filtered to the "your crew needs you" / "here's your PR" states."""
     db_path = str(tmp_path / "orch.db")
     conn = connect(db_path)
@@ -249,7 +249,7 @@ def test_notify_loop_prints_only_states_a_human_should_hear_about(tmp_path, caps
 def test_scheduler_forever_picks_up_task_added_by_another_connection(tmp_path):
     """The daemon-mode mechanism itself: run_until_settled(forever=True)
     must keep polling the SQLite file for tasks written by a *separate*
-    connection (standing in for a concurrent `orchestrator add-task`
+    connection (standing in for a concurrent `dagent add-task`
     process) instead of exiting just because it started out empty."""
     repo = init_repo(tmp_path)
     db_path = str(tmp_path / "orch.db")

@@ -1,6 +1,6 @@
-"""Closed-enum supervisor contract (design.md section 6). Validated pydantic
+"""Closed-enum supervisor contract (see README.md). Validated pydantic
 models: the packet the supervisor reads, and the five actions it may return.
-Nothing here touches the database -- invariant 2 (design.md section 3): "The
+Nothing here touches the database -- invariant 2 (see README.md): "The
 supervisor returns one action from a closed enum and never touches the
 database."
 """

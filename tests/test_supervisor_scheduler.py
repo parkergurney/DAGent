@@ -1,4 +1,4 @@
-"""Scheduler-side dispatch of every supervisor action (design.md section 6),
+"""Scheduler-side dispatch of every supervisor action (see README.md),
 driven deterministically against FakeWorker via a ScriptedSupervisor -- no
 LLM, no network, same "never debug the orchestrator through paid
 nondeterministic workers" posture as tests/scenarios/. This is what proves

@@ -1,4 +1,4 @@
-"""Packet building (design.md section 6): compaction, verify_output
+"""Packet building (see README.md): compaction, verify_output
 extraction, and the caps-derived allowed_actions/nudges_remaining/
 retries_remaining fields. Pure reads against a hand-driven event log, no
 LLM, no worker.

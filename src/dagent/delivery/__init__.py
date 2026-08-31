@@ -1,4 +1,4 @@
-"""Delivery dispatch: pr | local | scout (design.md section 9). "Delivered"
+"""Delivery dispatch: pr | local | scout (see README.md). "Delivered"
 means artifact handed off; merge is always the manager's call, even for the
 local ff-merge path below (which merges into the repo's default branch, not
 a remote).

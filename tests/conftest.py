@@ -1,5 +1,4 @@
-"""Verify gate and scout delivery write to ./data/ (design.md section 5: "Full
-logs/transcripts go to disk under data/<task_id>/..."). Run every test from a
+"""Verify gate and scout delivery write to ./data/ (see README.md). Run every test from a
 throwaway cwd so that never touches the repo's real data/ dir.
 """
 import pytest

@@ -11,7 +11,7 @@ The hidden verifier is under `tests/` and is transferred only to Harbor's
 separate verifier environment. The agent image contains the same clean Git
 baseline and public task instructions, but no hidden grader code.
 
-The launcher accepts `dag` (the original five-node canary) plus the Phase 5
+The launcher accepts `dag` (the original five-node canary) plus the benchmark
 shapes `serial`, `wide`, `diamond`, and `mixed`. Shape cells use ten distinct
 public output artifacts, so the same hidden verifier can validate any
 selected shape. This package uses remote Claude inference and starts with a

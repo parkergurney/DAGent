@@ -1,4 +1,4 @@
-"""Builds a TriagePacket from event history (design.md section 6). Pure
+"""Builds a TriagePacket from event history (see README.md). Pure
 read: no side effects, no LLM call -- keeps the packet reproducible, which is
 what makes the dump/replay tooling in supervisor/llm.py meaningful.
 """
@@ -11,7 +11,7 @@ from dagent.supervisor.schema import EventRow, TriagePacket, TriggerEvent
 def _compact_history(rows: list[dict]) -> list[EventRow]:
     """Collapse consecutive worker.tool_used rows into one counted summary
     ("47 tool calls: 31 Read, 9 Edit, 7 Bash"); keep state changes,
-    questions, and supervisor actions verbatim, per design.md section 6."""
+    questions, and supervisor actions verbatim, per README.md."""
     out: list[EventRow] = []
     run: list[dict] = []
 

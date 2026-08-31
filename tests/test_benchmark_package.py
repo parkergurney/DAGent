@@ -4,15 +4,15 @@ import json
 import pytest
 
 from dagent.experiment import (
-    build_phase5_cell,
-    run_phase5_cell,
-    validate_phase5_package,
+    build_benchmark_cell,
+    run_benchmark_cell,
+    validate_benchmark_package,
 )
 from tests.helpers import init_repo
 
 
-def test_phase5_package_has_fixed_graphs_profiles_and_tracks():
-    data = validate_phase5_package()
+def test_benchmark_package_has_fixed_graphs_profiles_and_tracks():
+    data = validate_benchmark_package()
     assert set(data["graphs"]) == {"serial", "wide", "diamond", "mixed"}
     assert {len(graph) for graph in data["graphs"].values()} == {10}
     assert {len(task.get("depends_on", [])) for task in data["graphs"]["wide"]} == {0}
@@ -20,8 +20,8 @@ def test_phase5_package_has_fixed_graphs_profiles_and_tracks():
     assert set(data["tracks"]) == {"cloud-claude", "local-ollama"}
 
 
-def test_phase5_cell_keeps_backend_tracks_and_reaches_fault_root(tmp_path):
-    config = build_phase5_cell(
+def test_benchmark_cell_keeps_backend_tracks_and_reaches_fault_root(tmp_path):
+    config = build_benchmark_cell(
         graph="diamond", policy="orchestrator", seed=1,
         profile="worker_latency", backend_track="local-ollama",
         repo_root=tmp_path, artifact_root=tmp_path / "cell",
@@ -32,10 +32,10 @@ def test_phase5_cell_keeps_backend_tracks_and_reaches_fault_root(tmp_path):
     assert config["task_definition_sha256"]
 
 
-def test_phase5_fake_cell_publishes_complete_reporting_artifacts(tmp_path):
+def test_benchmark_fake_cell_publishes_complete_reporting_artifacts(tmp_path):
     repo = init_repo(tmp_path)
     artifact_root = tmp_path / "cell"
-    result = asyncio.run(run_phase5_cell(
+    result = asyncio.run(run_benchmark_cell(
         graph="wide", policy="sequential", seed=0, profile="clean",
         backend_track="cloud-claude", repo_root=repo, artifact_root=artifact_root,
     ))
@@ -50,10 +50,10 @@ def test_phase5_fake_cell_publishes_complete_reporting_artifacts(tmp_path):
     assert manifest["task_graph"]["count"] == 10
 
 
-def test_phase5_fault_cell_records_target_reached(tmp_path):
+def test_benchmark_fault_cell_records_target_reached(tmp_path):
     repo = init_repo(tmp_path)
     artifact_root = tmp_path / "fault-cell"
-    result = asyncio.run(run_phase5_cell(
+    result = asyncio.run(run_benchmark_cell(
         graph="serial", policy="sequential", seed=2, profile="worker_latency",
         backend_track="cloud-claude", repo_root=repo, artifact_root=artifact_root,
     ))
@@ -67,11 +67,11 @@ def test_phase5_fault_cell_records_target_reached(tmp_path):
     "worker_crash", "worker_timeout", "no_candidate", "verification_failure",
     "dependency_failure",
 ])
-def test_phase5_fault_profiles_are_target_reachable(profile, tmp_path):
+def test_benchmark_fault_profiles_are_target_reachable(profile, tmp_path):
     root = tmp_path / profile
     root.mkdir()
     repo = init_repo(root)
-    result = asyncio.run(run_phase5_cell(
+    result = asyncio.run(run_benchmark_cell(
         graph="serial", policy="sequential", seed=0, profile=profile,
         backend_track="cloud-claude", repo_root=repo, artifact_root=root / "cell",
     ))

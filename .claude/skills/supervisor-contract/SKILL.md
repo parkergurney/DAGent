@@ -5,7 +5,6 @@ description: The supervisor's triage packet, closed action union, and determinis
 
 # Supervisor contract
 
-<!-- sync:supervisor-contract -->
 One function, one contract: packet in, action out, no side effects. A single
 Messages API call — no tools, no session, no memory. Stateless and therefore
 replayable: every packet is dumped to disk; prompts and models can be re-run
@@ -43,4 +42,3 @@ configuration (Harbor owns hidden checks), and no memory.
 The closed response union is `nudge`, `restart`, `wait`, `escalate`, or
 `abandon`; orchestrator-side enforcement computes allowed actions and caps.
 Validation failure falls back visibly to human escalation.
-<!-- /sync:supervisor-contract -->
