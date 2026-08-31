@@ -1,7 +1,7 @@
-# Design: agent orchestration system for Claude Code
+# DAGent: design notes for agent sessions
 
 Status: M6 Harbor boundary complete (worktree pool, dependency settlement, all
-three delivery modes, durable metrics, policy selection, and an `orchestrator`
+three delivery modes, durable metrics, policy selection, and an `dagent`
 CLI). Harbor owns outer task isolation, hidden evaluation, and scoring.
 
 This file carries the always-relevant core: thesis, architecture, and the
@@ -14,13 +14,13 @@ open questions) is split into topic skills under `.claude/skills/` (see
 touches. Update docs/design.md when decisions change; log the change and
 rationale in devlog.md.
 
-Working name TBD. "agent-orchestrator" is a placeholder.
+Working name: DAGent.
 
 `OPINIONS.md` (repo root) holds the user's working preferences for how the
-`orchestrator` CLI/skill should behave - lighter-weight than this file,
+`dagent` CLI/skill should behave - lighter-weight than this file,
 user-owned, edited freely. `repos.toml` (repo root) is a flat, manually-
 edited short-name -> path registry that `add-task --repo` can resolve; see
-docs/usage.md. Neither changes anything under `src/orchestrator/`.
+docs/usage.md. Neither changes anything under `src/dagent/`.
 
 ---
 
@@ -60,7 +60,7 @@ and take the SDK's structured integration).
       │
       ▼
  ┌──────────────────────────────────────────────┐
- │ orchestrator daemon (python, asyncio)        │
+ │ dagent daemon (python, asyncio)        │
  │                                              │
  │  scheduler ── state machine ── watchdog      │
  │      │              │                        │

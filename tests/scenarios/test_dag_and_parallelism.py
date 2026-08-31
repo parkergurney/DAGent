@@ -7,8 +7,8 @@ tasks; test_replay.py's dep chain only ever drove it by hand-applying events.
 """
 import asyncio
 
-from orchestrator.scheduler import Scheduler
-from orchestrator.store import append_event, connect, create_task, replay, transition
+from dagent.scheduler import Scheduler
+from dagent.store import append_event, connect, create_task, replay, transition
 from tests.helpers import init_repo
 
 

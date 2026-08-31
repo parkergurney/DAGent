@@ -2,10 +2,10 @@
 
 from dataclasses import fields
 
-from orchestrator.metrics import metrics_for
-from orchestrator.store import append_event, connect
-from orchestrator.verify.evidence import EvidenceStage, run_evidence_ladder
-from orchestrator.verify.gate import VerifyRequest, run_verify
+from dagent.metrics import metrics_for
+from dagent.store import append_event, connect
+from dagent.verify.evidence import EvidenceStage, run_evidence_ladder
+from dagent.verify.gate import VerifyRequest, run_verify
 from tests.helpers import git, init_repo
 
 

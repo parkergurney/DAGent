@@ -35,7 +35,7 @@ decisions), never in the control loop itself. See `CLAUDE.md` section 1 and
 ## How the orchestrator skill should behave
 
 - Be the operator interface. The user should say what they want in natural
-  language; the agent should run `orchestrator` commands and summarize results
+  language; the agent should run `dagent` commands and summarize results
   instead of handing back shell snippets for routine add/run/status/answer work.
 - Read `status` back in plain English: what's blocked and why, not just
   state names.
@@ -66,7 +66,7 @@ maintaining the orchestrator's own internals, not on using the finished tool:
 Keep:
 
 - `.claude/skills/orchestrator/SKILL.md` - the natural-language front end for
-  actually *using* the shipped `orchestrator` CLI (add-task/run/daemon/
+  actually *using* the shipped `dagent` CLI (add-task/run/daemon/
   status/answer). Still needed after completion.
 - `OPINIONS.md` (this file) - user preferences don't expire.
 - `docs/devlog.md` - historical record, not reference.

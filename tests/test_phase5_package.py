@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from orchestrator.experiment import (
+from dagent.experiment import (
     build_phase5_cell,
     run_phase5_cell,
     validate_phase5_package,

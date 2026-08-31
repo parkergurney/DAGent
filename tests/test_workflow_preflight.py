@@ -5,8 +5,8 @@ import json
 
 import pytest
 
-from orchestrator import harbor
-from orchestrator.workflow_preflight import (
+from dagent import harbor
+from dagent.workflow_preflight import (
     WorkflowPreflightError, compile_preflight_plan, validate_fault_target,
 )
 from tests.helpers import init_repo
@@ -140,7 +140,7 @@ def test_harbor_runs_preflight_before_inserting_graph_tasks(tmp_path):
             ],
         ))
 
-    from orchestrator.store import connect
+    from dagent.store import connect
     conn = connect(str(db_path))
     try:
         assert conn.execute("SELECT COUNT(*) AS count FROM tasks").fetchone()["count"] == 0

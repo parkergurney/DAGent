@@ -1,7 +1,7 @@
 schema_version = "1.4"
 
 [task]
-name = "agent-orchestrator/orchestrator-dag-canary"
+name = "dagent/orchestrator-dag-canary"
 version = "1.0.0"
 description = "Dependency-aware Harbor benchmark task graph for comparing scheduler policies"
 keywords = ["orchestration", "dependencies", "git", "benchmark"]

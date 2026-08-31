@@ -1,7 +1,7 @@
 schema_version = "1.4"
 
 [task]
-name = "agent-orchestrator/orchestrator-quality-claude"
+name = "dagent/orchestrator-quality-claude"
 version = "1.0.0"
 description = "Claude-backed semantic-quality Harbor benchmark using recovered Arrow, JSONSchema, and TinyDB tasks"
 keywords = ["agent-orchestration", "software-engineering", "quality", "benchmark"]
@@ -30,7 +30,7 @@ memory_mb = 8192
 storage_mb = 8192
 
 [environment.env]
-ORCH_AUTH_ENV_FILE = "/run/secrets/orchestrator-claude-auth.env"
+ORCH_AUTH_ENV_FILE = "/run/secrets/dagent-claude-auth.env"
 ORCH_BACKEND = "anthropic"
 ORCH_BACKEND_TRACK = "quality-claude"
 ORCH_AUTH_MECHANISM = "subscription-oauth"

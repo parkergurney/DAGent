@@ -2,11 +2,11 @@
 import asyncio
 import json
 
-from orchestrator.recovery import (
+from dagent.recovery import (
     FailureClass, RecoveryAction, choose_recovery, classify_failure,
 )
-from orchestrator.scheduler import Scheduler
-from orchestrator.store import connect, create_task, replay
+from dagent.scheduler import Scheduler
+from dagent.store import connect, create_task, replay
 from tests.helpers import init_repo
 
 

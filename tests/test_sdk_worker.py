@@ -9,8 +9,8 @@ import json
 
 from claude_agent_sdk import AssistantMessage, ClaudeSDKError, ResultMessage, TextBlock
 
-from orchestrator.worker import sdk_worker
-from orchestrator.worker.sdk_worker import (
+from dagent.worker import sdk_worker
+from dagent.worker.sdk_worker import (
     _agent_options, _audit_tool, _make_pre_tool_use, _parse_terminal,
     _path_escapes_worktree,
     _prompt_with_protocol,

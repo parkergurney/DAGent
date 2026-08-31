@@ -9,10 +9,10 @@ import asyncio
 import json
 import sys
 
-from orchestrator.scheduler import Scheduler
-from orchestrator.store import connect, create_task
-from orchestrator.supervisor.llm import SupervisorResult
-from orchestrator.supervisor.schema import Escalate, Nudge, Restart
+from dagent.scheduler import Scheduler
+from dagent.store import connect, create_task
+from dagent.supervisor.llm import SupervisorResult
+from dagent.supervisor.schema import Escalate, Nudge, Restart
 from tests.helpers import init_repo
 
 

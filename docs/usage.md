@@ -1,6 +1,6 @@
 # Using this repo to orchestrate agents
 
-As of this session there's an `orchestrator` CLI (`add-task`, `run`, `daemon`,
+As of this session there's an `dagent` CLI (`add-task`, `run`, `daemon`,
 `answer`, `status`) layered over the `Scheduler` library, so day-to-day use
 doesn't require writing a Python script. The library is still there underneath
 for anyone embedding this in something else — see section 9.
@@ -19,7 +19,7 @@ this repo loaded. You should be able to say:
 - "answer the task about URI paths with option 2"
 - "keep watching this repo for new tasks"
 
-The agent should translate that into `orchestrator add-task`, `run`, `status`,
+The agent should translate that into `dagent add-task`, `run`, `status`,
 `answer`, or `daemon`, run the command, and report back in plain English. The
 CLI is the implementation boundary, not something the operator should have to
 drive by hand for ordinary use.
@@ -38,8 +38,8 @@ pip install -e ".[dev]"
 
 Requires `claude-agent-sdk` (real worker sessions) and a Claude Code / API
 auth setup that the SDK can pick up in your environment — same auth the
-`claude` CLI itself uses. This registers the `orchestrator`, `verify-gate`,
-`supervisor-replay`, `orchestrator-experiment`, and `orchestrator-report`
+`claude` CLI itself uses. This registers the `dagent`, `verify-gate`,
+`supervisor-replay`, `dagent-experiment`, and `dagent-report`
 console scripts.
 
 ## 1.5 Prepare a benchmark cell
@@ -50,7 +50,7 @@ the fixed ten-task graphs, seeded fault profiles, three policies, and separate
 cloud/local backend tracks:
 
 ```bash
-orchestrator-experiment prepare --output-dir results/phase5-matrix
+dagent-experiment prepare --output-dir results/phase5-matrix
 ```
 
 Run one free deterministic cell against a throwaway repository, then report
@@ -58,10 +58,10 @@ saved cells. The cell writes `run_manifest.json`, `metrics.json`,
 `result.json`, `task_summary.json`, and `candidate.patch`:
 
 ```bash
-orchestrator-experiment run --graph wide --policy orchestrator --seed 0 \
+dagent-experiment run --graph wide --policy orchestrator --seed 0 \
   --profile clean --backend-track cloud-claude \
   --repo-root /path/to/throwaway-repo --output-dir results/phase5/cell-01
-orchestrator-report results/phase5/cell-01 --output-dir results/phase5/summary
+dagent-report results/phase5/cell-01 --output-dir results/phase5/summary
 ```
 
 Fault profiles are deterministic FakeWorker cells. A live backend requires the
@@ -126,7 +126,7 @@ when their declared write scopes overlap unless
 ## 2. Add a task
 
 ```bash
-orchestrator add-task \
+dagent add-task \
   --repo /path/to/target/repo \
   --title "Add input validation to parse_csv" \
   --brief "parse_csv() in src/csv_utils.py crashes on empty files. Make it raise a clear ValueError instead. Add a test." \
@@ -134,7 +134,7 @@ orchestrator add-task \
   --verify-cmd "pytest tests/test_csv_utils.py"
 ```
 
-Prints the new task's id (a ULID). Defaults to `data/orchestrator.db`; pass
+Prints the new task's id (a ULID). Defaults to `data/dagent.db`; pass
 `--db` to use a different file. Chain tasks into a DAG with repeatable
 `--depends-on <task_id>` — a task sits in `blocked` until every dependency
 reaches `delivered`; if a prerequisite is terminally unsuccessful, it settles
@@ -153,7 +153,7 @@ found in the table is used as a literal path, unchanged.
 
 ```bash
 # Supported benchmark shape: Harbor/container isolation must already exist.
-orchestrator run --repo-root /path/to/target/repo --db data/orchestrator.db \
+dagent run --repo-root /path/to/target/repo --db data/dagent.db \
   --external-isolation
 ```
 
@@ -186,19 +186,19 @@ A fully free, deterministic dry run that still exercises worktrees, DAG
 resolution, the verify gate, and delivery:
 
 ```bash
-orchestrator run --repo-root /path/to/repo --fake-worker --fake-supervisor
+dagent run --repo-root /path/to/repo --fake-worker --fake-supervisor
 ```
 
 ## 4. Keep it running (daemon mode)
 
 ```bash
 # Use --external-isolation inside Harbor or another trusted outer environment.
-orchestrator daemon --repo-root /path/to/target/repo --external-isolation
+dagent daemon --repo-root /path/to/target/repo --external-isolation
 ```
 
 Same as `run`, except it never exits on its own: once every task settles it
 keeps polling the SQLite file (every `--poll-interval` seconds, default 1) for
-newly added tasks, so a separate `orchestrator add-task` call — from another
+newly added tasks, so a separate `dagent add-task` call — from another
 terminal, or a script, or a cron job — gets picked up without restarting this
 process. Stop it with Ctrl-C; it tears down any live worker cleanly before
 exiting. Same stdout notification stream as `run` above — since `daemon`
@@ -208,10 +208,10 @@ without going and asking for `status` yourself.
 ## 5. When a task lands in `needs_human`
 
 ```bash
-orchestrator status                    # list every task and its state
-orchestrator status <task_id>          # that task's escalation: summary, question, options
-orchestrator status --digest           # one-shot terse summary (see below)
-orchestrator answer <task_id> "use the prod config, not staging"
+dagent status                    # list every task and its state
+dagent status <task_id>          # that task's escalation: summary, question, options
+dagent status --digest           # one-shot terse summary (see below)
+dagent answer <task_id> "use the prod config, not staging"
 ```
 
 `--digest` prints task counts by state, any `needs_human` tasks with their
@@ -226,7 +226,7 @@ the time a task escalates, the worker session that asked the original
 question is already gone (escalation always tears it down), so this is a
 restart-with-feedback, not a live nudge into an old session. If a `run` or
 `daemon` process is already watching the same DB, it'll pick the requeued
-task up on its own; otherwise run `orchestrator run` again.
+task up on its own; otherwise run `dagent run` again.
 
 ## 6. Delivery modes
 
@@ -239,7 +239,7 @@ task up on its own; otherwise run `orchestrator run` again.
 
 ## 7. Crash recovery
 
-Nothing special to do. If `run` or `daemon` dies, just run `orchestrator run`
+Nothing special to do. If `run` or `daemon` dies, just run `dagent run`
 (or `daemon`) again against the same DB — reconciliation happens
 automatically at the top of every invocation: tasks stuck in `running` with a
 dead session get a synthetic `worker.exited` and route through triage like
@@ -257,7 +257,7 @@ and the scheduler removes/reuses them during teardown. Review the delivered
 artifact recorded in events instead:
 
 ```bash
-orchestrator status <task_id> --db data/orchestrator.db
+dagent status <task_id> --db data/dagent.db
 ```
 
 For `pr`, status prints the PR URL, branch, and commit SHA. Review the PR.
@@ -302,7 +302,7 @@ into `main`. For `daemon`, cleanup happens when the daemon exits.
 
 ## 9. Using the library directly
 
-The CLI is a thin wrapper (`src/orchestrator/cli.py`) over `Scheduler` and
+The CLI is a thin wrapper (`src/dagent/cli.py`) over `Scheduler` and
 `create_task`; embedding the orchestrator in something else (a larger tool, a
 notebook, a custom front-end) means calling those directly instead:
 
@@ -311,12 +311,12 @@ import asyncio
 from functools import partial
 from pathlib import Path
 
-from orchestrator.store import connect, create_task
-from orchestrator.scheduler import Scheduler
-from orchestrator.worker import spawn_sdk_worker
-from orchestrator.supervisor import invoke_supervisor
+from dagent.store import connect, create_task
+from dagent.scheduler import Scheduler
+from dagent.worker import spawn_sdk_worker
+from dagent.supervisor import invoke_supervisor
 
-conn = connect("data/orchestrator.db")
+conn = connect("data/dagent.db")
 task_id = create_task(conn, title="...", brief="...", repo="/path/to/repo",
                       delivery_mode="pr", verify_cmd="pytest tests/")
 
@@ -324,8 +324,8 @@ scheduler = Scheduler(conn, repo_root="/path/to/repo",
                       worktree_root=Path("data/worktrees"),
                       spawn_worker=spawn_sdk_worker, worker_model="claude-sonnet-5",
                       supervisor=partial(invoke_supervisor, model="claude-sonnet-5"))
-asyncio.run(scheduler.run_until_settled())          # one batch, like `orchestrator run`
-# asyncio.run(scheduler.run_until_settled(forever=True))   # like `orchestrator daemon`
+asyncio.run(scheduler.run_until_settled())          # one batch, like `dagent run`
+# asyncio.run(scheduler.run_until_settled(forever=True))   # like `dagent daemon`
 ```
 
 This low-level constructor is for code that already controls the outer
@@ -340,19 +340,19 @@ CLI boundary when you need the explicit isolation declaration.
 
 ```bash
 # Run the public verification command for a durable task candidate.
-verify-gate --task <task_id> --db data/orchestrator.db --json --record
+dagent-verify-gate --task <task_id> --db data/dagent.db --json --record
 
 # Re-run a saved triage packet (data/<task_id>/packets/<seq>.json, written by
 # every invoke_supervisor call) against the CURRENT supervisor prompt/model —
 # for iterating on supervisor heuristics without paying for a live run.
-supervisor-replay data/<task_id>/packets/<seq>.json --model claude-sonnet-5
+dagent-supervisor-replay data/<task_id>/packets/<seq>.json --model claude-sonnet-5
 
 # Aggregate saved benchmark cells. Outcome quality includes successful and
 # settled failed cells; runtime overhead includes successful cells only.
-orchestrator-report old/jobs/*/artifacts --output-dir results/summary
+dagent-report old/jobs/*/artifacts --output-dir results/summary
 ```
 
-`orchestrator-report` writes `report.json` and `report.md`. A cell whose fault
+`dagent-report` writes `report.json` and `report.md`. A cell whose fault
 target was never launched is `inconclusive`; an unsettled or interrupted cell
 is `censored`; settled unsuccessful cells remain eligible for outcome-quality
 counts but are excluded from runtime comparisons. The report therefore keeps
@@ -364,7 +364,7 @@ Harbor creates the isolated task environment and owns hidden tests/scoring. Its
 adapter can call the library boundary directly:
 
 ```python
-from orchestrator.harbor import export_patch, run_instruction
+from dagent.harbor import export_patch, run_instruction
 
 result = await run_instruction(
     instruction="Fix the parser bug and commit the change.",

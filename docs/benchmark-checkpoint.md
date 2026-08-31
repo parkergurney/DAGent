@@ -22,7 +22,7 @@ gitignored; the committed benchmark notes below are the portable record.
   unrelated schema worker failed twice before the injected `integration` task
   became runnable. The new fast path was not exercised; do not use this cell
   as a recovery comparison.
-- The implementation change is in `src/orchestrator/scheduler/core.py` and is
+- The implementation change is in `src/dagent/scheduler/core.py` and is
   enabled only for the orchestrator policy. A non-zero worker exit with retry
   budget remaining is retried through the normal candidate-lineage path without
   an LLM supervisor call. Sequential and naive-parallel remain unchanged.
@@ -33,7 +33,7 @@ gitignored; the committed benchmark notes below are the portable record.
 
 The completed post-improvement orchestrator Harbor trial used:
 
-- policy: `orchestrator`
+- policy: `dagent`
 - seed: `0`
 - model: `qwen3-coder:30b` via Ollama
 - context: 32K

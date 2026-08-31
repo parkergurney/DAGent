@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator import delivery
-from orchestrator.scheduler import Scheduler
-from orchestrator.store import connect, create_task
+from dagent import delivery
+from dagent.scheduler import Scheduler
+from dagent.store import connect, create_task
 from tests.helpers import git, init_repo
 
 

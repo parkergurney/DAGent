@@ -2,7 +2,7 @@
 import pytest
 from pydantic import ValidationError
 
-from orchestrator.supervisor.schema import ACTION_MODELS, Escalate, Nudge
+from dagent.supervisor.schema import ACTION_MODELS, Escalate, Nudge
 
 
 def test_nudge_requires_message_and_reason():

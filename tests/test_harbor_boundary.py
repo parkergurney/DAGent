@@ -5,9 +5,9 @@ import subprocess
 
 import pytest
 
-from orchestrator import harbor, policies
-from orchestrator.worker import WorkerIsolationError, spawn_sdk_worker
-from orchestrator.store import connect, create_task
+from dagent import harbor, policies
+from dagent.worker import WorkerIsolationError, spawn_sdk_worker
+from dagent.store import connect, create_task
 from tests.helpers import init_repo
 
 

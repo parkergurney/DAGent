@@ -7,11 +7,11 @@ import json
 
 import pytest
 
-from orchestrator.supervisor import llm
-from orchestrator.supervisor.llm import (
+from dagent.supervisor import llm
+from dagent.supervisor.llm import (
     SupervisorResult, _dump, _parse, _schema_block, invoke_supervisor,
 )
-from orchestrator.supervisor.schema import ACTION_MODELS, TriagePacket, TriggerEvent
+from dagent.supervisor.schema import ACTION_MODELS, TriagePacket, TriggerEvent
 
 
 def _packet(**overrides):

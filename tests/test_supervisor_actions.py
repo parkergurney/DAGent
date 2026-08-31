@@ -2,7 +2,7 @@
 LLM, no DB -- this is the layer that makes an out-of-menu response
 impossible regardless of what any supervisor implementation returns.
 """
-from orchestrator.supervisor.actions import compute_allowed_actions
+from dagent.supervisor.actions import compute_allowed_actions
 
 
 def test_stalled_live_session_offers_wait_not_nudge():

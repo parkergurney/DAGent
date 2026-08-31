@@ -9,11 +9,11 @@ import json
 import subprocess
 import sys
 
-from orchestrator.scheduler import Scheduler
-from orchestrator.store import append_event, connect, create_attempt, create_task, transition, ulid, update_attempt
-from orchestrator.supervisor.llm import SupervisorResult
-from orchestrator.supervisor.schema import Escalate, Restart
-from orchestrator.worker.fake import spawn_fake_worker
+from dagent.scheduler import Scheduler
+from dagent.store import append_event, connect, create_attempt, create_task, transition, ulid, update_attempt
+from dagent.supervisor.llm import SupervisorResult
+from dagent.supervisor.schema import Escalate, Restart
+from dagent.worker.fake import spawn_fake_worker
 from tests.helpers import init_repo
 
 
@@ -274,7 +274,7 @@ def test_reconcile_closes_slot_after_crash_before_release(tmp_path):
                  payload={"attempt_id": attempt_id, "occupancy": 1, "limit": 1})
     conn.close()
     conn = connect(str(db))
-    from orchestrator.scheduler.reconcile import reconcile
+    from dagent.scheduler.reconcile import reconcile
     reconcile(conn)
     events = _events(conn, task_id)
     assert conn.execute("SELECT state FROM tasks WHERE id = ?", (task_id,)).fetchone()["state"] == "triage"
@@ -313,7 +313,7 @@ def test_reconcile_after_done_claim_recovers_verification_without_worker(tmp_pat
     conn.close()
 
     conn = connect(str(db))
-    from orchestrator.scheduler.reconcile import reconcile
+    from dagent.scheduler.reconcile import reconcile
     reconcile(conn)
     assert conn.execute("SELECT state FROM tasks WHERE id = ?", (task_id,)).fetchone()["state"] == "verifying"
     scheduler = Scheduler(conn, repo, tmp_path / "worktrees", max_concurrency=1,

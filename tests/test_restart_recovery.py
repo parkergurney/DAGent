@@ -5,11 +5,11 @@ import subprocess
 
 import pytest
 
-from orchestrator import execution_lease
-from orchestrator.scheduler import Scheduler, reconcile
-from orchestrator.store import append_event, connect, create_attempt, create_task, replay, transition
-from orchestrator.supervisor import always_escalate
-from orchestrator.worker.fake import spawn_fake_worker
+from dagent import execution_lease
+from dagent.scheduler import Scheduler, reconcile
+from dagent.store import append_event, connect, create_attempt, create_task, replay, transition
+from dagent.supervisor import always_escalate
+from dagent.worker.fake import spawn_fake_worker
 from tests.helpers import init_repo
 
 

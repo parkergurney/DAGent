@@ -63,7 +63,7 @@ finite batch, but remains recoverable in daemon mode.
 | triage | needs_human | supervisor `escalate`, or retries exhausted |
 | triage | failed | supervisor `abandon` — yolo mode only |
 | needs_human | running | manager's answer injected into session |
-| needs_human | queued | manager answered (`orchestrator answer`); requeued with the answer folded into the brief |
+| needs_human | queued | manager answered (`dagent answer`); requeued with the answer folded into the brief |
 | needs_human | delivering | manager overrides a failed verification |
 | delivering | delivered | PR opened / local ff-merge done / scout report written |
 | delivering | triage | push rejected, merge conflict |
@@ -315,8 +315,8 @@ Delivery failures (`delivery.failed`) route through supervisor triage.
 
 ## Harbor boundary
 
-`orchestrator.harbor.run_instruction` starts one task from an instruction and
-repository path, selects `sequential`, `naive-parallel`, or `orchestrator`,
+`dagent.harbor.run_instruction` starts one task from an instruction and
+repository path, selects `sequential`, `naive-parallel`, or `dagent`,
 accepts caller environment variables, waits for reliable scheduler teardown,
 and returns the final candidate SHA plus metrics. Real workers require the
 caller to declare `external_isolation=True`; this declaration does not create
@@ -356,8 +356,8 @@ final candidate SHA
 Sequential, naive-parallel, and orchestrator are policy selections over this
 same execution machinery. The benchmark-specific hidden evaluator, scoring,
 and outer filesystem isolation remain outside this flow in Harbor. The
-repository provides the Python boundary (`orchestrator.harbor`), the installed
-agent wrapper (`orchestrator.harbor_agent:HarborOrchestratorAgent`), an
+repository provides the Python boundary (`dagent.harbor`), the installed
+agent wrapper (`dagent.harbor_agent:HarborOrchestratorAgent`), an
 in-container runtime, and a separate-verifier canary under
 `harbor/tasks/orchestrator-dag-canary-claude/`. A live multi-seed comparison
 remains M7.

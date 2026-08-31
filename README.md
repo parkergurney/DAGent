@@ -1,4 +1,4 @@
-# agent-orchestrator (working name)
+# DAGent (working name)
 
 Talk to one process; it runs a team of Claude Code sessions — spawned in
 internal git worktrees, supervised by a deterministic state machine, and
@@ -8,7 +8,7 @@ Design: [docs/design.md](docs/design.md). Status: M6 Harbor boundary complete;
 benchmark inputs and cell reporting are prepared; the benchmark gate is in
 progress. Usage:
 [docs/usage.md](docs/usage.md). Measurement/reporting: use the
-`orchestrator-experiment` and `orchestrator-report` commands described there.
+`dagent-experiment` and `dagent-report` commands described there.
 
 ## Current security model
 
@@ -37,7 +37,7 @@ direct-host development mode). Fake workers remain available without either.
 flowchart LR
     H[Harbor outer boundary<br/>worker container + hidden verifier]
 
-    subgraph O[orchestrator daemon]
+    subgraph O[dagent daemon]
         S[Scheduler + state machine]
         L[Worker lease + worktree pool]
         W[Claude SDK / FakeWorker]
@@ -64,7 +64,7 @@ recovery, delivery, and Harbor scoring without exposing hidden verifier data.
 
 Day-to-day operation is meant to be natural language through an agent session:
 ask it to queue tasks, start or watch a batch, check status, and answer
-escalations. The agent uses the `orchestrator` CLI underneath; operators should
+escalations. The agent uses the `dagent` CLI underneath; operators should
 only need raw commands for setup, debugging, or automation.
 
 ## Layout
@@ -75,17 +75,17 @@ only need raw commands for setup, debugging, or automation.
     .claude/skills/        topic skills with the rest of docs/design.md, loaded on demand
     docs/usage.md         practical "how do I actually run tasks" guide
     docs/devlog.md        session log; writes the eventual post
-    src/orchestrator/
-      cli.py              `orchestrator` console script: add-task/run/daemon/answer/status
+    src/dagent/
+      cli.py              `dagent` console script: add-task/run/daemon/answer/status
       store/              SQLite: events (append-only facts) + tasks (derived)
       scheduler/          state machine, asyncio loop, watchdog
       worker/             Agent SDK sessions, FakeWorker, worktree pool
       verify/             deterministic verify gate + standalone CLI
       supervisor/         TriagePacket -> single LLM call -> closed action enum
       delivery/           pr | local | scout
-    src/orchestrator/harbor.py  small Harbor adapter boundary
-    src/orchestrator/metrics.py durable experiment metrics
-    src/orchestrator/policies.py policy selection for Harbor experiments
+    src/dagent/harbor.py  small Harbor adapter boundary
+    src/dagent/metrics.py durable experiment metrics
+    src/dagent/policies.py policy selection for Harbor experiments
     bench/quality/            pinned semantic-quality inputs and builder
     harbor/tasks/orchestrator-quality-claude/  quality benchmark track
     benchmarks/phase5/  fixed graphs, profiles, and backend tracks

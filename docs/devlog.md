@@ -61,9 +61,9 @@ the manifest; the hidden verifier validates the complete ten-node artifact set.
 Prepared the benchmark inputs before any matrix execution: four fixed
 ten-node DAG shapes, distinct write scopes, seeded crash/timeout/no-candidate/
 verification/dependency/latency profiles, and separate cloud Claude and local
-Ollama resource tracks. Added `orchestrator-experiment prepare` and `run` for
+Ollama resource tracks. Added `dagent-experiment prepare` and `run` for
 matrix enumeration and one-cell execution, while preserving the existing
-`orchestrator-report` interface. FakeWorker is the default cell backend so the
+`dagent-report` interface. FakeWorker is the default cell backend so the
 complete manifest/metrics/result/task-summary reporting path is free and
 deterministic; live backend execution remains an explicit trusted-boundary
 choice.
@@ -86,7 +86,7 @@ resource metadata, and authentication mechanism without credential values.
 Metrics include state counts and wall time. Cells are classified centrally as
 success, failed, censored, or inconclusive: target-unreached fault cells are
 inconclusive, unsettled runs are censored, and failed cells remain eligible for
-outcome quality but not runtime comparisons. The `orchestrator-report` command
+outcome quality but not runtime comparisons. The `dagent-report` command
 aggregates only eligible populations and emits separate outcome-quality and
 orchestration-overhead tables.
 
@@ -128,7 +128,7 @@ recorded in that document after the baseline suite runs.
 ## 2026-08-10 - Harbor installed-agent port
 
 Added `HarborOrchestratorAgent`, which installs this package inside the task
-image and invokes the existing scheduler through `orchestrator.harbor_runtime`.
+image and invokes the existing scheduler through `dagent.harbor_runtime`.
 The runtime captures the base SHA, publishes a candidate patch plus durable
 metrics/result metadata, and keeps scheduler diagnostics outside Harbor's
 artifact transfer directory. Added a fixed-baseline canary with a separate
@@ -296,7 +296,7 @@ Design calls made that design.md didn't pin down:
 - Baseline runs are cached to disk on (repo, base_sha, verify_cmd) as the
   design calls for, in a scratch worktree that's removed after.
 
-Surprise: the fake_worker.py subprocess couldn't import `orchestrator` at
+Surprise: the fake_worker.py subprocess couldn't import `dagent` at
 all on first run -- pytest's `pythonpath` ini setting only reaches the test
 process, not children it spawns. Fixed by having spawn_fake_worker compute
 src/ from its own file path and inject it via PYTHONPATH explicitly. Will
@@ -516,13 +516,13 @@ plumbed.
 73 tests now (up from 60), all still free/deterministic except the 4
 pre-existing opt-in live ones. No new dependencies.
 
-## 2026-07-21 - `orchestrator` CLI: add-task, run, daemon, answer, status
+## 2026-07-21 - `dagent` CLI: add-task, run, daemon, answer, status
 
 The system was usable only by hand-writing a Python script per batch
-(Scheduler + create_task called directly). Added src/orchestrator/cli.py, a
+(Scheduler + create_task called directly). Added src/dagent/cli.py, a
 thin argparse wrapper -- no new control flow, just the plumbing design.md's
-non-goals never ruled out: `orchestrator add-task/run/daemon/answer/status`.
-Registered as the `orchestrator` console script alongside the existing
+non-goals never ruled out: `dagent add-task/run/daemon/answer/status`.
+Registered as the `dagent` console script alongside the existing
 verify-gate/supervisor-replay ones.
 
 `daemon` needed one real Scheduler change: run_until_settled() gained
@@ -562,7 +562,7 @@ paths once in WorktreePool.__init__ rather than working around it in cli.py.
 
 `status <task_id>` prints the live escalation (summary/question/options/
 recommended, pulled from the last supervisor.acted event) plus the exact
-`orchestrator answer ...` command to resolve it -- the point of the command
+`dagent answer ...` command to resolve it -- the point of the command
 is to remove the "go write SQL by hand" step docs/usage.md used to describe.
 
 10 new tests in tests/test_cli.py (81 total). docs/usage.md rewritten to
@@ -600,7 +600,7 @@ Wired into both `run` and `daemon` via `_run_with_notify`, which races it
 alongside `run_until_settled()` and cancels it on exit.
 No changes to Scheduler itself -- this reads the same events table
 everything else already treats as the source of truth, from the outside.
-Updated the `orchestrator` skill to launch a backgrounded `run`/`daemon` and
+Updated the `dagent` skill to launch a backgrounded `run`/`daemon` and
 then `Monitor` its stdout instead of only checking `status` after the fact,
 so a chat session gets woken the way firstmate's bash watcher wakes its
 captain.
@@ -839,7 +839,7 @@ Fix: replaced `permission_mode="bypassPermissions"` with
 sessions headless (no hang on ordinary Read/Edit/Write) while this
 codebase, not the CLI's blanket bypass, owns the one decision that has to
 stay a real deny.
-Re-verified live against the actual `orchestrator.worker.sdk_worker`
+Re-verified live against the actual `dagent.worker.sdk_worker`
 module (not a hand-built options object) on both properties at once: `curl`
 now denied with the same clean 403, and the worktree-escape write-denial
 probe from earlier in this entry still passes unchanged -- the OS-level
@@ -896,7 +896,7 @@ catch protected edits.
 ## 2026-08-05 - natural language is the operator interface
 
 Clarified the intended UX after the CLI usage walkthrough made the system
-sound more manual than it should be. The `orchestrator` CLI remains the
+sound more manual than it should be. The `dagent` CLI remains the
 implementation boundary and audit trail, but the operator-facing flow is a
 chat agent using `.claude/skills/orchestrator/SKILL.md`: user states intent,
 agent runs add-task/run/status/answer/daemon, and reports back in plain
@@ -926,7 +926,7 @@ Delivery events now carry review metadata. `delivery.pr_opened` records
 so local deliveries can be reviewed with `git diff before..after` after the
 task branch and worktree slot are gone.
 
-`orchestrator status <task_id>` now prints the review surface for delivered
+`dagent status <task_id>` now prints the review surface for delivered
 tasks: PR URL/branch/commit, local diff/log commands, scout report path, and
 saved patch path. Updated docs/usage.md, docs/dogfooding.md, the orchestrator
 skill, and the synced delivery-mode contract to point users at delivered
@@ -945,19 +945,19 @@ This benchmark harness and its hidden-command/evaluator plumbing were removed.
 The retained text documents the earlier experiment only; Harbor now owns
 benchmark execution, hidden tests, and scoring.
 
-Added the first real M6 machinery: `orchestrator.bench` plus the `bench-run`
+Added the first real M6 machinery: `dagent.bench` plus the `bench-run`
 console script. Suite files are TOML (`[bench]` defaults plus `[[tasks]]`);
 each run writes a normal event-sourced `run.db`, a manifest, and copied suite
 metadata under `data/bench/<suite>/<condition>-seedN/`.
 
 Implemented three runnable conditions: `sequential`, `naive-parallel`, and
-`orchestrator`. The first two are no-supervision baselines driven through the
+`dagent`. The first two are no-supervision baselines driven through the
 same worker wire protocol and verify gate, then marked delivered/failed in the
 event log. The orchestrator condition uses `Scheduler` directly. `firstmate`
 stays a reserved comparison slot.
 
 Made hidden benchmark checks first-class task data. `tasks.hidden_cmd`,
-`create_task(..., hidden_cmd=...)`, replay, `orchestrator add-task
+`create_task(..., hidden_cmd=...)`, replay, `dagent add-task
 --hidden-cmd`, `verify-gate` fallback, and scheduler verification all now pass
 the hidden command to the same deterministic `run_verify()` path. Existing DBs
 get an additive migration on connect.
@@ -977,7 +977,7 @@ require manually aggregating separate reports.
 Added an explicit benchmark contamination guardrail: workers now deny GitHub
 hosts, hosted web/search tools, and GitHub-looking `gh`/`git` commands in
 `_can_use_tool`, in addition to the generic `SandboxNetworkAccess` denial.
-This applies equally to `sequential`, `naive-parallel`, and `orchestrator`
+This applies equally to `sequential`, `naive-parallel`, and `dagent`
 benchmark conditions because they all use the same SDK worker backend unless
 `--fake-worker` is passed.
 

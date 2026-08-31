@@ -16,8 +16,8 @@ import sys
 
 import pytest
 
-from orchestrator.scheduler import Scheduler
-from orchestrator.store import connect, create_task
+from dagent.scheduler import Scheduler
+from dagent.store import connect, create_task
 from tests.helpers import init_repo
 
 pytestmark = pytest.mark.skipif(
@@ -31,7 +31,7 @@ MODEL = "claude-haiku-4-5"
 def _run(conn, repo, tmp_path, **kw):
     worktree_root = tmp_path / "worktrees"
     worktree_root.mkdir()
-    from orchestrator.supervisor.llm import invoke_supervisor
+    from dagent.supervisor.llm import invoke_supervisor
 
     async def supervisor(packet):
         return await invoke_supervisor(packet, model=MODEL)
@@ -101,7 +101,7 @@ def test_packet_dump_and_replay_round_trip(tmp_path, monkeypatch):
     saved = list(packets_dir.glob("*.json"))
     assert len(saved) >= 1
 
-    out = subprocess.run([sys.executable, "-m", "orchestrator.supervisor.replay",
+    out = subprocess.run([sys.executable, "-m", "dagent.supervisor.replay",
                          str(saved[0]), "--model", MODEL],
                          capture_output=True, text=True, cwd=tmp_path, timeout=60)
     assert out.returncode == 0, out.stderr

@@ -24,7 +24,7 @@ finite batch, but remains recoverable in daemon mode.
 | triage | needs_human | supervisor `escalate`, or retries exhausted |
 | triage | failed | supervisor `abandon` — yolo mode only |
 | needs_human | running | manager's answer injected into session |
-| needs_human | queued | manager answered (`orchestrator answer`); requeued with the answer folded into the brief |
+| needs_human | queued | manager answered (`dagent answer`); requeued with the answer folded into the brief |
 | needs_human | delivering | manager overrides a failed verification |
 | delivering | delivered | PR opened / local ff-merge done / scout report written |
 | delivering | triage | push rejected, merge conflict |

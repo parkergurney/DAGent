@@ -21,9 +21,9 @@ import sys
 
 import pytest
 
-from orchestrator.scheduler import Scheduler
-from orchestrator.store import connect, create_task
-from orchestrator.worker.sdk import spawn_sdk_worker
+from dagent.scheduler import Scheduler
+from dagent.store import connect, create_task
+from dagent.worker.sdk import spawn_sdk_worker
 from tests.helpers import git, init_repo
 
 pytestmark = pytest.mark.skipif(

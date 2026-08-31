@@ -3,7 +3,7 @@ scripted supervisor double for M4 scheduler-dispatch tests."""
 import subprocess
 from pathlib import Path
 
-from orchestrator.supervisor.llm import SupervisorResult
+from dagent.supervisor.llm import SupervisorResult
 
 
 def git(*args, cwd) -> subprocess.CompletedProcess:

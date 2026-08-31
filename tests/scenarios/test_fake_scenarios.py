@@ -8,8 +8,8 @@ import asyncio
 import json
 from pathlib import Path
 
-from orchestrator.scheduler import Scheduler
-from orchestrator.store import connect, create_task, replay
+from dagent.scheduler import Scheduler
+from dagent.store import connect, create_task, replay
 from tests.helpers import init_repo
 
 SCENARIOS = [

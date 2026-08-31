@@ -3,8 +3,8 @@ extraction, and the caps-derived allowed_actions/nudges_remaining/
 retries_remaining fields. Pure reads against a hand-driven event log, no
 LLM, no worker.
 """
-from orchestrator.store import append_event, connect, create_task, transition
-from orchestrator.supervisor import build_packet
+from dagent.store import append_event, connect, create_task, transition
+from dagent.supervisor import build_packet
 
 
 def test_build_packet_compacts_tool_calls_and_extracts_verify_output():

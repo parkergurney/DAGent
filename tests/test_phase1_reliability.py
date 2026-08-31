@@ -4,9 +4,9 @@ import asyncio
 import json
 import subprocess
 
-from orchestrator import execution_lease
-from orchestrator.scheduler import Scheduler
-from orchestrator.store import append_event, connect, create_attempt, create_task, transition
+from dagent import execution_lease
+from dagent.scheduler import Scheduler
+from dagent.store import append_event, connect, create_attempt, create_task, transition
 from tests.helpers import init_repo
 
 

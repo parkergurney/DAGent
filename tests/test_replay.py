@@ -9,8 +9,8 @@ import json
 
 import pytest
 
-from orchestrator import config
-from orchestrator.store import append_event, connect, create_task, replay, transition, ulid
+from dagent import config
+from dagent.store import append_event, connect, create_task, replay, transition, ulid
 
 
 def _tasks_table(conn) -> dict:

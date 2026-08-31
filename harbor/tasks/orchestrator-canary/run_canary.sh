@@ -42,7 +42,7 @@ config=$(printf '{"orchestrator":{"policy":"%s","seed":"%s","task_definition_sha
 exec harbor run \
   -y \
   -p "$task_dir" \
-  -a orchestrator.harbor_agent:HarborOrchestratorAgent \
+  -a dagent.harbor_agent:HarborOrchestratorAgent \
   -m "$model" \
   --ak "config=$config" \
   --allow-environment-host host.docker.internal

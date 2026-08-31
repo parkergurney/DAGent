@@ -1,7 +1,7 @@
 schema_version = "1.4"
 
 [task]
-name = "agent-orchestrator/orchestrator-canary"
+name = "dagent/orchestrator-canary"
 version = "1.0.0"
 description = "Small deterministic canary for the Harbor orchestrator adapter"
 keywords = ["orchestration", "git", "canary"]

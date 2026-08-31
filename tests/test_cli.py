@@ -8,9 +8,9 @@ supervisor/replay.py's own tests.
 import asyncio
 import json
 
-from orchestrator.cli import _notify_loop, main
-from orchestrator.scheduler import Scheduler
-from orchestrator.store import append_event, connect, create_task, transition
+from dagent.cli import _notify_loop, main
+from dagent.scheduler import Scheduler
+from dagent.store import append_event, connect, create_task, transition
 from tests.helpers import init_repo
 
 
@@ -68,7 +68,7 @@ def test_status_detail_unknown_task(tmp_path, capsys):
 
 
 def test_answer_requeues_with_message_folded_into_brief(tmp_path, capsys):
-    from orchestrator.store import append_event, transition
+    from dagent.store import append_event, transition
 
     db = str(tmp_path / "orch.db")
     conn = connect(db)
@@ -114,7 +114,7 @@ def test_answer_rejects_task_not_in_needs_human(tmp_path, capsys):
 
 
 def test_status_detail_shows_escalation_and_answer_hint(tmp_path, capsys):
-    from orchestrator.store import append_event, transition
+    from dagent.store import append_event, transition
 
     db = str(tmp_path / "orch.db")
     conn = connect(db)

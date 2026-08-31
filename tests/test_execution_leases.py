@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from orchestrator.execution_lease import (
+from dagent.execution_lease import (
     LeaseBusyError,
     StaleLeaseError,
     acquire,
@@ -13,8 +13,8 @@ from orchestrator.execution_lease import (
     renew,
     validate,
 )
-from orchestrator.store import connect, create_attempt, create_task
-from orchestrator.store.events import replay, replay_leases
+from dagent.store import connect, create_attempt, create_task
+from dagent.store.events import replay, replay_leases
 
 
 def _attempt(conn, *, task_id="task-1", attempt_id="attempt-1"):

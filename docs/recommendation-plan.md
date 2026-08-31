@@ -151,9 +151,9 @@ Do not build general distributed recovery.
 Before any expensive run, make the metrics and experiment validity rules
 explicit in code and manifests.
 
-The implementation lives in `orchestrator.harbor_runtime` and
-`orchestrator.experiment`. Each cell publishes a manifest, metrics, result,
-and task summary; `orchestrator-report` aggregates saved cells while applying
+The implementation lives in `dagent.harbor_runtime` and
+`dagent.experiment`. Each cell publishes a manifest, metrics, result,
+and task summary; `dagent-report` aggregates saved cells while applying
 the validity rules below in code.
 
 Every cell must record:
@@ -186,7 +186,7 @@ Exit criteria:
 Example report command:
 
 ```sh
-orchestrator-report old/jobs/*/artifacts --output-dir results/summary
+dagent-report old/jobs/*/artifacts --output-dir results/summary
 ```
 
 ### Phase 4 — Validate real backends without benchmarking
@@ -227,9 +227,9 @@ Exit criteria:
 
 Implementation: `benchmarks/phase5/` contains the fixed task package, four
 ten-node graph shapes, seeded profiles, and separate cloud/local backend
-tracks. `orchestrator-experiment prepare` validates and enumerates the matrix;
-`orchestrator-experiment run` executes one cell (FakeWorker by default), and
-`orchestrator-report` summarizes saved artifacts with comparison-input checks.
+tracks. `dagent-experiment prepare` validates and enumerates the matrix;
+`dagent-experiment run` executes one cell (FakeWorker by default), and
+`dagent-report` summarizes saved artifacts with comparison-input checks.
 
 Build all experiment inputs and reporting code before spending benchmark time.
 
@@ -259,7 +259,7 @@ conditions:
 
 - `sequential`
 - `naive-parallel`
-- `orchestrator`
+- `dagent`
 
 Prepare separate backend tracks instead of mixing them:
 

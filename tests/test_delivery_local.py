@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator import delivery
+from dagent import delivery
 from tests.helpers import git, init_repo
 
 

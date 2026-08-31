@@ -7,9 +7,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from orchestrator import harbor_runtime
-from orchestrator.harbor_agent import HarborOrchestratorAgent
-from orchestrator.worker import WorkerIsolationError
+from dagent import harbor_runtime
+from dagent.harbor_agent import HarborOrchestratorAgent
+from dagent.worker import WorkerIsolationError
 from tests.helpers import init_repo
 
 
@@ -46,7 +46,7 @@ def test_wrapper_invokes_in_container_runtime_without_secret_in_command(tmp_path
     asyncio.run(agent.run("change the file", env, SimpleNamespace()))
 
     command = env.commands[-1]["command"]
-    assert "orchestrator.harbor_runtime" in command
+    assert "dagent.harbor_runtime" in command
     assert "ANTHROPIC_API_KEY" not in command
     assert "change the file" not in command
 
@@ -57,7 +57,7 @@ def test_claude_canary_uses_startup_env_for_credentials():
     compose = (task_dir / "environment/docker-compose.yaml").read_text()
 
     assert task["environment"]["env"]["ORCH_AUTH_ENV_FILE"] == (
-        "/run/secrets/orchestrator-claude-auth.env"
+        "/run/secrets/dagent-claude-auth.env"
     )
     assert "services: {}" in compose
     assert "CLAUDE_CODE_OAUTH_TOKEN=" not in compose

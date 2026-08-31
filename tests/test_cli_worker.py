@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.worker import cli_worker
-from orchestrator.worker.cli_worker import (
+from dagent.worker import cli_worker
+from dagent.worker.cli_worker import (
     CliRecordError,
     aggregate_usage,
     assistant_text,

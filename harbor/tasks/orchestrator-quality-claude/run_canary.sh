@@ -126,11 +126,11 @@ fi
 
 if [ -n "$auth_env_file" ]; then
   [ -f "$auth_env_file" ] || { echo "OAuth env file does not exist: $auth_env_file" >&2; exit 2; }
-  auth_mounts=$("$repo_root/.venv/bin/python" -c 'import json, sys; print(json.dumps([{"type":"bind","source":sys.argv[1],"target":"/run/secrets/orchestrator-claude-auth.env","read_only":True}]))' "$auth_env_file")
+  auth_mounts=$("$repo_root/.venv/bin/python" -c 'import json, sys; print(json.dumps([{"type":"bind","source":sys.argv[1],"target":"/run/secrets/dagent-claude-auth.env","read_only":True}]))' "$auth_env_file")
   unset CLAUDE_CODE_OAUTH_TOKEN
   exec harbor run -y --mounts "$auth_mounts" -p "$package_dir" \
-    -a orchestrator.harbor_agent:HarborOrchestratorAgent -m "$model" --ak "config=$config"
+    -a dagent.harbor_agent:HarborOrchestratorAgent -m "$model" --ak "config=$config"
 fi
 
 exec harbor run -y -p "$package_dir" \
-  -a orchestrator.harbor_agent:HarborOrchestratorAgent -m "$model" --ak "config=$config"
+  -a dagent.harbor_agent:HarborOrchestratorAgent -m "$model" --ak "config=$config"

@@ -122,7 +122,7 @@ if [ -n "$auth_env_file" ]; then
     -y \
     --env-file "$auth_env_file" \
     -p "$task_dir" \
-    -a orchestrator.harbor_agent:HarborOrchestratorAgent \
+    -a dagent.harbor_agent:HarborOrchestratorAgent \
     -m "$model" \
     --ak "config=$config" \
     --allow-environment-host host.docker.internal
@@ -131,7 +131,7 @@ fi
 exec harbor run \
   -y \
   -p "$task_dir" \
-  -a orchestrator.harbor_agent:HarborOrchestratorAgent \
+  -a dagent.harbor_agent:HarborOrchestratorAgent \
   -m "$model" \
   --ak "config=$config" \
   --allow-environment-host host.docker.internal

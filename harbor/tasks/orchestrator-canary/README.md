@@ -29,7 +29,7 @@ Ollama at `OLLAMA_CONTEXT_LENGTH=32768` and keep that value fixed across every
 policy and seed.
 
 For the first canary, run the launcher once each for `sequential`,
-`naive-parallel`, and `orchestrator`, keeping the model and seed fixed. After
+`naive-parallel`, and `dagent`, keeping the model and seed fixed. After
 those pass, repeat with three distinct seeds per policy. The task package, base
 image, verifier, model, resource limits, and authentication mechanism must
 remain unchanged.

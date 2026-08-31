@@ -5,9 +5,9 @@ real worktree.
 """
 import json
 
-from orchestrator.store import connect, create_task, transition
-from orchestrator.verify.cli import main as verify_gate_main
-from orchestrator.worker.worktree import create_worktree
+from dagent.store import connect, create_task, transition
+from dagent.verify.cli import main as verify_gate_main
+from dagent.worker.worktree import create_worktree
 from tests.helpers import git, init_repo
 
 

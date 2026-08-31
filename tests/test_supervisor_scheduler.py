@@ -14,11 +14,11 @@ import time
 
 import pytest
 
-from orchestrator.scheduler import Scheduler, SchedulerCleanupFailure, WorkerStartupFailure
-from orchestrator.store import connect, create_task
-from orchestrator.supervisor.llm import SupervisorResult
-from orchestrator.supervisor.schema import Abandon, Escalate, Nudge, Restart, Wait
-from orchestrator.worker.fake import spawn_fake_worker
+from dagent.scheduler import Scheduler, SchedulerCleanupFailure, WorkerStartupFailure
+from dagent.store import connect, create_task
+from dagent.supervisor.llm import SupervisorResult
+from dagent.supervisor.schema import Abandon, Escalate, Nudge, Restart, Wait
+from dagent.worker.fake import spawn_fake_worker
 from tests.helpers import ScriptedSupervisor, init_repo
 
 

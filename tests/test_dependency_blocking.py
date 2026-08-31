@@ -4,15 +4,15 @@ import json
 
 import pytest
 
-from orchestrator.scheduler import (
+from dagent.scheduler import (
     Scheduler,
     advance_dependency_states,
     validate_dependency_graph,
 )
-from orchestrator.store import append_event, connect, create_task, transition
-from orchestrator.supervisor import always_escalate
-from orchestrator.worker import spawn_fake_worker
-from orchestrator.metrics import export_metrics
+from dagent.store import append_event, connect, create_task, transition
+from dagent.supervisor import always_escalate
+from dagent.worker import spawn_fake_worker
+from dagent.metrics import export_metrics
 from tests.helpers import init_repo
 
 

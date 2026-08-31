@@ -5,7 +5,7 @@ slots even if a previous one crashed mid-run and left a live worktree behind.
 """
 import asyncio
 
-from orchestrator.worker.worktree_pool import WorktreePool
+from dagent.worker.worktree_pool import WorktreePool
 from tests.helpers import git, init_repo
 
 

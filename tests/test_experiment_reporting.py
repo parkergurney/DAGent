@@ -1,6 +1,6 @@
 import json
 
-from orchestrator.experiment import (
+from dagent.experiment import (
     classify_cell, render_markdown, summarize_cells, validate_comparison_cells,
 )
 
@@ -47,8 +47,8 @@ def test_success_is_outcome_and_runtime_eligible():
 
 
 def test_metrics_expose_terminal_state_counts(tmp_path):
-    from orchestrator.metrics import export_metrics
-    from orchestrator.store import connect, create_task, transition
+    from dagent.metrics import export_metrics
+    from dagent.store import connect, create_task, transition
 
     conn = connect()
     task_id = create_task(

@@ -9,8 +9,8 @@ import asyncio
 import subprocess
 import sys
 
-from orchestrator.scheduler import Scheduler, reconcile
-from orchestrator.store import append_event, connect, create_task, transition
+from dagent.scheduler import Scheduler, reconcile
+from dagent.store import append_event, connect, create_task, transition
 from tests.helpers import init_repo
 
 

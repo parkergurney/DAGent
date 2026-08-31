@@ -2,7 +2,7 @@
 
 from dataclasses import fields
 
-from orchestrator.verify.gate import VerifyRequest, normalize_failure_signature, run_verify
+from dagent.verify.gate import VerifyRequest, normalize_failure_signature, run_verify
 from tests.helpers import git, init_repo
 
 

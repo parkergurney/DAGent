@@ -4,9 +4,9 @@ import asyncio
 import os
 import sys
 
-from orchestrator.scheduler import Scheduler
-from orchestrator.store import connect, create_task
-from orchestrator.verify import gate
+from dagent.scheduler import Scheduler
+from dagent.store import connect, create_task
+from dagent.verify import gate
 from tests.helpers import init_repo
 
 
@@ -54,7 +54,7 @@ def test_worker_is_reaped_before_verification_starts(tmp_path, monkeypatch):
         seen["proc"] = proc
         return proc
 
-    monkeypatch.setattr("orchestrator.scheduler.core.run_verify", verify)
+    monkeypatch.setattr("dagent.scheduler.core.run_verify", verify)
     worktrees = tmp_path / "worktrees"
     worktrees.mkdir()
     scheduler = Scheduler(

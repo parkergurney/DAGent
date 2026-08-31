@@ -48,7 +48,7 @@ blocks, or supervisor interventions.
 | orchestrator | 3/3 | 224.3 | 25,313 | 362 | $0.1396 |
 
 These averages should not be interpreted as evidence that naive parallelism is
-faster. With one task, `sequential`, `naive-parallel`, and `orchestrator` all
+faster. With one task, `sequential`, `naive-parallel`, and `dagent` all
 execute one worker; the observed differences are model/runtime variation.
 The orchestrator also made zero supervisor calls because no trial encountered
 a failure requiring triage.
