@@ -1,160 +1,183 @@
-# Benchmarking
+# Benchmarking DAGent
 
-How DAGent is measured, how to reproduce a run, and what the results
-have been so far.
+The benchmark tests whether deterministic orchestration completes more of a
+coding-task graph than simpler scheduling policies under matched conditions.
 
-The question under test is whether deterministic orchestration beats simpler
-policies at getting a graph of coding tasks actually finished.
-Three policies run over identical machinery, so a comparison isolates the
-scheduling strategy rather than the harness:
+## Policies
 
-- `sequential` - one task at a time, no recovery.
-- `naive-parallel` - concurrent workers, no dependency settlement or recovery.
-- `dagent` - the full state machine, verify gate, and bounded recovery.
+All policies use the same task package, worker backend, verifier, resource
+limits, and artifact format.
 
-Evaluation is deliberately split from execution.
-DAGent sees only public, worker-visible repository state; hidden tests
-and scoring run in a separate verifier environment, and hidden results never
-enter the agent environment or influence a scheduler decision.
+- `sequential`: one worker at a time; no recovery.
+- `naive-parallel`: concurrent workers; no dependency settlement or recovery.
+- `orchestrator`: DAGent state machine, verify gate, dependency settlement, and
+  bounded recovery.
+
+The policy is the independent variable. Backend, model, graph, verifier,
+authentication, concurrency limit, and resource configuration remain fixed
+within a comparison.
+
+## Evaluation boundary
+
+Workers receive source code and public tests. Hidden tests and scoring run in a
+separate verifier environment. Hidden results are not sent to workers or used
+by the scheduler or supervisor.
+
+Visible verification and hidden evaluation measure different outcomes:
+
+- Visible verification determines whether DAGent may deliver a candidate.
+- Hidden evaluation measures task quality without entering the control loop.
 
 ## Metrics
 
-The primary outcome is **verified task completion rate**:
+The primary metric is verified task completion rate:
 
 ```text
 verified_task_completion_rate = delivered_tasks / manifest_task_count
 ```
 
-`delivered` means the candidate passed the visible verification gate and the
-configured delivery step.
-The denominator is the fixed task count in the experiment manifest, not the
-number of tasks that happened to start - so failed, cancelled, escalated, and
-dependency-blocked tasks stay visible as incomplete outcomes instead of
-quietly leaving the denominator.
-Every cell reports numerator, denominator, and terminal-state counts alongside
-the rate.
+The denominator is fixed by the experiment manifest. Failed, cancelled,
+escalated, and dependency-blocked tasks remain incomplete outcomes.
 
-Secondary metrics, all defined before any experiment ran:
+Secondary metrics:
 
 | Metric | Definition |
-| --- | --- |
-| Terminal-state counts | Tasks in each terminal or unresolved state: `delivered`, `failed`, `needs_human`, `cancelled`, `dependency_blocked`, plus any remaining nonterminal state. |
-| Wall time | End-to-end cell duration, run start to settlement. |
-| Worker execution time | Sum of worker start-to-end durations across attempts. |
-| Queue wait | Time tasks waited from runnable/queued until acquiring a worker slot. |
-| Attempts and retries | Worker attempts, recovery attempts, and retry count, reported separately from task count. |
-| Verification failures | Failed visible verification attempts, with failure class. |
-| Supervisor interventions | Number and duration of supervisor decisions, including triage time. |
-| Tokens | Input and output tokens for workers and supervisor, when the backend reports them. |
-| Estimated cost | Worker plus supervisor cost at the cell's fixed price/model configuration. |
-| Peak concurrency | Maximum simultaneously occupied worker slots, against the configured limit. |
-| Validity status | `successful`, `failed`, `censored`, or `inconclusive`. |
+|---|---|
+| Terminal-state counts | Counts for `delivered`, `failed`, `needs_human`, `cancelled`, `dependency_blocked`, and remaining states |
+| Wall time | Cell start to settlement |
+| Worker execution time | Sum of worker durations across attempts |
+| Queue wait | Runnable-to-worker-slot delay |
+| Attempts and retries | Worker attempts, recovery attempts, and retries |
+| Verification failures | Failed visible verification attempts by class |
+| Supervisor interventions | Decision count, duration, and triage time |
+| Tokens | Worker and supervisor input/output tokens when reported |
+| Estimated cost | Worker and supervisor cost at the fixed model configuration |
+| Peak concurrency | Maximum occupied worker slots |
+| Validity status | `successful`, `failed`, `censored`, or `inconclusive` |
 
-These are exported durably as `metrics.json` per cell.
-Any summary must retain the raw metrics and the manifest that produced them.
+Each cell writes `metrics.json`. Aggregated reports retain the cell manifest and
+raw metrics.
 
-### Cell validity
+## Validity rules
 
-The rules that keep a comparison honest, fixed in advance:
+- A fault target that never launched is `inconclusive`.
+- Runtime from a failed cell is `censored` and is not treated as a speed result.
+- Outcome reports include numerators, denominators, and terminal-state counts.
+- Runtime overhead is calculated only from successful cells.
+- Hidden verifier results never enter prompts, visible evidence, or scheduler
+  decisions.
+- Verified outcome quality is reported before cost and latency.
 
-- A fault target that was never launched is `inconclusive`, not a failure.
-- A failed cell's short runtime is `censored` - it is not evidence of speed.
-- Backend, model, task package, graph, verifier, authentication mechanism,
-  concurrency limit, and resource configuration stay fixed within a policy
-  comparison.
-- Hidden verifier output is never copied into worker prompts, visible evidence,
-  or scheduler decisions.
-- Reports rank verified outcome quality first, then cost and latency.
+`dagent-report` enforces the outcome/runtime split.
 
-`dagent-report` enforces this split: outcome quality counts successful
-and settled failed cells, while runtime overhead counts successful cells only.
+## Reproducing a benchmark
 
-## Running a benchmark
+Fixed inputs are under [`benchmarks/package`](benchmarks/package/).
 
-### Prepare the matrix
-
-Fixed inputs are committed under [`benchmarks/package`](benchmarks/package/).
-Validate and enumerate the task graphs, seeded fault profiles, policies, and
-backend tracks:
+Prepare the experiment matrix:
 
 ```bash
 dagent-experiment prepare --output-dir results/matrix
 ```
 
-### Run one cell
+Run and report one cell:
 
 ```bash
-dagent-experiment run --graph wide --policy orchestrator --seed 0 \
-  --profile clean --backend-track cloud-claude \
-  --repo-root /path/to/throwaway-repo --output-dir results/cell-01
+dagent-experiment run \
+  --graph wide \
+  --policy orchestrator \
+  --seed 0 \
+  --profile clean \
+  --backend-track cloud-claude \
+  --repo-root /path/to/throwaway-repo \
+  --output-dir results/cell-01
 
 dagent-report results/cell-01 --output-dir results/summary
 ```
 
-Each cell writes `run_manifest.json`, `metrics.json`, `result.json`,
-`task_summary.json`, and `candidate.patch`.
-`dagent-report` aggregates saved cells into `report.json` and
-`report.md`.
+Cell outputs:
 
-Fault profiles are deterministic FakeWorker cells and cost nothing.
-A live backend requires the explicit `--live` flag and a trusted container
-boundary; local Ollama cells are reported as a separate resource-contention
-track, since a local model's throughput is itself a contended resource.
+- `run_manifest.json`
+- `metrics.json`
+- `result.json`
+- `task_summary.json`
+- `candidate.patch`
 
-### Execution track
+Fault profiles use deterministic FakeWorker scenarios. Live backends require
+`--live` and an external isolation boundary. Local Ollama results remain in a
+separate resource-contention track because local model throughput competes for
+the same machine resources as orchestration.
 
-The dependency-aware launcher lives in
+## Execution track
+
+The dependency-aware Harbor launcher is in
 [`harbor/tasks/orchestrator-dag-canary-claude/`](harbor/tasks/orchestrator-dag-canary-claude/).
-It takes `ORCH_GRAPH_SHAPE=serial|wide|diamond|mixed`, uses the committed graph
-topologies and the separate verifier, and records the selected shape and graph
-hash in the manifest.
-It publishes only `base_sha.txt`, `candidate.patch`, `result.json`,
-`metrics.json`, and the pre-run `run_manifest.json`; scheduler packets and
-verification logs stay in the container's private runtime directory.
 
-### Semantic-quality track
+Supported graph shapes:
 
-The execution track uses exact-file tasks, which measure whether the machinery
-completes work but not whether the work is any good.
-The quality track runs real Arrow, JSONSchema, and TinyDB maintenance tasks
-against pinned source fixtures.
-Workers get source code and public tests; the recovered hidden tests are copied
-only into the separate verifier.
+```text
+serial
+wide
+diamond
+mixed
+```
 
-Source repositories must be present at `../bench-dirs` relative to this
-checkout, or set `ORCH_QUALITY_SOURCE_ROOT` to their parent directory.
-The builder verifies the pinned commits and refuses dirty or mismatched
-fixtures.
+The launcher records the graph shape and graph hash in the pre-run manifest.
+Published outputs are:
+
+- `base_sha.txt`
+- `candidate.patch`
+- `result.json`
+- `metrics.json`
+- `run_manifest.json`
+
+Scheduler packets and verification logs remain in the container's private
+runtime directory.
+
+## Semantic-quality track
+
+The execution track uses exact-file tasks and measures orchestration
+completion. The semantic-quality track uses maintenance tasks from pinned
+Arrow, JSONSchema, and TinyDB fixtures. Workers receive source and public tests;
+recovered hidden tests remain in the verifier.
+
+Fixtures must be available at `../bench-dirs`, or their parent directory must
+be supplied through `ORCH_QUALITY_SOURCE_ROOT`. The builder rejects dirty or
+mismatched source commits.
+
+Run a task-level canary:
 
 ```bash
-# One task-level canary first.
 ORCH_AUTH_ENV_FILE="$AUTH_FILE" \
 ORCH_QUALITY_TASK=arrow-shift-check-imaginary \
 harbor/tasks/orchestrator-quality-claude/run_canary.sh \
   orchestrator 0 claude-sonnet-4-6 task
+```
 
-# Then the three-task calibration matrix.
+Run the three-task calibration matrix:
+
+```bash
 ORCH_AUTH_ENV_FILE="$AUTH_FILE" \
 ORCH_QUALITY_TASKS="arrow-shift-check-imaginary jsonschema-hostname-single-label tinydb-lru-cache-set-update" \
 harbor/tasks/orchestrator-quality-claude/run_benchmark.sh 0
 ```
 
-Each job stores `verifier/quality_metrics.json`, whose fractional
-`quality_score` is also written to `verifier/reward.txt`.
-Reports keep that score in its own table - hidden-test quality is not the same
-thing as orchestrator completion or latency, and merging them would hide which
-one moved.
+Each job writes `verifier/quality_metrics.json` and a fractional score to
+`verifier/reward.txt`. Quality scores and orchestration completion rates are
+reported separately.
 
-Multi-task graph modes are available through `ORCH_QUALITY_GRAPH_SHAPE` with
-explicit `ORCH_QUALITY_TASKS`.
-Wide graphs are rejected when their declared write scopes overlap, unless
-`ORCH_QUALITY_ALLOW_UNSAFE_WIDE=1` is set.
+Multi-task quality graphs use `ORCH_QUALITY_GRAPH_SHAPE` and an explicit
+`ORCH_QUALITY_TASKS` list. Wide graphs are rejected when declared write scopes
+overlap unless `ORCH_QUALITY_ALLOW_UNSAFE_WIDE=1` is set.
 
-Each quality job also publishes a credential-redacted
-`artifacts/logs/artifacts/tool_audit.jsonl` recording tool calls and flagging
-anything that looks like web, package-install, or Git-history access.
-It is an audit trail, not network enforcement - the container still allows
-network access outside the denied tool patterns.
+Each job also publishes a credential-redacted tool audit at:
+
+```text
+artifacts/logs/artifacts/tool_audit.jsonl
+```
+
+The audit flags likely web access, package installation, and Git-history
+access. It records activity but does not enforce isolation.
 
 ```bash
 jq -r 'select(.likely_network_or_history_attempt) |
@@ -162,13 +185,74 @@ jq -r 'select(.likely_network_or_history_attempt) |
   jobs/<job>/artifacts/logs/artifacts/tool_audit.jsonl
 ```
 
-### Other tools
+## Supporting tools
+
+Run visible verification for a stored candidate:
 
 ```bash
-# Run the public verification command for a durable task candidate.
-dagent-verify-gate --task <task_id> --db data/dagent.db --json --record
-
-# Re-run a saved triage packet against the CURRENT supervisor prompt/model,
-# to iterate on heuristics without paying for a live run.
-dagent-supervisor-replay data/<task_id>/packets/<seq>.json --model claude-sonnet-5
+dagent-verify-gate \
+  --task <task_id> \
+  --db data/dagent.db \
+  --json \
+  --record
 ```
+
+Replay a saved supervisor packet against the current prompt and model:
+
+```bash
+dagent-supervisor-replay \
+  data/<task_id>/packets/<seq>.json \
+  --model claude-sonnet-5
+```
+
+## Current results
+
+### Local test baseline
+
+```bash
+pytest -q
+git diff --check
+```
+
+Recorded baseline: `252 passed, 4 skipped`. Live SDK tests are excluded because
+they require external authentication and are nondeterministic.
+
+### Local Ollama boundary pilot
+
+The first controlled pilot used Harbor `0.20.0` and local Ollama with
+`qwen3-coder:30b`, context length 32768, worker concurrency 2, and a 1200-second
+worker timeout. A separate verifier ran hidden `tests/grader.py`. Base commit
+and task-definition hashes were fixed.
+
+The package contained one task. All policies therefore executed one worker and
+could not exercise dependency settlement or parallel scheduling. Every cell
+produced a candidate, passed hidden verification, and reached `delivered` with
+no retries, dependency blocks, supervisor calls, or exceptions.
+
+| Policy | Delivered | Avg worker seconds | Avg input tokens | Avg output tokens | Avg estimated cost |
+|---|---:|---:|---:|---:|---:|
+| sequential | 3/3 | 234.1 | 24,249 | 420 | $0.1357 |
+| naive-parallel | 3/3 | 201.0 | 21,486 | 327 | $0.1195 |
+| orchestrator | 3/3 | 224.3 | 25,313 | 362 | $0.1396 |
+
+The pilot validates the execution and isolation boundary. It is not a policy
+comparison. Runtime differences in this single-task setup are model and runtime
+variation.
+
+## Required next experiment
+
+The policy comparison requires a multi-task graph with independent branches
+and dependent fan-in:
+
+```text
+schema ───────┐
+              ├── integration ── release-check
+implementation┘
+
+documentation  (independent)
+```
+
+The planned sequence is one canary for each policy followed by a fixed
+3-policy × 3-seed matrix. Graph, base commit, model, concurrency, limits, and
+verifier remain fixed. Until this matrix is complete, the repository does not
+support a policy-performance claim.
